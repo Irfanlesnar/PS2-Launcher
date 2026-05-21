@@ -1,0 +1,10 @@
+
+DECLARE_EXPORT_TABLE(nbnsman, 1, 1)
+	DECLARE_EXPORT(_start)
+	DECLARE_EXPORT(_exit)
+	DECLARE_EXPORT(_retonly)
+	DECLARE_EXPORT(_retonly)
+	DECLARE_EXPORT(nbnsFindName)
+END_EXPORT_TABLE
+
+void _retonly(){};
