@@ -1088,18 +1088,39 @@ void rmDrawRoundedRectWide(int x, int y, int w, int h, int r, u64 color)
 {
     rmDraw9SliceRoundedRectWide(&gPS5MaskTex, x, y, w, h, r, color);
 }
-
 void rmDrawRoundedCover(GSTEXTURE *cover, int x, int y, int w, int h, int r)
 {
     cover->Filter = GS_FILTER_NEAREST;
 
-    // Draw cover as normal square first
+    // Calculate aspect ratio of the cover image (defaulting to a beautiful 0.73 portrait DVD case)
+    float imgAspect = 0.73f;
+    if (cover->Width > 0 && cover->Height > 0) {
+        float nativeAspect = (float)cover->Width / (float)cover->Height;
+        if (nativeAspect < 1.0f) {
+            imgAspect = nativeAspect;
+        }
+    }
 
+    // Coordinates in the 640x480 space
+    float x_draw = (float)x;
+    float y_draw = (float)y;
+    float w_draw = (float)w;
+    float h_draw = (float)h;
 
-    int X0 = rmScaleX(rmWideScale(x));
-    int X3 = rmScaleX(rmWideScale(x + w));
-    int Y0 = rmScaleY(y);
-    int Y3 = rmScaleY(y + h);
+    // Adjust width or height to preserve aspect ratio (assuming 1:1 screen mapping of units)
+    if (imgAspect < 1.0f) { // Portrait image
+        w_draw = (float)h * imgAspect;
+        x_draw = (float)x + ((float)w - w_draw) / 2.0f;
+    } else if (imgAspect > 1.0f) { // Landscape image
+        h_draw = (float)w / imgAspect;
+        y_draw = (float)y + ((float)h - h_draw) / 2.0f;
+    }
+
+    // Now scale the adjusted coordinates
+    int X0 = rmScaleX(rmWideScale((int)x_draw));
+    int X3 = rmScaleX(rmWideScale((int)(x_draw + w_draw)));
+    int Y0 = rmScaleY((int)y_draw);
+    int Y3 = rmScaleY((int)(y_draw + h_draw));
 
     if ((cover->PSM == GS_PSM_CT32) || (cover->Clut && cover->ClutPSM == GS_PSM_CT32)) {
         gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
@@ -1123,17 +1144,13 @@ void rmDrawRoundedCover(GSTEXTURE *cover, int x, int y, int w, int h, int r)
     int th = gPS5InvMaskTex.Height;
     int tr = tw / 4;
 
+    int X1 = rmScaleX(rmWideScale((int)(x_draw + R)));
+    int X2 = rmScaleX(rmWideScale((int)(x_draw + w_draw - R)));
 
-    int X1 = rmScaleX(rmWideScale(x + R));
-    int X2 = rmScaleX(rmWideScale(x + w - R));
+    int Y1 = rmScaleY((int)(y_draw + R));
+    int Y2 = rmScaleY((int)(y_draw + h_draw - R));
 
-
-
-    int Y1 = rmScaleY(y + R);
-    int Y2 = rmScaleY(y + h - R);
-
-
-    float factorTop = (float)y / 480.0f;
+    float factorTop = (float)y_draw / 480.0f;
     if (factorTop < 0.0f) factorTop = 0.0f;
     if (factorTop > 1.0f) factorTop = 1.0f;
     u8 rTop = (u8)(gPS5BgColorR * factorTop);
@@ -1141,7 +1158,8 @@ void rmDrawRoundedCover(GSTEXTURE *cover, int x, int y, int w, int h, int r)
     u8 bTop = (u8)(gPS5BgColorB * factorTop);
     u64 colorTL = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
     u64 colorTR = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
-    float factorBottom = (float)(y + h) / 480.0f;
+    
+    float factorBottom = (float)(y_draw + h_draw) / 480.0f;
     if (factorBottom < 0.0f) factorBottom = 0.0f;
     if (factorBottom > 1.0f) factorBottom = 1.0f;
     u8 rBottom = (u8)(gPS5BgColorR * factorBottom);
@@ -1174,6 +1192,9 @@ typedef struct {
     char coverPath[256];
     GSTEXTURE coverTex;
     int hasTex; // 0 = not loaded, 1 = loaded, -1 = load failed
+    char logoPath[256];
+    GSTEXTURE logoTex;
+    int hasLogoTex; // 0 = not loaded, 1 = loaded, -1 = load failed
     char devicePrefix[32];
 } net_req_t;
 
@@ -1398,15 +1419,30 @@ static void findCoverInCoversFolder(const char *gameTitle, const char *startup, 
     
     static char dirPref[256];
     static char dirPREF[256];
+    static char dirPrefSlash[256];
+    static char dirPREFSlash[256];
     if (devicePrefix && devicePrefix[0] != '\0') {
-        snprintf(dirPref, sizeof(dirPref), "%sART", devicePrefix);
-        snprintf(dirPREF, sizeof(dirPREF), "%sart", devicePrefix);
+        char cleanPrefix[256];
+        strncpy(cleanPrefix, devicePrefix, sizeof(cleanPrefix) - 1);
+        cleanPrefix[sizeof(cleanPrefix) - 1] = '\0';
+        int len = strlen(cleanPrefix);
+        if (len > 0 && cleanPrefix[len - 1] == '/') {
+            cleanPrefix[len - 1] = '\0';
+        }
+        snprintf(dirPref, sizeof(dirPref), "%sART", cleanPrefix);
+        snprintf(dirPREF, sizeof(dirPREF), "%sart", cleanPrefix);
+        snprintf(dirPrefSlash, sizeof(dirPrefSlash), "%s/ART", cleanPrefix);
+        snprintf(dirPREFSlash, sizeof(dirPREFSlash), "%s/art", cleanPrefix);
     } else {
         strcpy(dirPref, "host:ART");
         strcpy(dirPREF, "host:art");
+        strcpy(dirPrefSlash, "host:/ART");
+        strcpy(dirPREFSlash, "host:/art");
     }
 
     const char *dirCandidates[] = {
+        dirPrefSlash,
+        dirPREFSlash,
         dirPref,
         dirPREF,
         "host:ART",
@@ -1415,6 +1451,8 @@ static void findCoverInCoversFolder(const char *gameTitle, const char *startup, 
         "art",
         "mass0:ART",
         "mass0:art",
+        "mass0:/ART",
+        "mass0:/art",
         NULL
     };
 
@@ -1430,12 +1468,10 @@ static void findCoverInCoversFolder(const char *gameTitle, const char *startup, 
     
     if (!pdir) {
         // Fall back to active device covers directory as default if opendir failed
-        strcpy(coversPath, dirPref);
+        strcpy(coversPath, dirPrefSlash);
     }
 
     int bestScore = 0; int exactFound = 0; char bestFile[256] = ""; if (pdir && startup && startup[0] != '\0') { struct dirent *sd; while ((sd = readdir(pdir)) != NULL) { if (sd->d_name[0] == '.') continue; char nl[256]; int i; for (i = 0; sd->d_name[i]; i++) { char c = sd->d_name[i]; nl[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c; } nl[i] = '\0'; if (strstr(nl, "_cov") == NULL) continue; char cs[256] = ""; int cl = 0; for (i = 0; startup[i]; i++) { char c = startup[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cs[cl++] = c; else if (c >= 'A' && c <= 'Z') cs[cl++] = c + 32; } cs[cl] = '\0'; char cn[256] = ""; int cnl = 0; char *pCov = strstr(nl, "_cov"); int covLen = pCov - nl; for (i = 0; i < covLen; i++) { char c = nl[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cn[cnl++] = c; } cn[cnl] = '\0'; if (strcmp(cn, cs) == 0) { strcpy(bestFile, sd->d_name); exactFound = 1; break; } } rewinddir(pdir); }
-    /* bestScore duplicate removed */
-    /* exactFound duplicate removed */
 
     if (pdir) {
         struct dirent *pdirent;
@@ -1570,32 +1606,94 @@ static void findCoverInCoversFolder(const char *gameTitle, const char *startup, 
     }
 }
 
-static void netFetchThreadFunc(void *arg) {
-    net_req_t *req = (net_req_t *)arg;
-    if (!req) {
-        ExitDeleteThread();
+static void findLogoInLogosFolder(const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
+    if (!startup || startup[0] == '\0') {
+        matchedPath[0] = '\0';
         return;
     }
-    void *stackPtr = req->threadStack;
 
-    char matchedPath[256] = {0};
-    findCoverInCoversFolder(req->gameTitle, req->startup, req->devicePrefix, matchedPath, sizeof(matchedPath));
-    if (matchedPath[0] == '\0') {
-        findBuiltInCoverForGame(req->gameTitle, matchedPath, sizeof(matchedPath));
+    char logoName[256];
+    snprintf(logoName, sizeof(logoName), "%s_LOGO", startup);
+
+    char cleanPrefix[256];
+    if (devicePrefix && devicePrefix[0] != '\0') {
+        strncpy(cleanPrefix, devicePrefix, sizeof(cleanPrefix) - 1);
+        cleanPrefix[sizeof(cleanPrefix) - 1] = '\0';
+        int len = strlen(cleanPrefix);
+        if (len > 0 && cleanPrefix[len - 1] == '/') {
+            cleanPrefix[len - 1] = '\0';
+        }
+    } else {
+        strcpy(cleanPrefix, "host:");
     }
 
-    sprintf(gNetDebugMsg, "Cover search matched: %s", matchedPath);
+    char dirPref[256];
+    char dirPrefSlash[256];
+    char dirPREF[256];
+    char dirPREFSlash[256];
+    snprintf(dirPref, sizeof(dirPref), "%sLOGO", cleanPrefix);
+    snprintf(dirPrefSlash, sizeof(dirPrefSlash), "%s/LOGO", cleanPrefix);
+    snprintf(dirPREF, sizeof(dirPREF), "%slogo", cleanPrefix);
+    snprintf(dirPREFSlash, sizeof(dirPREFSlash), "%s/logo", cleanPrefix);
 
-    u8 cardR = 100, cardG = 100, cardB = 100;
-    u8 bgR = 24, bgG = 24, bgB = 24;
-    getGameColors(req->gameTitle, &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
+    const char *dirCandidates[] = {
+        dirPrefSlash,
+        dirPREFSlash,
+        dirPref,
+        dirPREF,
+        "mass0:/LOGO",
+        "mass0:/logo",
+        "mass0:LOGO",
+        "mass0:logo",
+        "host:LOGO",
+        "host:logo",
+        NULL
+    };
 
-    updateCacheState(req->gameTitle, 2, 1, cardR, cardG, cardB, bgR, bgG, bgB, matchedPath);
-    sprintf(gNetDebugMsg, "Cover matched for '%s'", req->gameTitle);
+    int dIdx = 0;
+    while (dirCandidates[dIdx] != NULL) {
+        // Try png
+        snprintf(matchedPath, maxLen, "%s/%s.png", dirCandidates[dIdx], logoName);
+        int fd = open(matchedPath, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
 
-    free(req);
-    if (stackPtr) free(stackPtr);
-    ExitDeleteThread();
+        // Try jpg
+        snprintf(matchedPath, maxLen, "%s/%s.jpg", dirCandidates[dIdx], logoName);
+        fd = open(matchedPath, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        // Try lowercase
+        char logoNameLower[256];
+        int i;
+        for (i = 0; logoName[i]; i++) {
+            logoNameLower[i] = (logoName[i] >= 'A' && logoName[i] <= 'Z') ? (logoName[i] - 'A' + 'a') : logoName[i];
+        }
+        logoNameLower[i] = '\0';
+
+        snprintf(matchedPath, maxLen, "%s/%s.png", dirCandidates[dIdx], logoNameLower);
+        fd = open(matchedPath, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        snprintf(matchedPath, maxLen, "%s/%s.jpg", dirCandidates[dIdx], logoNameLower);
+        fd = open(matchedPath, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        dIdx++;
+    }
+
+    matchedPath[0] = '\0';
 }
 
 static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix) {
@@ -1625,7 +1723,17 @@ static void triggerNetFetch(const char *title, const char *startup, const char *
     gNetCache[idx].state = 1;
     gNetCache[idx].hasColor = 0;
 
-    findBuiltInCoverForGame(title, matchedPath, sizeof(matchedPath));
+    findCoverInCoversFolder(title, startup, devicePrefix, matchedPath, sizeof(matchedPath));
+    if (matchedPath[0] == '\0') {
+        findBuiltInCoverForGame(title, matchedPath, sizeof(matchedPath));
+    }
+    
+    char logoPath[256] = {0};
+    findLogoInLogosFolder(startup, devicePrefix, logoPath, sizeof(logoPath));
+    strncpy(gNetCache[idx].logoPath, logoPath, sizeof(gNetCache[idx].logoPath) - 1);
+    gNetCache[idx].logoPath[sizeof(gNetCache[idx].logoPath) - 1] = '\0';
+    gNetCache[idx].hasLogoTex = 0;
+
     getGameColors(title, &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
     updateCacheState(title, 2, 1, cardR, cardG, cardB, bgR, bgG, bgB, matchedPath);
 }
@@ -2091,6 +2199,63 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
     if (gPS5ActiveTab == 0) {
         if (item) {
+            // Load and render background game logo at bottom-right (smooth fade-in transition)
+            static float logoAlpha = 0.0f;
+            static char lastSelectedTitle[64] = "";
+            const char *selTitle = submenuItemGetText(&item->item);
+            
+            if (strcmp(lastSelectedTitle, selTitle) != 0) {
+                logoAlpha = 0.0f;
+                strncpy(lastSelectedTitle, selTitle, sizeof(lastSelectedTitle) - 1);
+                lastSelectedTitle[sizeof(lastSelectedTitle) - 1] = '\0';
+            }
+
+            net_req_t *selCache = NULL;
+            int cIdx;
+            for (cIdx = 0; cIdx < gNetCacheCount; cIdx++) {
+                if (strcmp(gNetCache[cIdx].gameTitle, selTitle) == 0) {
+                    selCache = &gNetCache[cIdx];
+                    break;
+                }
+            }
+
+            if (selCache && selCache->logoPath[0] != '\0') {
+                if (selCache->hasLogoTex == 0) {
+                    if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
+                        selCache->hasLogoTex = 1;
+                        logoAlpha = 0.0f; // Reset to 0 to ensure clean fade-in after load completes
+                    } else {
+                        selCache->hasLogoTex = -1;
+                    }
+                }
+                
+                if (selCache->hasLogoTex == 1) {
+                    // Smooth asymptotic ease-in-out transition over roughly 12 frames
+                    logoAlpha += (1.0f - logoAlpha) * 0.08f;
+                    
+                    float logoAspect = 1.0f;
+                    if (selCache->logoTex.Width > 0 && selCache->logoTex.Height > 0) {
+                        logoAspect = (float)selCache->logoTex.Width / (float)selCache->logoTex.Height;
+                    }
+                    
+                    int lw = 600;
+                    int lh = 300;
+                    if (logoAspect < 2.0f) {
+                        lw = (int)((float)lh * logoAspect);
+                    } else {
+                        lh = (int)((float)lw / logoAspect);
+                    }
+                    
+                    // Map logoAlpha float [0.0 - 1.0] to OPL Alpha channel byte [0 - 128 (solid)]
+                    int alphaVal = (int)(logoAlpha * 128.0f);
+                    if (alphaVal > 128) alphaVal = 128;
+                    if (alphaVal < 0) alphaVal = 0;
+                    
+                    // Render anchored at bottom-right (640, 480) with dynamic smooth fade-in
+                    rmDrawPixmap(&selCache->logoTex, 640, 480, ALIGN_BOTTOM | ALIGN_RIGHT, lw, lh, SCALING_RATIO, GS_SETREG_RGBA(0x80, 0x80, 0x80, alphaVal));
+                }
+            }
+
             // 2. Horizontal Carousel of Cards
             submenu_list_t *first_item = item;
             while (first_item->prev) {
@@ -2144,7 +2309,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             if (total_count > 0) {
                 x_centers[0] = 0.0f;
                 for (i = 0; i < total_count - 1; i++) {
-                    x_centers[i + 1] = x_centers[i] + (card_sizes[i] + card_sizes[i + 1]) / 2.0f + 16.0f;
+                    x_centers[i + 1] = x_centers[i] + ((card_sizes[i] + card_sizes[i + 1]) * 0.73f) / 2.0f + 16.0f;
                 }
             }
 
@@ -2167,8 +2332,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             while (curr_item && idx < total_count) {
                 float cx = x_centers[idx] + shift;
                 if (cx > -80.0f && cx < 720.0f) {
-                    int size = (int)card_sizes[idx];
-                    int hw = size / 2;
+                    int height = (int)card_sizes[idx];
+                    int width = (int)(height * 0.73f);
+                    int hw = width / 2;
                     int x1 = (int)cx - hw;
                     int y1 = 96; // Anchor at the top edge for downward scaling!
 
@@ -2223,10 +2389,10 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                     }
 
                     if (hasCover && cacheEntry) {
-                        rmDrawRoundedCover(&cacheEntry->coverTex, x1, y1, size, size, 12);
+                        rmDrawRoundedCover(&cacheEntry->coverTex, x1, y1, width, height, 12);
                     } else {
                         // 1. Draw beautifully colored rounded card
-                        rmDrawRoundedRectWide(x1, y1, size, size, 12, GS_SETREG_RGBA(cR, cG, cB, cardAlpha));
+                        rmDrawRoundedRectWide(x1, y1, width, height, 12, GS_SETREG_RGBA(cR, cG, cB, cardAlpha));
 
                         // 2. Extract initials of the game dynamically
                         char initials[8];
@@ -2259,8 +2425,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         initials[initCount] = '\0';
 
                         // 3. Draw the game's initials elegantly in the center of the card
-                        float fontScale = (size / 130.0f) * 0.70f;
-                        fntRenderString(gPS5BoldFont, cx, y1 + size / 2, ALIGN_CENTER | ALIGN_VCENTER, fontScale, fontScale, initials, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, cardAlpha * 2 / 3));
+                        float fontScale = ((float)height / 130.0f) * 0.70f;
+                        fntRenderString(gPS5BoldFont, cx, y1 + height / 2, ALIGN_CENTER | ALIGN_VCENTER, fontScale, fontScale, initials, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, cardAlpha * 2 / 3));
                     }
                 }
                 curr_item = curr_item->next;
@@ -2767,6 +2933,11 @@ static void thmFree(theme_t *theme)
                 rmUnloadTexture(&gNetCache[i].coverTex);
                 texFree(&gNetCache[i].coverTex);
                 gNetCache[i].hasTex = 0;
+            }
+            if (gNetCache[i].hasLogoTex == 1) {
+                rmUnloadTexture(&gNetCache[i].logoTex);
+                texFree(&gNetCache[i].logoTex);
+                gNetCache[i].hasLogoTex = 0;
             }
         }
         gNetCacheCount = 0;

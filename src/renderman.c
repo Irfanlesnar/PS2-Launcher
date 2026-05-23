@@ -283,13 +283,31 @@ static void rmSetupQuad(GSTEXTURE *txt, int x, int y, short aligned, int w, int 
     if (h == DIM_UNDEF)
         h = txt->Height;
 
+    if (txt && txt->Width > 0 && txt->Height > 0) {
+        float nativeAspect = (float)txt->Width / (float)txt->Height;
+        if (nativeAspect < 1.0f) {
+            w = (int)((float)h * nativeAspect);
+        } else if (nativeAspect > 1.0f) {
+            h = (int)((float)w / nativeAspect);
+        } else {
+            if (w < h) h = w;
+            else w = h;
+        }
+    }
+
     // Legacy scaling
     x = X_SCALE(x);
     y = Y_SCALE(y);
-    if (scaled & SCALING_RATIO)
-        w = X_SCALE(w * iAspectWidth) >> 2;
-    else
+    if (scaled & SCALING_RATIO) {
+        int isWidescreen = (DAR == RM_ARATIO_16_9) || (vmode >= 0 && rm_mode_table[vmode].aratio == RM_ARATIO_16_9);
+        if (isWidescreen) {
+            w = X_SCALE(w * 3) >> 2;
+        } else {
+            w = X_SCALE(w * iAspectWidth) >> 2;
+        }
+    } else {
         w = X_SCALE(w);
+    }
     h = Y_SCALE(h);
 
     // Align LEFT/HCENTER/RIGHT
