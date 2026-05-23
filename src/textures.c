@@ -4,99 +4,86 @@
 #include "include/ioman.h"
 #include <png.h>
 
-extern void *load0_png;
-extern void *load1_png;
-extern void *load2_png;
-extern void *load3_png;
-extern void *load4_png;
-extern void *load5_png;
-extern void *load6_png;
-extern void *load7_png;
-extern void *usb_png; // Leave BDM Icon as usb.png to maintain theme compat
-extern void *usb_bd_png;
-extern void *ilk_bd_png;
-extern void *m4s_bd_png;
-extern void *hdd_bd_png;
-extern void *hdd_png;
-extern void *eth_png;
-extern void *app_png;
-extern void *Index_0_png;
-extern void *Index_1_png;
-extern void *Index_2_png;
-extern void *Index_3_png;
-extern void *Index_4_png;
-
-extern void *left_png;
-extern void *right_png;
-extern void *cross_png;
-extern void *triangle_png;
-extern void *circle_png;
-extern void *square_png;
-extern void *select_png;
-extern void *start_png;
-/* currently unused.
-extern void *up_png;
-extern void *down_png;
-extern void *L1_png;
-extern void *L2_png;
-extern void *L3_png;
-extern void *R1_png;
-extern void *R2_png;
-extern void *R3_png; */
-
-extern void *background_png;
-extern void *info_png;
-extern void *cover_png;
-extern void *disc_png;
-extern void *screen_png;
-
-extern void *ELF_png;
-extern void *HDL_png;
-extern void *ISO_png;
-extern void *ZSO_png;
-extern void *UL_png;
-extern void *APPS_png;
-extern void *CD_png;
-extern void *DVD_png;
-extern void *Aspect_s_png;
-extern void *Aspect_w_png;
-extern void *Aspect_w1_png;
-extern void *Aspect_w2_png;
-extern void *Device_1_png;
-extern void *Device_2_png;
-extern void *Device_3_png;
-extern void *Device_4_png;
-extern void *Device_5_png;
-extern void *Device_6_png;
-extern void *Device_all_png;
-extern void *Rating_0_png;
-extern void *Rating_1_png;
-extern void *Rating_2_png;
-extern void *Rating_3_png;
-extern void *Rating_4_png;
-extern void *Rating_5_png;
-extern void *Scan_240p_png;
-extern void *Scan_240p1_png;
-extern void *Scan_480i_png;
-extern void *Scan_480p_png;
-extern void *Scan_480p1_png;
-extern void *Scan_480p2_png;
-extern void *Scan_480p3_png;
-extern void *Scan_480p4_png;
-extern void *Scan_480p5_png;
-extern void *Scan_576i_png;
-extern void *Scan_576p_png;
-extern void *Scan_720p_png;
-extern void *Scan_1080i_png;
-extern void *Scan_1080i2_png;
-extern void *Scan_1080p_png;
-extern void *Vmode_multi_png;
-extern void *Vmode_ntsc_png;
-extern void *Vmode_pal_png;
-
+extern void *loader_png;
 extern void *logo_png;
-extern void *case_png;
-extern void *apps_case_png;
+extern void *cross_png;
+extern void *square_png;
+void *usb_png = &loader_png;
+void *usb_bd_png = &loader_png;
+void *ilk_bd_png = &loader_png;
+void *m4s_bd_png = &loader_png;
+void *hdd_bd_png = &loader_png;
+void *hdd_png = &loader_png;
+void *eth_png = &loader_png;
+void *app_png = &loader_png;
+void *Index_0_png = &loader_png;
+void *Index_1_png = &loader_png;
+void *Index_2_png = &loader_png;
+void *Index_3_png = &loader_png;
+void *Index_4_png = &loader_png;
+
+void *left_png = &loader_png;
+void *right_png = &loader_png;
+void *triangle_png = &loader_png;
+void *circle_png = &loader_png;
+void *select_png = &loader_png;
+void *start_png = &loader_png;
+void *up_png = &loader_png;
+void *down_png = &loader_png;
+void *L1_png = &loader_png;
+void *L2_png = &loader_png;
+void *L3_png = &loader_png;
+void *R1_png = &loader_png;
+void *R2_png = &loader_png;
+void *R3_png = &loader_png;
+
+void *background_png = &loader_png;
+void *info_png = &loader_png;
+void *cover_png = &loader_png;
+void *disc_png = &loader_png;
+void *screen_png = &loader_png;
+
+void *ELF_png = &loader_png;
+void *HDL_png = &loader_png;
+void *ISO_png = &loader_png;
+void *ZSO_png = &loader_png;
+void *UL_png = &loader_png;
+void *APPS_png = &loader_png;
+void *CD_png = &loader_png;
+void *DVD_png = &loader_png;
+void *Aspect_s_png = &loader_png;
+void *Aspect_w_png = &loader_png;
+void *Aspect_w1_png = &loader_png;
+void *Aspect_w2_png = &loader_png;
+void *Device_1_png = &loader_png;
+void *Device_2_png = &loader_png;
+void *Device_3_png = &loader_png;
+void *Device_4_png = &loader_png;
+void *Device_5_png = &loader_png;
+void *Device_6_png = &loader_png;
+void *Device_all_png = &loader_png;
+
+void *Scan_240p_png = &loader_png;
+void *Scan_240p1_png = &loader_png;
+void *Scan_480i_png = &loader_png;
+void *Scan_480p_png = &loader_png;
+void *Scan_480p1_png = &loader_png;
+void *Scan_480p2_png = &loader_png;
+void *Scan_480p3_png = &loader_png;
+void *Scan_480p4_png = &loader_png;
+void *Scan_480p5_png = &loader_png;
+void *Scan_576i_png = &loader_png;
+void *Scan_576p_png = &loader_png;
+void *Scan_720p_png = &loader_png;
+void *Scan_1080i_png = &loader_png;
+void *Scan_1080i2_png = &loader_png;
+void *Scan_1080p_png = &loader_png;
+void *Vmode_multi_png = &loader_png;
+void *Vmode_ntsc_png = &loader_png;
+void *Vmode_pal_png = &loader_png;
+
+void *case_png = &loader_png;
+void *apps_case_png = &loader_png;
 
 // Not related to screen size, just to limit at some point
 static int maxSize = 720 * 512 * 4;
@@ -127,14 +114,7 @@ typedef struct
 static png_texture_t pngTexture;
 
 static texture_t internalDefault[TEXTURES_COUNT] = {
-    {LOAD0_ICON, "load0", &load0_png},
-    {LOAD1_ICON, "load1", &load1_png},
-    {LOAD2_ICON, "load2", &load2_png},
-    {LOAD3_ICON, "load3", &load3_png},
-    {LOAD4_ICON, "load4", &load4_png},
-    {LOAD5_ICON, "load5", &load5_png},
-    {LOAD6_ICON, "load6", &load6_png},
-    {LOAD7_ICON, "load7", &load7_png},
+    {LOADER_ICON, "loader", &loader_png},
     {BDM_ICON, "usb", &usb_png},
     {USB_ICON, "usb_bd", &usb_bd_png},
     {ILINK_ICON, "ilk_bd", &ilk_bd_png},
@@ -189,12 +169,7 @@ static texture_t internalDefault[TEXTURES_COUNT] = {
     {DEVICE_5, "Device_5", &Device_5_png},
     {DEVICE_6, "Device_6", &Device_6_png},
     {DEVICE_ALL, "Device_all", &Device_all_png},
-    {RATING_0, "Rating_0", &Rating_0_png},
-    {RATING_1, "Rating_1", &Rating_1_png},
-    {RATING_2, "Rating_2", &Rating_2_png},
-    {RATING_3, "Rating_3", &Rating_3_png},
-    {RATING_4, "Rating_4", &Rating_4_png},
-    {RATING_5, "Rating_5", &Rating_5_png},
+
     {SCAN_240P, "Scan_240p", &Scan_240p_png},
     {SCAN_240P1, "Scan_240p1", &Scan_240p1_png},
     {SCAN_480I, "Scan_480i", &Scan_480i_png},
@@ -301,10 +276,11 @@ static void texReadPixels4(GSTEXTURE *texture, png_bytep *rowPointers, size_t si
     memset(&clut[pngTexture.numPalette], 0, (16 - pngTexture.numPalette) * sizeof(clut[0]));
 
     for (i = 0; i < pngTexture.numPalette; i++) {
-        clut[i].red = pngTexture.palette[i].red;
-        clut[i].green = pngTexture.palette[i].green;
-        clut[i].blue = pngTexture.palette[i].blue;
-        clut[i].alpha = (i < pngTexture.numTrans) ? (pngTexture.trans[i] >> 1) : 0x80;
+        int aVal = (i < pngTexture.numTrans) ? pngTexture.trans[i] : 255;
+        clut[i].red = (pngTexture.palette[i].red * aVal) / 255;
+        clut[i].green = (pngTexture.palette[i].green * aVal) / 255;
+        clut[i].blue = (pngTexture.palette[i].blue * aVal) / 255;
+        clut[i].alpha = (aVal == 255) ? 128 : (aVal >> 1);
     }
 
     for (i = 0; i < texture->Height; i++)
@@ -323,10 +299,11 @@ static void texReadPixels8(GSTEXTURE *texture, png_bytep *rowPointers, size_t si
     memset(&clut[pngTexture.numPalette], 0, (256 - pngTexture.numPalette) * sizeof(clut[0]));
 
     for (i = 0; i < pngTexture.numPalette; i++) {
-        clut[i].red = pngTexture.palette[i].red;
-        clut[i].green = pngTexture.palette[i].green;
-        clut[i].blue = pngTexture.palette[i].blue;
-        clut[i].alpha = (i < pngTexture.numTrans) ? (pngTexture.trans[i] >> 1) : 0x80;
+        int aVal = (i < pngTexture.numTrans) ? pngTexture.trans[i] : 255;
+        clut[i].red = (pngTexture.palette[i].red * aVal) / 255;
+        clut[i].green = (pngTexture.palette[i].green * aVal) / 255;
+        clut[i].blue = (pngTexture.palette[i].blue * aVal) / 255;
+        clut[i].alpha = (aVal == 255) ? 128 : (aVal >> 1);
     }
 
     for (i = 0; i < pngTexture.numPalette; i++) {
@@ -368,8 +345,8 @@ static void texReadPixels32(GSTEXTURE *texture, png_bytep *rowPointers, size_t s
     int i, j, k = 0;
     for (i = 0; i < texture->Height; i++) {
         for (j = 0; j < texture->Width; j++) {
-            memcpy(&Pixels[k], &rowPointers[i][4 * j], 3);
-            Pixels[k++].a = rowPointers[i][4 * j + 3] >> 1;
+            int r = rowPointers[i][4 * j]; int g = rowPointers[i][4 * j + 1]; int b = rowPointers[i][4 * j + 2]; int a = rowPointers[i][4 * j + 3]; Pixels[k].r = (r * a) / 255; Pixels[k].g = (g * a) / 255; Pixels[k].b = (b * a) / 255;
+            Pixels[k++].a = (a == 255) ? 128 : (a >> 1);
         }
     }
 }
@@ -409,7 +386,7 @@ static void texReadData(GSTEXTURE *texture, png_structp pngPtr, png_infop infoPt
     png_read_end(pngPtr, NULL);
 }
 
-static int texLoadAll(GSTEXTURE *texture, const char *filePath, int texId)
+static int texLoadAll(GSTEXTURE *texture, const char *filePath, int texId, void **textureData)
 {
     texPrepare(texture);
     png_structp pngPtr = NULL;
@@ -446,10 +423,16 @@ static int texLoadAll(GSTEXTURE *texture, const char *filePath, int texId)
         readData = &PngFileBufferPtr;
         readFunction = &texReadMemFunction;
     } else {
-        if (texId == -1 || !internalDefault[texId].texture)
+        if (textureData == NULL) {
+            if (texId == -1 || !internalDefault[texId].texture)
+                return ERR_BAD_FILE;
+            textureData = internalDefault[texId].texture;
+        }
+
+        if (!textureData)
             return ERR_BAD_FILE;
 
-        PngFileBufferPtr = internalDefault[texId].texture;
+        PngFileBufferPtr = textureData;
         readData = &PngFileBufferPtr;
         readFunction = &texReadMemFunction;
     }
@@ -541,12 +524,17 @@ static int texLoadAll(GSTEXTURE *texture, const char *filePath, int texId)
 
 static int texLoad(GSTEXTURE *texture, const char *filePath)
 {
-    return texLoadAll(texture, filePath, -1);
+    return texLoadAll(texture, filePath, -1, NULL);
 }
 
 int texLoadInternal(GSTEXTURE *texture, int texId)
 {
-    return texLoadAll(texture, NULL, texId);
+    return texLoadAll(texture, NULL, texId, NULL);
+}
+
+int texLoadMem(GSTEXTURE *texture, void **textureData)
+{
+    return texLoadAll(texture, NULL, -1, textureData);
 }
 
 int texDiscoverLoad(GSTEXTURE *texture, const char *path, int texId)
@@ -560,8 +548,17 @@ int texDiscoverLoad(GSTEXTURE *texture, const char *path, int texId)
     else
         snprintf(filePath, sizeof(filePath), "%s.%s", path, "png");
 
+    if (strncasecmp(filePath, "host", 4) == 0) {
+        int slashIdx;
+        for (slashIdx = 0; filePath[slashIdx]; slashIdx++) {
+            if (filePath[slashIdx] == '/') {
+                filePath[slashIdx] = '\\';
+            }
+        }
+    }
+
     int fd = open(filePath, O_RDONLY);
-    if (fd > 0) {
+    if (fd >= 0) {
         // File found, load it
         close(fd);
         return (texLoad(texture, filePath) >= 0) ? 0 : ERR_BAD_FILE;

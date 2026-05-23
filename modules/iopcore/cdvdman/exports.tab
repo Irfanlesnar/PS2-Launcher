@@ -1,3 +1,6 @@
+void _retonly(void);
+int _ret0(void);
+int _dummy(void);
 
 // cdvdman export table
 DECLARE_EXPORT_TABLE(cdvdman, 1, 1)

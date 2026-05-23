@@ -2,14 +2,7 @@
 #define __TEXTURES_H
 
 enum INTERNAL_TEXTURE {
-    LOAD0_ICON = 0,
-    LOAD1_ICON,
-    LOAD2_ICON,
-    LOAD3_ICON,
-    LOAD4_ICON,
-    LOAD5_ICON,
-    LOAD6_ICON,
-    LOAD7_ICON,
+    LOADER_ICON = 0,
     BDM_ICON,
     USB_ICON,
     ILINK_ICON,
@@ -64,12 +57,7 @@ enum INTERNAL_TEXTURE {
     DEVICE_5,
     DEVICE_6,
     DEVICE_ALL,
-    RATING_0,
-    RATING_1,
-    RATING_2,
-    RATING_3,
-    RATING_4,
-    RATING_5,
+
     SCAN_240P,
     SCAN_240P1,
     SCAN_480I,
@@ -105,6 +93,7 @@ enum INTERNAL_TEXTURE {
 
 int texLookupInternalTexId(const char *name);
 int texLoadInternal(GSTEXTURE *texture, int texId);
+int texLoadMem(GSTEXTURE *texture, void **textureData);
 int texDiscoverLoad(GSTEXTURE *texture, const char *path, int texId);
 void texFree(GSTEXTURE *texture);
 

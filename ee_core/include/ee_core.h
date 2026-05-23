@@ -77,9 +77,9 @@ enum GAME_MODE {
 extern int EnableDebug;
 extern void BlinkColour(u8 x, u32 colour, u8 forever);
 #define GS_BGCOLOUR                                                 *((volatile unsigned long int *)0x120000E0)
-#define DBGCOL(color, type, description)                            GS_BGCOLOUR = color                      // this wrapper macro only serves the purpose of allowing us to grep from outside for documentation
-#define BGCOLND(color)                                              GS_BGCOLOUR = color                      // same as DBGCOL() but this one is not passed to debug color documentation. used for blinking or setting screen to black wich usually means nothing
-#define DBGCOL_BLNK(blinkCount, colour, forever, type, description) BlinkColour(blinkCount, colour, forever) //same as DBGCOL() but this one includes screen blinking effect
+#define DBGCOL(color, type, description)                            do { } while (0)
+#define BGCOLND(color)                                              do { if ((color) == 0) GS_BGCOLOUR = color; } while (0)
+#define DBGCOL_BLNK(blinkCount, colour, forever, type, description) do { } while (0)
 
 
 #endif

@@ -143,6 +143,9 @@ int gAutosort;
 int gAutoRefresh;
 int gEnableNotifications;
 int gEnableArt;
+int gPS5Mode = 1;
+int gPS5ShowTime = 1;
+int gPS5UISound = 1;
 int gWideScreen;
 int gVMode; // 0 - Auto, 1 - PAL, 2 - NTSC
 int gXOff;
@@ -266,6 +269,10 @@ static void itemExecSelect(struct menu_item *curMenu)
     if (support) {
         if (support->enabled) {
             if (curMenu->current) {
+                extern int gPS5Mode;
+                if (gPS5Mode) {
+                    playPS5LaunchTransition(submenuItemGetText(&curMenu->current->item));
+                }
                 config_set_t *configSet = menuLoadConfig();
                 support->itemLaunch(support, curMenu->current->item.id, configSet);
             }
@@ -291,6 +298,11 @@ static void itemExecRefresh(struct menu_item *curMenu)
     item_list_t *support = curMenu->userdata;
 
     if (support && support->enabled) {
+        if (support->mode >= BDM_MODE && support->mode <= BDM_MODE4) {
+            bdm_device_data_t *pDeviceData = (bdm_device_data_t *)support->priv;
+            if (pDeviceData != NULL)
+                pDeviceData->ForceRefresh = 1;
+        }
         ioPutRequest(IO_MENU_UPDATE_DEFFERED, &support->mode);
         sfxPlay(SFX_CONFIRM);
     }
@@ -389,6 +401,11 @@ static void clearMenuGameList(opl_io_module_t *mdl)
 
 void initSupport(item_list_t *itemList, int mode, int force_reinit)
 {
+    if (itemList == NULL) {
+        list_support[mode].support = NULL;
+        list_support[mode].menuItem.visible = 0;
+        return;
+    }
     opl_io_module_t *mod = &list_support[mode];
 
     // Set the start mode flag based on device type.
@@ -401,6 +418,10 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
         startMode = gHDDStartMode;
     else if (mode == APP_MODE)
         startMode = gAPPStartMode;
+
+    if (gPS5Mode && startMode == START_MODE_DISABLED) {
+        startMode = START_MODE_MANUAL;
+    }
 
     if (startMode) {
         if (!mod->support) {
@@ -588,7 +609,7 @@ config_set_t *oplGetLegacyAppsConfig(void)
     config_set_t *appConfig;
     char appsPath[128];
 
-    snprintf(appsPath, sizeof(appsPath), "mc?:OPL/conf_apps.cfg");
+    snprintf(appsPath, sizeof(appsPath), "mc?:PS2L/conf_apps.cfg");
     fd = openFile(appsPath, O_RDONLY);
     if (fd >= 0) {
         appConfig = configAlloc(CONFIG_APPS, NULL, appsPath);
@@ -778,31 +799,14 @@ static int checkLoadConfigBDM(int types)
 {
     char path[64];
     int value;
-    int bdm_result;
-    int is_hdd = 0;
 
     // check USB
-    bdm_result = bdmFindPartition(path, "conf_opl.cfg", 0);
-    // if not on USB, check BDM HDD
-    if (bdm_result == 0) {
-        // wait for up to 5 seconds for the HDD to spin up and become accessible...
-        if (hddLoadModules() >= 0 && bdmHDDIsPresent(5000)) {
-            bdm_result = bdmFindPartition(path, "conf_opl.cfg", 0);
-            if (bdm_result)
-                is_hdd = 1;
-        }
-    }
-
-    if (bdm_result) {
+    if (bdmFindPartition(path, "conf_opl.cfg", 0)) {
         configEnd();
         configInit(path);
         value = configReadMulti(types);
         config_set_t *configOPL = configGetByType(CONFIG_OPL);
         configSetInt(configOPL, CONFIG_OPL_BDM_MODE, START_MODE_AUTO);
-        if (is_hdd != 0) {
-            gEnableBdmHDD = 1;
-            configSetInt(configOPL, CONFIG_OPL_ENABLE_BDMHDD, gEnableBdmHDD);
-        }
         return value;
     }
 
@@ -908,6 +912,8 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_ENABLE_NOTIFICATIONS, &gEnableNotifications);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_COVERART, &gEnableArt);
             configGetInt(configOPL, CONFIG_OPL_WIDESCREEN, &gWideScreen);
+            configGetInt(configOPL, "ps5_show_time", &gPS5ShowTime);
+            configGetInt(configOPL, "ps5_ui_sound", &gPS5UISound);
 
             if (!(getKeyPressed(KEY_TRIANGLE) && getKeyPressed(KEY_CROSS))) {
                 configGetInt(configOPL, CONFIG_OPL_VMODE, &gVMode);
@@ -963,6 +969,16 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_BOOT_SND_VOLUME, &gBootSndVolume);
             configGetInt(configOPL, CONFIG_OPL_BGM_VOLUME, &gBGMVolume);
             configGetStrCopy(configOPL, CONFIG_OPL_DEFAULT_BGM_PATH, gDefaultBGMPath, sizeof(gDefaultBGMPath));
+            if (gPS5Mode) {
+                gEnableSFX = 1;
+                gEnableBootSND = 1;
+                gBDMStartMode = START_MODE_AUTO;
+                gHDDStartMode = START_MODE_AUTO;
+                gETHStartMode = START_MODE_AUTO;
+                gAPPStartMode = START_MODE_AUTO;
+                if (gDefaultDevice >= ETH_MODE)
+                    gDefaultDevice = BDM_MODE;
+            }
         }
     }
 
@@ -1012,19 +1028,9 @@ static void _loadConfig()
 static int trySaveConfigBDM(int types)
 {
     char path[64];
-    int bdm_result;
 
     // check USB
-    bdm_result = bdmFindPartition(path, "conf_opl.cfg", 1);
-    // if not on USB, check BDM HDD
-    if (bdm_result == 0) {
-        // wait for up to 5 seconds for the HDD to spin up and become accessible...
-        if (hddLoadModules() >= 0 && bdmHDDIsPresent(5000)) {
-            bdm_result = bdmFindPartition(path, "conf_opl.cfg", 1);
-        }
-    }
-
-    if (bdm_result) {
+    if (bdmFindPartition(path, "conf_opl.cfg", 1)) {
         configSetMove(path);
         return configWriteMulti(types);
     }
@@ -1099,6 +1105,8 @@ static void _saveConfig()
         configSetInt(configOPL, CONFIG_OPL_ENABLE_NOTIFICATIONS, gEnableNotifications);
         configSetInt(configOPL, CONFIG_OPL_ENABLE_COVERART, gEnableArt);
         configSetInt(configOPL, CONFIG_OPL_WIDESCREEN, gWideScreen);
+        configSetInt(configOPL, "ps5_show_time", gPS5ShowTime);
+        configSetInt(configOPL, "ps5_ui_sound", gPS5UISound);
         configSetInt(configOPL, CONFIG_OPL_VMODE, gVMode);
         configSetInt(configOPL, CONFIG_OPL_XOFF, gXOff);
         configSetInt(configOPL, CONFIG_OPL_YOFF, gYOff);
@@ -1697,7 +1705,7 @@ static void setDefaults(void)
     gAutoLaunchDeviceData = NULL;
     gOPLPart[0] = '\0';
     gHDDPrefix = "pfs0:";
-    gBaseMCDir = "mc?:OPL";
+    gBaseMCDir = "mc?:PS2L";
 
     bdmCacheSize = 16;
     hddCacheSize = 8;
@@ -1735,7 +1743,7 @@ static void setDefaults(void)
     gHDDSpindown = 20;
     gScrollSpeed = 1;
     gExitPath[0] = '\0';
-    gDefaultDevice = APP_MODE;
+    gDefaultDevice = BDM_MODE;
     gAutosort = 1;
     gAutoRefresh = 0;
     gEnableDebug = 0;
@@ -1750,8 +1758,8 @@ static void setDefaults(void)
     gEnableNotifications = 0;
     gEnableArt = 0;
     gWideScreen = 0;
-    gEnableSFX = 0;
-    gEnableBootSND = 0;
+    gEnableSFX = 1;
+    gEnableBootSND = 1;
     gEnableBGM = 0;
     gSFXVolume = 80;
     gBootSndVolume = 80;
@@ -1760,10 +1768,10 @@ static void setDefaults(void)
     gXSensitivity = 1;
     gYSensitivity = 1;
 
-    gBDMStartMode = START_MODE_DISABLED;
-    gHDDStartMode = START_MODE_DISABLED;
-    gETHStartMode = START_MODE_DISABLED;
-    gAPPStartMode = START_MODE_DISABLED;
+    gBDMStartMode = START_MODE_AUTO;
+    gHDDStartMode = START_MODE_AUTO;
+    gETHStartMode = START_MODE_AUTO;
+    gAPPStartMode = START_MODE_AUTO;
 
     gEnableILK = 0;
     gEnableMX4SIO = 0;
@@ -1771,7 +1779,7 @@ static void setDefaults(void)
 
     frameCounter = 0;
 
-    gVMode = 0;
+    gVMode = 0; // Default to safe Auto-detection resolution!
     gXOff = 0;
     gYOff = 0;
     gOverscan = 0;
@@ -1836,9 +1844,20 @@ static void deferredInit(void)
     struct gui_update_t *id = guiOpCreate(GUI_INIT_DONE);
     guiDeferUpdate(id);
 
-    if (list_support[gDefaultDevice].support) {
+    int device = gDefaultDevice;
+    if (!list_support[device].support) {
+        int i;
+        for (i = 0; i < MODE_COUNT; i++) {
+            if (list_support[i].support) {
+                device = i;
+                break;
+            }
+        }
+    }
+
+    if (list_support[device].support) {
         id = guiOpCreate(GUI_OP_SELECT_MENU);
-        id->menu.menu = &list_support[gDefaultDevice].menuItem;
+        id->menu.menu = &list_support[device].menuItem;
         guiDeferUpdate(id);
     }
 }

@@ -18,9 +18,11 @@ void fntEnd();
  * @param path The path to the font file
  * @return font slot id (negative value means error happened) */
 int fntLoadFile(char *path, int fontSize);
+int fntLoadFileMem(void *buffer, int bufferSize, int fontSize);
 
 /** Reloads the default font */
 int fntLoadDefault(char *path);
+int fntLoadDefaultMem(void *buffer, int bufferSize);
 
 /** Releases a font slot */
 void fntRelease(int id);

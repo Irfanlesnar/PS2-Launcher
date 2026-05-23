@@ -102,6 +102,9 @@ static void poweroffHandler(void *arg);
 
 int sysLoadModuleBuffer(void *buffer, int size, int argc, char *argv)
 {
+    if (size <= 0 || buffer == NULL) {
+        return 0; // Safely skip loading stripped modules!
+    }
 
     int i, id, ret, index = 0;
 

@@ -73,48 +73,40 @@ endif
 
 FRONTEND_OBJS = pad.o xparam.o fntsys.o renderman.o menusys.o OSDHistory.o system.o lang.o lang_internal.o config.o hdd.o dialogs.o \
 		dia.o ioman.o texcache.o themes.o supportbase.o bdmsupport.o ethsupport.o hddsupport.o zso.o lz4.o \
-		appsupport.o gui.o guigame.o vmc_groups.o textures.o opl.o atlas.o nbns.o httpclient.o gsm.o cheatman.o sound.o ps2cnf.o
+		appsupport.o gui.o guigame.o textures.o opl.o atlas.o nbns.o httpclient.o gsm.o cheatman.o sound.o ps2cnf.o
 
 IOP_OBJS =	iomanx.o filexio.o ps2fs.o usbd.o bdmevent.o \
 		bdm.o bdmfs_fatfs.o usbmass_bd.o iLinkman.o IEEE1394_bd.o mx4sio_bd.o \
-		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o lwnbdsvr.o \
-		ps2dev9.o smsutils.o ps2ip.o smap.o isofs.o nbns-iop.o \
+		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o \
+		ps2dev9.o smsutils.o \
+		isofs.o \
 		sio2man.o padman.o mcman.o mcserv.o \
-		httpclient-iop.o netman.o ps2ips.o \
-		bdm_mcemu.o hdd_mcemu.o smb_mcemu.o \
+		bdm_mcemu.o hdd_mcemu.o \
 		iremsndpatch.o apemodpatch.o f2techioppatch.o cleareffects.o resetspu.o \
 		libsd.o audsrv.o
 
 EECORE_OBJS = ee_core.o ioprp.o util.o \
 		udnl.o imgdrv.o eesync.o \
-		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o smb_cdvdman.o \
-		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o \
-		ingame_smstcpip.o smap_ingame.o smbman.o smbinit.o
+		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o \
+		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o
 
-PNG_ASSETS = load0 load1 load2 load3 load4 load5 load6 load7 usb usb_bd ilk_bd \
-	m4s_bd hdd_bd hdd eth app cross triangle circle square select start left right \
-	background info cover disc screen ELF HDL ISO ZSO UL APPS CD DVD Aspect_s Aspect_w Aspect_w1 \
-	Aspect_w2 Device_1 Device_2 Device_3 Device_4 Device_5 Device_6 Device_all Rating_0 \
-	Rating_1 Rating_2 Rating_3 Rating_4 Rating_5 Scan_240p Scan_240p1 Scan_480i Scan_480p \
-	Scan_480p1 Scan_480p2 Scan_480p3 Scan_480p4 Scan_480p5 Scan_576i Scan_576p Scan_720p \
-	Scan_1080i Scan_1080i2 Scan_1080p Vmode_multi Vmode_ntsc Vmode_pal logo case apps_case\
-	Index_0 Index_1 Index_2 Index_3 Index_4
+PNG_ASSETS = loader Instagram_icon logo square cross
 	# unused icons - up down l1 l2 l3 r1 r2 r3
 
-GFX_OBJS = $(PNG_ASSETS:%=%_png.o) poeveticanew.o icon_sys.o icon_icn.o
+COVER_ASSETS = $(basename $(notdir $(wildcard covers/*.png)))
 
-AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connect.o bd_disconnect.o
+GFX_OBJS = $(PNG_ASSETS:%=%_png.o) $(COVER_ASSETS:%=%_png.o) ps5_cover_assets.o poeveticanew.o roboto_regular.o roboto_bold.o icon_sys.o icon_icn.o
+
+AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connect.o bd_disconnect.o game_launch.o
 
 MISC_OBJS =	icon_sys_A.o icon_sys_J.o icon_sys_C.o conf_theme_OPL.o
 
-TRANSLATIONS = Albanian Arabic Bulgarian Cebuano Croatian Czech Danish Dutch Filipino French \
-	German Greek Hungarian Indonesian Italian Japanese Korean Laotian Persian Polish Portuguese \
-	Portuguese_BR Romana Russian Ryukyuan SChinese Spanish Swedish TChinese Turkish Vietnamese
+TRANSLATIONS =
 
 EE_BIN = opl.elf
 EE_BIN_STRIPPED = opl_stripped.elf
-EE_BIN_PACKED = OPNPS2LD.ELF
-EE_VPKD = OPNPS2LD-$(OPL_VERSION)
+EE_BIN_PACKED = PS2L.ELF
+EE_VPKD = PS2L-$(OPL_VERSION)
 EE_SRC_DIR = src/
 EE_OBJS_DIR = obj/
 EE_ASM_DIR = asm/
@@ -126,7 +118,7 @@ PNG_ASSETS_DIR = gfx/
 MAPFILE = opl.map
 EE_LDFLAGS += -Wl,-Map,$(MAPFILE)
 
-EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -lnetman -lps2ips -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
+EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
 EE_INCS += -I$(PS2SDK)/ports/include -I$(PS2SDK)/ports/include/freetype2 -I$(GSKIT)/include -I$(GSKIT)/ee/dma/include -I$(GSKIT)/ee/gs/include -Imodules/iopcore/common -Imodules/network/common -Imodules/hdd/common -Iinclude
 BIN2C = $(PS2SDK)/bin/bin2c
 
@@ -231,7 +223,7 @@ EE_LDFLAGS += -fdata-sections -ffunction-sections -Wl,--gc-sections
 
 ifdef PS2SDK
 
-all: download_lng download_lwNBD languages
+all:
 	echo "Building Open PS2 Loader $(OPL_VERSION)..."
 	echo "-Interface"
 ifneq ($(NOT_PACKED),1)
@@ -240,7 +232,7 @@ else
 	$(MAKE) $(EE_BIN)
 endif
 
-release: download_lng download_lwNBD languages $(EE_VPKD).ZIP
+release: $(EE_VPKD).ZIP
 
 debug:
 	$(MAKE) DEBUG=1 all
@@ -336,7 +328,7 @@ clean:	download_lwNBD
 
 realclean: clean
 	echo "-Language"
-	rm -fr $(LNG_SRC_DIR) $(LNG_DIR)lang_*.lng $(INTERNAL_LANGUAGE_C) $(INTERNAL_LANGUAGE_H)
+	rm -fr $(LNG_SRC_DIR) $(LNG_DIR)lang_*.lng
 
 rebuild: clean all
 
@@ -703,7 +695,21 @@ $(EE_ASM_DIR)mcman.c: $(PS2SDK)/iop/irx/mcman.irx | $(EE_ASM_DIR)
 $(EE_ASM_DIR)mcserv.c: $(PS2SDK)/iop/irx/mcserv.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
+thirdparty/roboto_regular.ttf: fonts/roboto_regular.ttf
+	@mkdir -p thirdparty
+	cp $< $@
+
+thirdparty/roboto_bold.ttf: fonts/roboto_bold.ttf
+	@mkdir -p thirdparty
+	cp $< $@
+
 $(EE_ASM_DIR)poeveticanew.c: thirdparty/PoeVeticaNew.ttf | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(*F)_raw
+
+$(EE_ASM_DIR)roboto_regular.c: thirdparty/roboto_regular.ttf | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(*F)_raw
+
+$(EE_ASM_DIR)roboto_bold.c: thirdparty/roboto_bold.ttf | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_raw
 
 $(EE_ASM_DIR)icon_sys.c: gfx/icon.sys | $(EE_ASM_DIR)
@@ -724,29 +730,35 @@ $(EE_ASM_DIR)icon_sys_C.c: misc/icon_C.sys | $(EE_ASM_DIR)
 $(EE_ASM_DIR)conf_theme_OPL.c: misc/conf_theme_OPL.cfg | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_cfg
 
-$(EE_ASM_DIR)boot.c: audio/boot.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+CONFIRM_ADP = $(shell if [ -f audio/confirm.adp ]; then echo audio/confirm.adp; else echo audio/cancel.adp; fi)
+CURSOR_ADP = $(shell if [ -f audio/cursor.adp ]; then echo audio/cursor.adp; else echo audio/cancel.adp; fi)
+
+$(EE_ASM_DIR)boot.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ boot_adp
 
 $(EE_ASM_DIR)cancel.c: audio/cancel.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+	$(BIN2C) $< $@ cancel_adp
 
-$(EE_ASM_DIR)confirm.c: audio/confirm.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)confirm.c: $(CONFIRM_ADP) | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ confirm_adp
 
-$(EE_ASM_DIR)cursor.c: audio/cursor.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)cursor.c: $(CURSOR_ADP) | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ cursor_adp
 
-$(EE_ASM_DIR)message.c: audio/message.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)message.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ message_adp
 
-$(EE_ASM_DIR)transition.c: audio/transition.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)game_launch.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ game_launch_adp
 
-$(EE_ASM_DIR)bd_connect.c: audio/bd_connect.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)transition.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ transition_adp
 
-$(EE_ASM_DIR)bd_disconnect.c: audio/bd_disconnect.adp | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_adp
+$(EE_ASM_DIR)bd_connect.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ bd_connect_adp
+
+$(EE_ASM_DIR)bd_disconnect.c: audio/cancel.adp | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ bd_disconnect_adp
 
 $(EE_ASM_DIR)IOPRP_img.c: modules/iopcore/IOPRP.img | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)
@@ -774,6 +786,16 @@ $(EE_OBJS_DIR)%.o: $(EE_ASM_DIR)%.c | $(EE_OBJS_DIR)
 
 $(PNG_ASSETS:%=$(EE_ASM_DIR)%_png.c): $(EE_ASM_DIR)%_png.c: $(PNG_ASSETS_DIR)%.png | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(@:$(EE_ASM_DIR)%.c=%)
+
+$(COVER_ASSETS:%=$(EE_ASM_DIR)%_png.c): $(EE_ASM_DIR)%_png.c: covers/%.png | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(@:$(EE_ASM_DIR)%.c=%)
+
+$(EE_ASM_DIR)ps5_cover_assets.c: $(COVER_ASSETS:%=covers/%.png) | $(EE_ASM_DIR)
+	@printf '#include "include/ps5covers.h"\n\n' > $@
+	@for cover in $(COVER_ASSETS); do printf 'extern void *%s_png;\n' "$$cover" >> $@; done
+	@printf '\nconst ps5_cover_asset_t gPS5CoverAssets[] = {\n' >> $@
+	@for cover in $(COVER_ASSETS); do printf '    {"%s", &%s_png},\n' "$$cover" "$$cover" >> $@; done
+	@printf '};\n\nconst int gPS5CoverAssetCount = sizeof(gPS5CoverAssets) / sizeof(gPS5CoverAssets[0]);\n' >> $@
 
 endif
 
@@ -809,11 +831,11 @@ $(ENGLISH_TEMPLATE_YML): $(BASE_LANGUAGE) $(LANG_COMPILER)
 $(ENGLISH_LNG): $(ENGLISH_TEMPLATE_YML) $(BASE_LANGUAGE) $(LANG_COMPILER)
 	python3 $(LANG_COMPILER) --make_lng --base $(BASE_LANGUAGE) --translation $< $@
 
-$(INTERNAL_LANGUAGE_C): $(BASE_LANGUAGE) $(LANG_COMPILER)
-	python3 $(LANG_COMPILER) --make_source --base $< $@
+$(INTERNAL_LANGUAGE_C):
+	@echo "Using static internal english translation source: $@"
 
-$(INTERNAL_LANGUAGE_H): $(BASE_LANGUAGE) $(LANG_COMPILER)
-	python3 $(LANG_COMPILER) --make_header --base $< $@
+$(INTERNAL_LANGUAGE_H):
+	@echo "Using static internal english translation header: $@"
 
 ifndef PS2SDK
 ps2sdk-not-setup:

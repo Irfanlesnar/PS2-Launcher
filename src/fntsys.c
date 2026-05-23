@@ -288,6 +288,61 @@ void fntInit()
     fntLoadDefault(NULL);
 }
 
+static int fntLoadSlotMem(font_t *font, void *buffer, int bufferSize, int fontSize)
+{
+    fntInitSlot(font);
+
+    // load the font via memory handle
+    int error = FT_New_Memory_Face(font_library, (FT_Byte *)buffer, bufferSize, 0, &font->face);
+    if (error) {
+        LOG("FNTSYS Freetype memory font loading failed with %x!\n", error);
+        fntDeleteSlot(font);
+        return FNT_ERROR;
+    }
+
+    font->isValid = 1;
+    font->fontSize = fontSize;
+    font->dataPtr = NULL;
+    fntUpdateAspectRatio();
+
+    return 0;
+}
+
+int fntLoadFileMem(void *buffer, int bufferSize, int fontSize)
+{
+    font_t *font;
+    int i = 1;
+    for (; i < FNT_MAX_COUNT; i++) {
+        font = &fonts[i];
+        if (!font->isValid) {
+            if (fntLoadSlotMem(font, buffer, bufferSize, fontSize) != FNT_ERROR)
+                return i;
+            break;
+        }
+    }
+
+    return FNT_ERROR;
+}
+
+int fntLoadDefaultMem(void *buffer, int bufferSize)
+{
+    font_t newFont, oldFont;
+
+    if (fntLoadSlotMem(&newFont, buffer, bufferSize, FNTSYS_DEFAULT_SIZE) != FNT_ERROR) {
+        WaitSema(gFontSemaId);
+        memcpy(&oldFont, &fonts[FNT_DEFAULT], sizeof(font_t));
+        memcpy(&fonts[FNT_DEFAULT], &newFont, sizeof(font_t));
+        SignalSema(gFontSemaId);
+
+        // delete the old font
+        fntDeleteSlot(&oldFont);
+
+        return 0;
+    }
+
+    return -1;
+}
+
 int fntLoadFile(char *path, int fontSize)
 {
     font_t *font;
@@ -518,6 +573,12 @@ int fntRenderString(int id, int x, int y, short aligned, size_t width, size_t he
         } else {
             x -= fntCalcDimensions(id, string) >> 1;
         }
+    } else if (aligned & ALIGN_RIGHT) {
+        if (width) {
+            x -= min(fntCalcDimensions(id, string), width);
+        } else {
+            x -= fntCalcDimensions(id, string);
+        }
     }
 
     if (aligned & ALIGN_VCENTER) {
@@ -643,6 +704,12 @@ int fntRenderString(int id, int x, int y, short aligned, size_t width, size_t he
             x -= min(fntCalcDimensions(id, string), width) >> 1;
         } else {
             x -= fntCalcDimensions(id, string) >> 1;
+        }
+    } else if (aligned & ALIGN_RIGHT) {
+        if (width) {
+            x -= min(fntCalcDimensions(id, string), width);
+        } else {
+            x -= fntCalcDimensions(id, string);
         }
     }
 

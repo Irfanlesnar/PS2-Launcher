@@ -834,8 +834,141 @@ int menuCheckParentalLock(void)
     return result;
 }
 
+int gPS5SavedVMode = -1;
+int gPS5SavedShowTime = -1;
+int gPS5TempShowTime = 1;
+int gPS5SavedUISound = -1;
+int gPS5TempUISound = 1;
+
 void menuHandleInputMenu()
 {
+    if (gPS5Mode) {
+        extern int gPS5SettingsPage;
+        extern int gPS5SettingsSel;
+        extern int gPS5TempVMode;
+        extern int gPS5SubSel;
+        extern int gVMode;
+        extern int gSelectButton;
+        extern unsigned int gPS5SaveNotifyFrame;
+        extern int guiFrameId;
+        extern int gPS5ActiveTab;
+        extern int gPS5ShowTime;
+        extern int gPS5UISound;
+
+        if (gPS5SavedVMode == -1) {
+            gPS5SavedVMode = gVMode;
+            gPS5TempVMode = gVMode;
+            gPS5SavedShowTime = gPS5ShowTime;
+            gPS5TempShowTime = gPS5ShowTime;
+            gPS5SavedUISound = gPS5UISound;
+            gPS5TempUISound = gPS5UISound;
+        }
+
+        // Triangle key: Back to Games tab, revert changes if not saved
+        if (getKeyOn(KEY_TRIANGLE)) {
+            sfxPlay(SFX_CANCEL);
+            if (gVMode != gPS5SavedVMode) {
+                gVMode = gPS5SavedVMode;
+                applyConfig(-1, -1, 0);
+            }
+            gPS5ShowTime = gPS5SavedShowTime;
+            gPS5UISound = gPS5SavedUISound;
+            gPS5TempVMode = gPS5SavedVMode;
+            gPS5TempShowTime = gPS5SavedShowTime;
+            gPS5TempUISound = gPS5SavedUISound;
+            gPS5ActiveTab = 0;
+            return;
+        }
+
+        if (gPS5SubSel == 0) { // Focus is on Resolution selection line
+            if (getKeyOn(KEY_LEFT)) {
+                sfxPlay(SFX_CURSOR);
+                if (gPS5TempVMode == 0) gPS5TempVMode = 11;
+                else if (gPS5TempVMode == 11) gPS5TempVMode = 10;
+                else if (gPS5TempVMode == 10) gPS5TempVMode = 3;
+                else gPS5TempVMode = 0;
+            }
+            if (getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                if (gPS5TempVMode == 0) gPS5TempVMode = 3;
+                else if (gPS5TempVMode == 3) gPS5TempVMode = 10;
+                else if (gPS5TempVMode == 10) gPS5TempVMode = 11;
+                else gPS5TempVMode = 0;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                sfxPlay(SFX_CONFIRM);
+                if (gVMode != gPS5TempVMode) {
+                    int oldMode = gVMode;
+                    gVMode = gPS5TempVMode;
+                    applyConfig(-1, -1, 0); // Apply explicitly when CROSS is pressed!
+                    
+                    extern int guiConfirmVideoMode(void);
+                    if (guiConfirmVideoMode() == 0) {
+                        // Revert back on cancel/timeout
+                        gVMode = oldMode;
+                        gPS5TempVMode = oldMode;
+                        applyConfig(-1, -1, 0);
+                    } else {
+                        // User confirmed, save!
+                        extern int gPS5SavedVMode;
+                        gPS5SavedVMode = gVMode;
+                        saveConfig(CONFIG_OPL, 0);
+                    }
+                }
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 1; // Move down to Show Time
+            }
+        } else if (gPS5SubSel == 1) { // Focus is on Show Time
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempShowTime = !gPS5TempShowTime; // Toggle On/Off
+            }
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 0; // Move up to Resolution
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 2; // Move down to UI Sound
+            }
+        } else if (gPS5SubSel == 2) { // Focus is on UI Sound
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempUISound = !gPS5TempUISound; // Toggle On/Off
+            }
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 1; // Move up to Show Time
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 3; // Move down to Save text
+            }
+        } else if (gPS5SubSel == 3) { // Focus is on the Save text
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 2; // Move up to UI Sound
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                sfxPlay(SFX_CONFIRM);
+                // Commit settings to baseline before persistent save
+                gPS5ShowTime = gPS5TempShowTime;
+                gPS5UISound = gPS5TempUISound;
+                gPS5SavedShowTime = gPS5ShowTime;
+                gPS5SavedUISound = gPS5UISound;
+                gPS5SavedVMode = gVMode; // Update baseline to the new saved setting!
+
+                // Save settings permanently to Memory Card
+                saveConfig(CONFIG_OPL | CONFIG_NETWORK | CONFIG_GAME, 1);
+                gPS5SaveNotifyFrame = guiFrameId; // Trigger Save Successful Dialog!
+                gPS5SubSel = 0; // Reset focus to Resolution line
+            }
+        }
+        return;
+    }
+
     if (!mainMenu)
         return;
 
@@ -915,14 +1048,6 @@ void menuHandleInputMenu()
         // so the exit press wont propagate twice
         readPads();
     }
-
-    if (getKeyOn(KEY_START) || getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE)) {
-        // Check if there is anything to show the user, at all.
-        if (gAPPStartMode || gETHStartMode || gBDMStartMode || gHDDStartMode) {
-            guiSwitchScreen(GUI_SCREEN_MAIN);
-            refreshMenuPosition();
-        }
-    }
 }
 
 static void menuRenderElements(theme_element_t *elem)
@@ -933,8 +1058,15 @@ static void menuRenderElements(theme_element_t *elem)
     WaitSema(menuSemaId);
 
     while (elem) {
-        if (elem->drawElem)
-            elem->drawElem(selected_item, selected_item->item->current, itemConfig, elem);
+        if (elem->drawElem) {
+            if (gPS5Mode) {
+                if (elem->type == ELEM_TYPE_BACKGROUND || elem->type == ELEM_TYPE_ITEMS_LIST) {
+                    elem->drawElem(selected_item, selected_item->item->current, itemConfig, elem);
+                }
+            } else {
+                elem->drawElem(selected_item, selected_item->item->current, itemConfig, elem);
+            }
+        }
 
         elem = elem->next;
     }
@@ -956,28 +1088,89 @@ void menuRenderMain(void)
 
 void menuHandleInputMain()
 {
-    if (getKey(KEY_LEFT)) {
-        menuPrevH();
-    } else if (getKey(KEY_RIGHT)) {
-        menuNextH();
-    } else if (getKey(KEY_UP)) {
-        menuPrevV();
-    } else if (getKey(KEY_DOWN)) {
-        menuNextV();
-    } else if (getKeyOn(KEY_CROSS)) {
+    if (gPS5Mode) {
+        extern int gVMode;
+        extern int gPS5TempVMode;
+        extern int gPS5ShowTime;
+        extern int gPS5UISound;
+        if (getKeyOn(KEY_L1)) {
+            sfxPlay(SFX_CURSOR);
+            if (gPS5ActiveTab == 1) {
+                if (gVMode != gPS5SavedVMode) {
+                    gVMode = gPS5SavedVMode;
+                    applyConfig(-1, -1, 0);
+                }
+                gPS5ShowTime = gPS5SavedShowTime;
+                gPS5UISound = gPS5SavedUISound;
+            }
+            gPS5TempVMode = gPS5SavedVMode;
+            gPS5TempShowTime = gPS5SavedShowTime;
+            gPS5TempUISound = gPS5SavedUISound;
+            gPS5ActiveTab = 0;
+            return;
+        } else if (getKeyOn(KEY_R1)) {
+            sfxPlay(SFX_CURSOR);
+            if (gPS5ActiveTab == 0) {
+                gPS5SavedVMode = gVMode; // Backup current resolution when switching to settings
+                gPS5TempVMode = gVMode;
+                gPS5SavedShowTime = gPS5ShowTime;
+                gPS5TempShowTime = gPS5ShowTime;
+                gPS5SavedUISound = gPS5UISound;
+                gPS5TempUISound = gPS5UISound;
+            }
+            gPS5ActiveTab = 1;
+            // Initialize mainMenuCurrent if needed
+            if (!menuGetMainMenuCurrent()) {
+                menuSetMainMenuCurrent(menuGetMainMenu());
+            }
+            return;
+        }
+
+        if (gPS5ActiveTab == 1) {
+            menuHandleInputMenu();
+            return;
+        }
+
+        if (getKey(KEY_LEFT)) {
+            menuPrevV();
+        } else if (getKey(KEY_RIGHT)) {
+            menuNextV();
+        }
+    } else {
+        if (getKey(KEY_LEFT)) {
+            menuPrevH();
+        } else if (getKey(KEY_RIGHT)) {
+            menuNextH();
+        } else if (getKey(KEY_UP)) {
+            menuPrevV();
+        } else if (getKey(KEY_DOWN)) {
+            menuNextV();
+        }
+    }
+    if (getKeyOn(KEY_CROSS)) {
         selected_item->item->execCross(selected_item->item);
     } else if (getKeyOn(KEY_TRIANGLE)) {
-        selected_item->item->execTriangle(selected_item->item);
+        if (!gPS5Mode) selected_item->item->execTriangle(selected_item->item);
     } else if (getKeyOn(KEY_CIRCLE)) {
-        selected_item->item->execCircle(selected_item->item);
+        if (!gPS5Mode) selected_item->item->execCircle(selected_item->item);
     } else if (getKeyOn(KEY_SQUARE)) {
-        selected_item->item->execSquare(selected_item->item);
+        if (gPS5Mode) {
+            extern int gPS5ActiveTab;
+            if (gPS5ActiveTab == 0) {
+                sfxPlay(SFX_CONFIRM);
+                selected_item->item->refresh(selected_item->item);
+            }
+        } else {
+            selected_item->item->execSquare(selected_item->item);
+        }
     } else if (getKeyOn(KEY_START)) {
-        // reinit main menu - show/hide items valid in the active context
-        menuInitMainMenu();
-        guiSwitchScreen(GUI_SCREEN_MENU);
+        if (!gPS5Mode) {
+            // reinit main menu - show/hide items valid in the active context
+            menuInitMainMenu();
+            guiSwitchScreen(GUI_SCREEN_MENU);
+        }
     } else if (getKeyOn(KEY_SELECT)) {
-        selected_item->item->refresh(selected_item->item);
+        if (!gPS5Mode) selected_item->item->refresh(selected_item->item);
     } else if (getKey(KEY_L1)) {
         menuPrevPage();
     } else if (getKey(KEY_R1)) {
@@ -1251,4 +1444,19 @@ void menuHandleInputAppMenu()
     if (getKeyOn(KEY_START) || getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE)) {
         guiSwitchScreen(GUI_SCREEN_MAIN);
     }
+}
+
+submenu_list_t *menuGetMainMenu(void)
+{
+    return mainMenu;
+}
+
+submenu_list_t *menuGetMainMenuCurrent(void)
+{
+    return mainMenuCurrent;
+}
+
+void menuSetMainMenuCurrent(submenu_list_t *item)
+{
+    mainMenuCurrent = item;
 }

@@ -17,7 +17,7 @@
 GSGLOBAL *gsGlobal;
 s32 guiThreadID;
 
-static int order;
+int order;
 static short int vmode = -1;
 static u8 hires = 0;
 static u8 guiWakeupCount;
@@ -76,8 +76,8 @@ static int iDisplayXOff;
 static int iDisplayYOff;
 
 // Transposition values including overscan compensation
-static float fRenderXOff = 0.0f;
-static float fRenderYOff = 0.0f;
+float fRenderXOff = 0.0f;
+float fRenderYOff = 0.0f;
 
 const u64 gColWhite = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);  // Alpha 0x80 -> solid white
 const u64 gColBlack = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);  // Alpha 0x80 -> solid black
@@ -346,6 +346,65 @@ void rmDrawPixmap(GSTEXTURE *txt, int x, int y, short aligned, int w, int h, sho
     rmDrawQuad(&quad);
 }
 
+void rmDrawRotatedPixmap(GSTEXTURE *txt, int cx, int cy, int w, int h, float angleRad, u64 color)
+{
+    if (!txt || !txt->Mem) return;
+
+    if (w == DIM_UNDEF)
+        w = txt->Width;
+    if (h == DIM_UNDEF)
+        h = txt->Height;
+
+    float halfW = w * 0.5f;
+    float halfH = h * 0.5f;
+
+    float cosA = cosf(angleRad);
+    float sinA = sinf(angleRad);
+
+    // Calculate rotated offset relative to center in standard unscaled coordinates
+    float dx_tl = -halfW * cosA - (-halfH) * sinA;
+    float dy_tl = -halfW * sinA + (-halfH) * cosA;
+
+    float dx_tr =  halfW * cosA - (-halfH) * sinA;
+    float dy_tr =  halfW * sinA + (-halfH) * cosA;
+
+    float dx_bl = -halfW * cosA -  halfH * sinA;
+    float dy_bl = -halfW * sinA +  halfH * cosA;
+
+    float dx_br =  halfW * cosA -  halfH * sinA;
+    float dy_br =  halfW * sinA +  halfH * cosA;
+
+    // Apply scaling to absolute rotated coordinates
+    float rx_tl = (float)((int)X_SCALE((cx + dx_tl) * iAspectWidth) >> 2);
+    float ry_tl = Y_SCALE(cy + dy_tl);
+
+    float rx_tr = (float)((int)X_SCALE((cx + dx_tr) * iAspectWidth) >> 2);
+    float ry_tr = Y_SCALE(cy + dy_tr);
+
+    float rx_bl = (float)((int)X_SCALE((cx + dx_bl) * iAspectWidth) >> 2);
+    float ry_bl = Y_SCALE(cy + dy_bl);
+
+    float rx_br = (float)((int)X_SCALE((cx + dx_br) * iAspectWidth) >> 2);
+    float ry_br = Y_SCALE(cy + dy_br);
+
+    if ((txt->PSM == GS_PSM_CT32) || (txt->Clut && txt->ClutPSM == GS_PSM_CT32)) {
+        gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+        gsKit_set_test(gsGlobal, GS_ATEST_ON);
+    } else {
+        gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+        gsKit_set_test(gsGlobal, GS_ATEST_OFF);
+    }
+
+    gsKit_TexManager_bind(gsGlobal, txt);
+    gsKit_prim_quad_texture(gsGlobal, txt,
+                            rx_tl + fRenderXOff, ry_tl + fRenderYOff, 0.0f, 0.0f,
+                            rx_tr + fRenderXOff, ry_tr + fRenderYOff, txt->Width, 0.0f,
+                            rx_bl + fRenderXOff, ry_bl + fRenderYOff, 0.0f, txt->Height,
+                            rx_br + fRenderXOff, ry_br + fRenderYOff, txt->Width, txt->Height,
+                            order, color);
+    order++;
+}
+
 void rmDrawOverlayPixmap(GSTEXTURE *overlay, int x, int y, short aligned, int w, int h, short scaled, u64 color,
                          GSTEXTURE *inlay, int ulx, int uly, int urx, int ury, int blx, int bly, int brx, int bry)
 {
@@ -392,6 +451,18 @@ void rmDrawRect(int x, int y, int w, int h, u64 color)
     order++;
 }
 
+void rmDrawRectPrecise(int x1, int y1, int x2, int y2, u64 color)
+{
+    float fx1 = X_SCALE(x1) + fRenderXOff;
+    float fy1 = Y_SCALE(y1) + fRenderYOff;
+    float fx2 = X_SCALE(x2) + fRenderXOff;
+    float fy2 = Y_SCALE(y2) + fRenderYOff;
+
+    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+    gsKit_prim_sprite(gsGlobal, fx1, fy1, fx2, fy2, order, color);
+    order++;
+}
+
 void rmDrawLine(int x1, int y1, int x2, int y2, u64 color)
 {
     float fx1 = X_SCALE(x1) + fRenderXOff;
@@ -426,6 +497,11 @@ void rmSetAspectRatio(enum rm_aratio dar)
 int rmWideScale(int x)
 {
     return (x * iAspectWidth) >> 2;
+}
+
+int rmGetAspectWidth(void)
+{
+    return iAspectWidth;
 }
 
 // Get the pixel aspect ratio (how wide or narrow are the pixels?)

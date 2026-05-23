@@ -23,6 +23,7 @@
 #include "include/sound.h"
 #include "include/guigame.h"
 
+#include <math.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <libvux.h>
@@ -203,7 +204,7 @@ void guiShowAbout()
     char OPLVersion[40];
     char OPLBuildDetails[40];
 
-    snprintf(OPLVersion, sizeof(OPLVersion), "Open PS2 Loader %s", OPL_VERSION);
+    snprintf(OPLVersion, sizeof(OPLVersion), "PS2 Launcher %s", OPL_VERSION);
     diaSetLabel(diaAbout, ABOUT_TITLE, OPLVersion);
 
     snprintf(OPLBuildDetails, sizeof(OPLBuildDetails), "GSM %s"
@@ -1006,15 +1007,14 @@ static void guiHandleOp(struct gui_update_t *item)
             break;
 
         case GUI_OP_APPEND_MENU:
-            result = submenuAppendItem(item->menu.subMenu, item->submenu.icon_id, item->submenu.text, item->submenu.id, item->submenu.text_id);
+            result = submenuAppendItem(item->menu.subMenu, item->submenu.icon_id,
+                                       item->submenu.text, item->submenu.id, item->submenu.text_id);
+
             if (!item->menu.menu->submenu) { // first subitem in list
                 item->menu.menu->submenu = result;
-                if (!item->submenu.selected) {
-                    item->menu.menu->current = result;
-                    item->menu.menu->pagestart = result;
-                }
-            }
-            if (item->submenu.selected) { // remember last played game feature
+                item->menu.menu->current = result;
+                item->menu.menu->pagestart = result;
+            } else if (item->submenu.selected) { // remember last played game feature
                 item->menu.menu->current = result;
                 item->menu.menu->pagestart = result;
                 item->menu.menu->remindLast = 1;
@@ -1086,24 +1086,43 @@ void guiExecDeferredOps(void)
 
 static void guiDrawBusy(int alpha)
 {
+    if (gPS5Mode && gPS5ActiveTab == 1) {
+        // Disabling the busy spinner overlay in PS5 mode while in Settings page to prevent MC save hangs/crashes
+        return;
+    }
+    GSTEXTURE *texture = thmGetTexture(LOADER_ICON);
+
     if (gTheme->loadingIcon) {
-        GSTEXTURE *texture = thmGetTexture(LOAD0_ICON + (guiFrameId >> 1) % gTheme->loadingIconCount);
         if (texture && texture->Mem) {
-            u64 mycolor = GS_SETREG_RGBA(0x80, 0x80, 0x80, alpha);
-            rmDrawPixmap(texture, gTheme->loadingIcon->posX, gTheme->loadingIcon->posY, gTheme->loadingIcon->aligned, gTheme->loadingIcon->width, gTheme->loadingIcon->height, gTheme->loadingIcon->scaled, mycolor);
+            float angle = guiFrameId * 0.08f;
+            u64 mycolor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, alpha);
+            int cx = gTheme->loadingIcon->posX;
+            int cy = gTheme->loadingIcon->posY;
+            int w = gTheme->loadingIcon->width;
+            int h = gTheme->loadingIcon->height;
+            if (gPS5Mode) {
+                w = w * 0.65f;
+                h = h * 0.65f;
+                // Position loader spinner exactly at bottom-right with 20px margin using dynamic screen width and height
+                // Since rmDrawRotatedPixmap scales cx with iAspectWidth / 4, we multiply by 4 / rmGetAspectWidth() to keep it perfectly at the edge in widescreen!
+                cx = (screenWidth - 20 - (w / 2)) * 4 / rmGetAspectWidth();
+                cy = screenHeight - 20 - (h / 2);
+            }
+            rmDrawRotatedPixmap(texture, cx, cy, w, h, angle, mycolor);
         }
     }
 }
 
 static void guiRenderGreeting(int alpha)
 {
-    u64 mycolor = GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, alpha);
+    // Draw pure black boot screen fading away
+    u64 mycolor = GS_SETREG_RGBA(0x00, 0x00, 0x00, alpha);
     rmDrawRect(0, 0, screenWidth, screenHeight, mycolor);
 
     GSTEXTURE *logo = thmGetTexture(LOGO_PICTURE);
     if (logo) {
         mycolor = GS_SETREG_RGBA(0x80, 0x80, 0x80, alpha);
-        rmDrawPixmap(logo, screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, logo->Width, logo->Height, SCALING_RATIO, mycolor);
+        rmDrawPixmap(logo, screenWidth >> 1, screenHeight >> 1, ALIGN_CENTER, logo->Width * 3 / 10, logo->Height * 3 / 10, SCALING_RATIO, mycolor);
     }
 }
 
@@ -1266,8 +1285,29 @@ static int cdirection(unsigned char a, unsigned char b)
         return 1;
 }
 
+u8 gPS5BgColorR = 16;
+u8 gPS5BgColorG = 16;
+u8 gPS5BgColorB = 16;
+
 void guiDrawBGPlasma()
 {
+    if (gPS5Mode) {
+        int i;
+        for (i = 0; i < 32; i++) {
+            float factor = (float)i / 31.0f;
+            int ri = (int)(gPS5BgColorR * factor);
+            int gi = (int)(gPS5BgColorG * factor);
+            int bi = (int)(gPS5BgColorB * factor);
+            u8 r = (u8)(ri > 255 ? 255 : ri);
+            u8 g = (u8)(gi > 255 ? 255 : gi);
+            u8 b = (u8)(bi > 255 ? 255 : bi);
+            int y1 = (i * screenHeight) / 32;
+            int y2 = ((i + 1) * screenHeight) / 32;
+            rmDrawRectPrecise(0, y1, screenWidth, y2, GS_SETREG_RGBA(r, g, b, 0x80));
+        }
+        return;
+    }
+
     int x, y;
 
     // transition the colors
@@ -1532,12 +1572,9 @@ void guiIntroLoop(void)
         if (greetingAlpha > 0)
             guiRenderGreeting(greetingAlpha);
 
-        // Initialize boot sound
-        if (gInitComplete && !tFadeDelayEnd && gEnableBootSND) {
-            // Start playing sound
-            sfxPlay(SFX_BOOT);
-            // Calculate transition delay
-            tFadeDelayEnd = clock() + (sfxGetSoundDuration(SFX_BOOT) - fadeDuration) * (CLOCKS_PER_SEC / 1000);
+        // Initialize boot sound (Disabled to keep boot silent and fast)
+        if (gInitComplete && !tFadeDelayEnd) {
+            tFadeDelayEnd = clock();
         }
 
         if (gInitComplete && clock() >= tFadeDelayEnd)
@@ -1653,25 +1690,101 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
 
         readPads();
 
-        if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
-            terminate = 1;
-        else if (getKeyOn(gSelectButton))
-            terminate = 2;
+        extern int gPS5Mode;
+        if (gPS5Mode) {
+            if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE))
+                terminate = 1;
+        } else {
+            if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
+                terminate = 1;
+            else if (getKeyOn(gSelectButton))
+                terminate = 2;
+        }
 
         if (ui)
             diaRenderUI(ui, screenHandler->inMenu, NULL, 0);
         else
             guiShow();
 
-        rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+        if (gPS5Mode) {
+            // Draw stunning modern Material Design modal dialog!
+            // 1. Semi-transparent dark overlay for background focus
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
 
-        rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
-        rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+            // 2. Dialog box: W=320, H=110, Center X=160, Y=185
+            int dlgW = 320;
+            int dlgH = 110;
+            int dlgX = (screenWidth - dlgW) / 2;
+            int dlgY = (screenHeight - dlgH) / 2;
 
-        fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, text, gTheme->textColor);
-        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
-        if (addAccept)
-            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+            // Premium #0E0E0E extremely dark grey rounded background card with 5px corner radius
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
+
+            // 3. Message Text inside the card
+            // If the message is the save notification, we display "Save Successful"!
+            const char *displayMsg = text;
+            if (strstr(text, "saved") != NULL || strstr(text, "Saved") != NULL) {
+                displayMsg = "Save Successful";
+            }
+            
+            // Wrap text into multiple lines (up to 4 lines, max 38 chars each) to prevent overflow
+            char lines[4][64];
+            int lineCount = 0;
+            memset(lines, 0, sizeof(lines));
+
+            const char *src = displayMsg;
+            int srcLen = strlen(src);
+            int start = 0;
+
+            while (start < srcLen && lineCount < 4) {
+                int end = start + 38;
+                if (end >= srcLen) {
+                    end = srcLen;
+                } else {
+                    // Backtrack to the last space to avoid breaking words
+                    int lastSpace = end;
+                    while (lastSpace > start && src[lastSpace] != ' ') {
+                        lastSpace--;
+                    }
+                    if (lastSpace > start) {
+                        end = lastSpace;
+                    }
+                }
+
+                // Copy chunk
+                int chunkLen = end - start;
+                if (chunkLen > 63) chunkLen = 63;
+                strncpy(lines[lineCount], &src[start], chunkLen);
+                lines[lineCount][chunkLen] = '\0';
+                lineCount++;
+
+                // Skip spaces
+                start = end;
+                while (start < srcLen && src[start] == ' ') {
+                    start++;
+                }
+            }
+
+            // Render wrapped text line-by-line, left-aligned at dlgX + 25 (shifted up)
+            int j;
+            for (j = 0; j < lineCount; j++) {
+                fntRenderString(gTheme->fonts[0], dlgX + 25, dlgY + 25 + (j * 18), ALIGN_LEFT, 0.70f, 0.70f, lines[j], GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            }
+
+            // 4. White Close Text at the right bottom (no button)
+            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 25, dlgY + dlgH - 25, ALIGN_RIGHT | ALIGN_VCENTER, 0.70f, 0.70f, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        } else {
+            rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+
+            rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
+            rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, text, gTheme->textColor);
+            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
+            if (addAccept)
+                guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+        }
 
         guiEndFrame();
     }
@@ -1712,13 +1825,15 @@ void guiRenderTextScreen(const char *message)
 {
     guiStartFrame();
 
-    guiShow();
-
-    rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
-
-    fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, message, gTheme->textColor);
-
-    guiDrawOverlays();
+    if (gPS5Mode) {
+        // Stay in a pure solid pitch-black screen without showing any loading message or overlays
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0xFF));
+    } else {
+        guiShow();
+        rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+        fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, message, gTheme->textColor);
+        guiDrawOverlays();
+    }
 
     guiEndFrame();
 }
@@ -1745,19 +1860,37 @@ int guiConfirmVideoMode(void)
 {
     clock_t timeEnd;
     int terminate = 0;
+    int focusYes = 1; // Default to Yes focused
 
     sfxPlay(SFX_MESSAGE);
 
-    timeEnd = clock() + OPL_VMODE_CHANGE_CONFIRMATION_TIMEOUT_MS * (CLOCKS_PER_SEC / 1000);
+    timeEnd = clock() + 10000 * (CLOCKS_PER_SEC / 1000);
     while (!terminate) {
         guiStartFrame();
 
         readPads();
 
-        if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
-            terminate = 1;
-        else if (getKeyOn(gSelectButton))
-            terminate = 2;
+        extern int gPS5Mode;
+        if (gPS5Mode) {
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                focusYes = !focusYes;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                if (focusYes) {
+                    terminate = 2; // Accept
+                } else {
+                    terminate = 1; // Cancel
+                }
+            } else if (getKeyOn(KEY_CIRCLE)) {
+                terminate = 1; // Cancel
+            }
+        } else {
+            if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
+                terminate = 1;
+            else if (getKeyOn(gSelectButton))
+                terminate = 2;
+        }
 
         // If the user fails to respond within the timeout period, deem it as a cancel operation.
         if (clock() > timeEnd)
@@ -1765,14 +1898,47 @@ int guiConfirmVideoMode(void)
 
         guiShow();
 
-        rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+        if (gPS5Mode) {
+            // Draw stunning modern Material Design modal dialog!
+            // 1. Semi-transparent dark overlay for background focus
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
 
-        rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
-        rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+            // 2. Dialog box: W=320, H=115, Center X=160, Y=182
+            int dlgW = 320;
+            int dlgH = 115;
+            int dlgX = (screenWidth - dlgW) / 2;
+            int dlgY = (screenHeight - dlgH) / 2;
 
-        fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, _l(_STR_CFM_VMODE_CHG), gTheme->textColor);
-        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
-        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+            // Premium #0E0E0E extremely dark grey rounded background card
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
+
+            // 3. Message Text inside the card (balanced top padding)
+            fntRenderString(gTheme->fonts[0], dlgX + dlgW / 2, dlgY + 25, ALIGN_CENTER, 0.70f, 0.70f, "If you can see this dialog tap Yes.", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+            // 4. Timer/revert countdown message
+            int secondsLeft = (int)((timeEnd - clock()) / CLOCKS_PER_SEC + 1);
+            if (secondsLeft < 0) secondsLeft = 0;
+            char timerStr[64];
+            snprintf(timerStr, sizeof(timerStr), "Reverting in %d seconds...", secondsLeft);
+            fntRenderString(gTheme->fonts[0], dlgX + dlgW / 2, dlgY + 50, ALIGN_CENTER, 0.65f, 0.65f, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));
+
+            // 5. Render YES / NO options at bottom of card
+            u64 yesColor = focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
+            u64 noColor = !focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
+
+            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 85, dlgY + 88, ALIGN_CENTER | ALIGN_VCENTER, 0.75f, 0.75f, "Yes", yesColor);
+            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 35, dlgY + 88, ALIGN_CENTER | ALIGN_VCENTER, 0.75f, 0.75f, "No", noColor);
+
+        } else {
+            rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+
+            rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
+            rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, _l(_STR_CFM_VMODE_CHG), gTheme->textColor);
+            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
+            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+        }
 
         guiEndFrame();
     }

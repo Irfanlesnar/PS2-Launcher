@@ -8,7 +8,16 @@
 #include "include/fntsys.h"
 #include "include/lang.h"
 #include "include/pad.h"
+#include "include/ps5covers.h"
 #include "include/sound.h"
+#include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <malloc.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <stdio.h>
+#include "httpclient.h"
 
 #define MENU_POS_V     50
 #define HINT_HEIGHT    32
@@ -30,26 +39,7 @@ static const char **guiThemesNames = NULL;
 // Global data
 theme_t *gTheme;
 
-enum ELEM_ATTRIBUTE_TYPE {
-    ELEM_TYPE_ATTRIBUTE_TEXT = 0,
-    ELEM_TYPE_STATIC_TEXT,
-    ELEM_TYPE_ATTRIBUTE_IMAGE,
-    ELEM_TYPE_GAME_IMAGE,
-    ELEM_TYPE_STATIC_IMAGE,
-    ELEM_TYPE_BACKGROUND, // A static image can be specified as the background. Otherwise, the plasma background will be drawn.
-    ELEM_TYPE_MENU_ICON,
-    ELEM_TYPE_MENU_TEXT,
-    ELEM_TYPE_ITEMS_LIST,
-    ELEM_TYPE_ITEM_ICON,
-    ELEM_TYPE_ITEM_COVER,
-    ELEM_TYPE_ITEM_TEXT,
-    ELEM_TYPE_HINT_TEXT,
-    ELEM_TYPE_INFO_HINT_TEXT,
-    ELEM_TYPE_LOADING_ICON,
-    ELEM_TYPE_BDM_INDEX,
-    ELEM_TYPE_GAME_COUNT_TEXT,
-    ELEM_TYPE_COUNT
-};
+
 
 #define DISPLAY_ALWAYS  0
 #define DISPLAY_DEFINED 1
@@ -518,6 +508,13 @@ static mutable_image_t *initMutableImage(const char *themePath, config_set_t *th
 
 static void drawStaticImage(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode) {
+        if (elem->type == ELEM_TYPE_BACKGROUND) {
+            guiDrawBGPlasma();
+        }
+        return;
+    }
+
     mutable_image_t *staticImage = (mutable_image_t *)elem->extended;
     if (staticImage->overlayTexture) {
         rmDrawOverlayPixmap(&staticImage->overlayTexture->source, elem->posX, elem->posY, elem->aligned, elem->width, elem->height, elem->scaled, gDefaultCol,
@@ -554,6 +551,13 @@ static GSTEXTURE *getGameImageTexture(image_cache_t *cache, void *support, struc
 
 static void drawGameImage(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode) {
+        if (elem->type == ELEM_TYPE_BACKGROUND) {
+            guiDrawBGPlasma();
+        }
+        return;
+    }
+
     mutable_image_t *gameImage = (mutable_image_t *)elem->extended;
     if (item) {
         GSTEXTURE *texture = getGameImageTexture(gameImage->cache, menu->item->userdata, &item->item);
@@ -772,6 +776,9 @@ static void initBackground(const char *themePath, config_set_t *themeConfig, the
 
 static void drawMenuIcon(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode)
+        return;
+
     GSTEXTURE *menuIconTex = thmGetTexture(menu->item->icon_id);
     if (menuIconTex && menuIconTex->Mem)
         rmDrawPixmap(menuIconTex, elem->posX, elem->posY, elem->aligned, elem->width, elem->height, elem->scaled, gDefaultCol);
@@ -797,6 +804,9 @@ static int findMenuPrev(struct menu_list *menu)
 
 static void drawMenuText(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode)
+        return;
+
     GSTEXTURE *leftIconTex = NULL, *rightIconTex = NULL;
     if (findMenuPrev(menu) != 0)
         leftIconTex = thmGetTexture(LEFT_ICON);
@@ -837,9 +847,1613 @@ static void drawBDMIndex(struct menu_list *menu, struct submenu_list *item, conf
         rmDrawPixmap(indexTex, elem->posX, elem->posY, elem->aligned, elem->width, elem->height, elem->scaled, gDefaultCol);
 }
 
+static int gPS5RegFont = -1;
+static int gPS5BoldFont = -1;
+static int gPS5HeaderFont = -1;
+static int gPS5TitleFont = -1;
+static float gPS5AnimPos = -1.0f;
+
+int gPS5ActiveTab = 0; // 0 = Games, 1 = Settings
+GSTEXTURE gPS5InstagramTex;
+int gPS5InstagramTexLoaded = 0;
+
+static GSTEXTURE gPS5MaskTex;
+static GSTEXTURE gPS5InvMaskTex;
+static int gPS5MasksInitialized = 0;
+
+extern void *roboto_regular_raw;
+extern int size_roboto_regular_raw;
+extern void *roboto_bold_raw;
+extern int size_roboto_bold_raw;
+
+static void initPS5MaskTextures(void)
+{
+    if (gPS5MasksInitialized) return;
+
+    // 1. Override slot 0 default font with embedded roboto_regular.ttf
+    if (fntLoadDefaultMem(&roboto_regular_raw, size_roboto_regular_raw) == 0) {
+        LOG("THEMES Overrode default slot 0 font with embedded roboto_regular\n");
+    } else {
+        LOG("THEMES Failed to override slot 0 with embedded roboto_regular!\n");
+    }
+
+    // Set default system theme font slot to 0
+    if (gTheme) {
+        gTheme->fonts[0] = 0;
+    }
+
+    // Set gPS5RegFont to use default slot 0 (Roboto Regular)
+    gPS5RegFont = 0;
+
+    // 2. Load embedded roboto_bold.ttf into Header and Title fonts
+    gPS5HeaderFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 20);
+    gPS5TitleFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 34);
+    gPS5BoldFont = gPS5HeaderFont; // Compatibility fallback
+    if (gPS5HeaderFont != -1 && gPS5TitleFont != -1) {
+        LOG("THEMES Loaded PS5 bold header (20) and title (34) fonts from embedded roboto_bold\n");
+    } else {
+        LOG("THEMES Failed to load embedded roboto_bold!\n");
+        if (gPS5HeaderFont == -1) gPS5HeaderFont = 0;
+        if (gPS5TitleFont == -1) gPS5TitleFont = 0;
+        gPS5BoldFont = 0;
+    }
+
+    int width = 128;
+    int height = 128;
+    int size = gsKit_texture_size_ee(width, height, GS_PSM_CT32);
+
+    // 3. Standard Mask Texture (128x128) - Nearest filtered to avoid segment seams
+    gPS5MaskTex.Width = width;
+    gPS5MaskTex.Height = height;
+    gPS5MaskTex.PSM = GS_PSM_CT32;
+    gPS5MaskTex.Filter = GS_FILTER_NEAREST;
+    gPS5MaskTex.Delayed = 1;
+    gPS5MaskTex.Mem = memalign(128, size);
+
+    // 4. Inverse Mask Texture (128x128) - Nearest filtered to avoid segment seams
+    gPS5InvMaskTex.Width = width;
+    gPS5InvMaskTex.Height = height;
+    gPS5InvMaskTex.PSM = GS_PSM_CT32;
+    gPS5InvMaskTex.Filter = GS_FILTER_NEAREST;
+    gPS5InvMaskTex.Delayed = 1;
+    gPS5InvMaskTex.Mem = memalign(128, size);
+
+    struct pixel_32 { u8 r, g, b, a; };
+    struct pixel_32 *pixels = (struct pixel_32 *)gPS5MaskTex.Mem;
+    struct pixel_32 *invPixels = (struct pixel_32 *)gPS5InvMaskTex.Mem;
+
+    int tr = 32; // Corner radius inside 128x128 texture space
+    int x, y;
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            int idx = y * width + x;
+            
+            pixels[idx].r = 255;
+            pixels[idx].g = 255;
+            pixels[idx].b = 255;
+
+            invPixels[idx].r = 255;
+            invPixels[idx].g = 255;
+            invPixels[idx].b = 255;
+
+            int dx = 0;
+            int dy = 0;
+            int isCorner = 0;
+
+            // Determine if coordinate is inside one of the 4 corner quadrants
+            if (x < tr && y < tr) {
+                dx = tr - 1 - x;
+                dy = tr - 1 - y;
+                isCorner = 1;
+            } else if (x >= width - tr && y < tr) {
+                dx = x - (width - tr);
+                dy = tr - 1 - y;
+                isCorner = 1;
+            } else if (x < tr && y >= height - tr) {
+                dx = tr - 1 - x;
+                dy = y - (height - tr);
+                isCorner = 1;
+            } else if (x >= width - tr && y >= height - tr) {
+                dx = x - (width - tr);
+                dy = y - (height - tr);
+                isCorner = 1;
+            }
+
+            if (isCorner) {
+                int dist2 = dx * dx + dy * dy;
+                // Outer boundary radius = 32, inner boundary = 30
+                if (dist2 <= 900) { // 30 * 30
+                    pixels[idx].a = 0x80;
+                    invPixels[idx].a = 0;
+                } else if (dist2 >= 1024) { // 32 * 32
+                    pixels[idx].a = 0;
+                    invPixels[idx].a = 0x80;
+                } else {
+                    int diff = dist2 - 900;
+                    u8 aVal = (u8)(0x80 - (diff * 0x80) / 124);
+                    pixels[idx].a = aVal;
+                    invPixels[idx].a = 0x80 - aVal;
+                }
+            } else {
+                // Inside solid straight edges and center fill
+                pixels[idx].a = 0x80;
+                invPixels[idx].a = 0;
+            }
+        }
+    }
+
+    gPS5MasksInitialized = 1;
+}
+
+static void rmDrawRawQuad(GSTEXTURE *txt, int x1, int y1, int x2, int y2, int u1, int v1, int u2, int v2, u64 color)
+{
+    rm_quad_t q;
+    q.ul.x = x1;
+    q.ul.y = y1;
+    q.br.x = x2;
+    q.br.y = y2;
+    q.color = color;
+    q.txt = txt;
+    q.ul.u = u1;
+    q.ul.v = v1;
+    q.br.u = u2;
+    q.br.v = v2;
+    rmDrawQuad(&q);
+}
+
+static void rmDraw9SliceRoundedRect(GSTEXTURE *txt, int x, int y, int w, int h, int r, u64 color)
+{
+    int R = r;
+    int tw = txt->Width;
+    int th = txt->Height;
+    int tr = tw / 4; // Corner radius in texture coordinates (32)
+
+    // 1. Scale key coordinate slices once to avoid floating point accumulated rounding gaps
+    int X0 = rmScaleX(x);
+    int X1 = rmScaleX(x + R);
+    int X2 = rmScaleX(x + w - R);
+    int X3 = rmScaleX(x + w);
+
+    int Y0 = rmScaleY(y);
+    int Y1 = rmScaleY(y + R);
+    int Y2 = rmScaleY(y + h - R);
+    int Y3 = rmScaleY(y + h);
+
+    // 2. Render all 9 slices perfectly using adjacent shared-vertex boundaries
+    // Top Row
+    rmDrawRawQuad(txt, X0, Y0, X1, Y1, 0, 0, tr, tr, color);
+    rmDrawRawQuad(txt, X1, Y0, X2, Y1, tr, 0, tw - tr, tr, color);
+    rmDrawRawQuad(txt, X2, Y0, X3, Y1, tw - tr, 0, tw, tr, color);
+
+    // Middle Row
+    rmDrawRawQuad(txt, X0, Y1, X1, Y2, 0, tr, tr, th - tr, color);
+    rmDrawRawQuad(txt, X1, Y1, X2, Y2, tr, tr, tw - tr, th - tr, color);
+    rmDrawRawQuad(txt, X2, Y1, X3, Y2, tw - tr, tr, tw, th - tr, color);
+
+    // Bottom Row
+    rmDrawRawQuad(txt, X0, Y2, X1, Y3, 0, th - tr, tr, th, color);
+    rmDrawRawQuad(txt, X1, Y2, X2, Y3, tr, th - tr, tw - tr, th, color);
+    rmDrawRawQuad(txt, X2, Y2, X3, Y3, tw - tr, th - tr, tw, th, color);
+}
+
+static void rmDraw9SliceRoundedRectWide(GSTEXTURE *txt, int x, int y, int w, int h, int r, u64 color)
+{
+    int R = r;
+    int tw = txt->Width;
+    int th = txt->Height;
+    int tr = tw / 4; // Corner radius in texture coordinates (32)
+
+    // 1. Scale key coordinate slices once to avoid floating point accumulated rounding gaps
+    int X0 = rmScaleX(rmWideScale(x));
+    int X1 = rmScaleX(rmWideScale(x + R));
+    int X2 = rmScaleX(rmWideScale(x + w - R));
+    int X3 = rmScaleX(rmWideScale(x + w));
+
+    int Y0 = rmScaleY(y);
+    int Y1 = rmScaleY(y + R);
+    int Y2 = rmScaleY(y + h - R);
+    int Y3 = rmScaleY(y + h);
+
+    // 2. Render all 9 slices perfectly using adjacent shared-vertex boundaries
+    // Top Row
+    rmDrawRawQuad(txt, X0, Y0, X1, Y1, 0, 0, tr, tr, color);
+    rmDrawRawQuad(txt, X1, Y0, X2, Y1, tr, 0, tw - tr, tr, color);
+    rmDrawRawQuad(txt, X2, Y0, X3, Y1, tw - tr, 0, tw, tr, color);
+
+    // Middle Row
+    rmDrawRawQuad(txt, X0, Y1, X1, Y2, 0, tr, tr, th - tr, color);
+    rmDrawRawQuad(txt, X1, Y1, X2, Y2, tr, tr, tw - tr, th - tr, color);
+    rmDrawRawQuad(txt, X2, Y1, X3, Y2, tw - tr, tr, tw, th - tr, color);
+
+    // Bottom Row
+    rmDrawRawQuad(txt, X0, Y2, X1, Y3, 0, th - tr, tr, th, color);
+    rmDrawRawQuad(txt, X1, Y2, X2, Y3, tr, th - tr, tw - tr, th, color);
+    rmDrawRawQuad(txt, X2, Y2, X3, Y3, tw - tr, th - tr, tw, th, color);
+}
+
+extern u8 gPS5BgColorR;
+extern u8 gPS5BgColorG;
+extern u8 gPS5BgColorB;
+extern GSGLOBAL *gsGlobal;
+extern float fRenderXOff;
+extern float fRenderYOff;
+extern int order;
+
+void rmDrawRoundedRect(int x, int y, int w, int h, int r, u64 color)
+{
+    rmDraw9SliceRoundedRect(&gPS5MaskTex, x, y, w, h, r, color);
+}
+
+void rmDrawRoundedRectWide(int x, int y, int w, int h, int r, u64 color)
+{
+    rmDraw9SliceRoundedRectWide(&gPS5MaskTex, x, y, w, h, r, color);
+}
+
+void rmDrawRoundedCover(GSTEXTURE *cover, int x, int y, int w, int h, int r)
+{
+    cover->Filter = GS_FILTER_NEAREST;
+
+    // Draw cover as normal square first
+
+
+    int X0 = rmScaleX(rmWideScale(x));
+    int X3 = rmScaleX(rmWideScale(x + w));
+    int Y0 = rmScaleY(y);
+    int Y3 = rmScaleY(y + h);
+
+    if ((cover->PSM == GS_PSM_CT32) || (cover->Clut && cover->ClutPSM == GS_PSM_CT32)) {
+        gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+        gsKit_set_test(gsGlobal, GS_ATEST_ON);
+    } else {
+        gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+        gsKit_set_test(gsGlobal, GS_ATEST_OFF);
+    }
+
+    gsKit_TexManager_bind(gsGlobal, cover);
+    gsKit_prim_sprite_texture(gsGlobal, cover,
+                              X0 + fRenderXOff, Y0 + fRenderYOff,
+                              0, 0,
+                              X3 + fRenderXOff, Y3 + fRenderYOff,
+                              cover->Width, cover->Height, order, gDefaultCol);
+    order++;
+
+    // Overlay only the 4 inverse corners using gPS5InvMaskTex
+    int R = r;
+    int tw = gPS5InvMaskTex.Width;
+    int th = gPS5InvMaskTex.Height;
+    int tr = tw / 4;
+
+
+    int X1 = rmScaleX(rmWideScale(x + R));
+    int X2 = rmScaleX(rmWideScale(x + w - R));
+
+
+
+    int Y1 = rmScaleY(y + R);
+    int Y2 = rmScaleY(y + h - R);
+
+
+    float factorTop = (float)y / 480.0f;
+    if (factorTop < 0.0f) factorTop = 0.0f;
+    if (factorTop > 1.0f) factorTop = 1.0f;
+    u8 rTop = (u8)(gPS5BgColorR * factorTop);
+    u8 gTop = (u8)(gPS5BgColorG * factorTop);
+    u8 bTop = (u8)(gPS5BgColorB * factorTop);
+    u64 colorTL = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
+    u64 colorTR = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
+    float factorBottom = (float)(y + h) / 480.0f;
+    if (factorBottom < 0.0f) factorBottom = 0.0f;
+    if (factorBottom > 1.0f) factorBottom = 1.0f;
+    u8 rBottom = (u8)(gPS5BgColorR * factorBottom);
+    u8 gBottom = (u8)(gPS5BgColorG * factorBottom);
+    u8 bBottom = (u8)(gPS5BgColorB * factorBottom);
+    u64 colorBL = GS_SETREG_RGBA(rBottom, gBottom, bBottom, 0x80);
+    u64 colorBR = GS_SETREG_RGBA(rBottom, gBottom, bBottom, 0x80);
+
+    rmDrawRawQuad(&gPS5InvMaskTex, X0, Y0, X1, Y1, 0, 0, tr, tr, colorTL);                     // Top-Left
+    rmDrawRawQuad(&gPS5InvMaskTex, X2, Y0, X3, Y1, tw - tr, 0, tw, tr, colorTR);         // Top-Right
+    rmDrawRawQuad(&gPS5InvMaskTex, X0, Y2, X1, Y3, 0, th - tr, tr, th, colorBL);         // Bottom-Left
+    rmDrawRawQuad(&gPS5InvMaskTex, X2, Y2, X3, Y3, tw - tr, th - tr, tw, th, colorBR); // Bottom-Right
+}
+
+int gPS5SettingsPage = 0; // 0 = Main Settings list, 1 = Display Settings sub-menu
+int gPS5SettingsSel = 0;
+
+int gPS5TempVMode = 0;
+int gPS5SubSel = 0;
+unsigned int gPS5SaveNotifyFrame = 0; // Frame timing for toast popup
+
+typedef struct {
+    char gameTitle[64];
+    char cleanName[64]; char startup[32];
+    int state; // 0 = idle, 1 = downloading, 2 = done, 3 = failed
+    u8 cardR, cardG, cardB;
+    u8 bgR, bgG, bgB;
+    int hasColor;
+    void *threadStack;
+    char coverPath[256];
+    GSTEXTURE coverTex;
+    int hasTex; // 0 = not loaded, 1 = loaded, -1 = load failed
+    char devicePrefix[32];
+} net_req_t;
+
+#define MAX_NET_CACHED_GAMES 64
+static net_req_t gNetCache[MAX_NET_CACHED_GAMES];
+static int gNetCacheCount = 0;
+static char gNetDebugMsg[256] = "Net Status: System ready.";
+
+extern void *_gp;
+
+static int loadPS5CoverTexture(GSTEXTURE *texture, const char *path)
+{
+    char pathNoExt[256];
+    char *pDot;
+    int i;
+
+    if (!strncmp(path, "embedded:", 9)) {
+        const char *coverName = path + 9;
+        for (i = 0; i < gPS5CoverAssetCount; i++) {
+            if (!strcmp(gPS5CoverAssets[i].name, coverName))
+                return texLoadMem(texture, gPS5CoverAssets[i].png);
+        }
+        return -1;
+    }
+
+    strncpy(pathNoExt, path, sizeof(pathNoExt) - 1);
+    pathNoExt[sizeof(pathNoExt) - 1] = '\0';
+
+    pDot = strrchr(pathNoExt, '.');
+    if (pDot)
+        *pDot = '\0';
+
+    return texDiscoverLoad(texture, pathNoExt, -1);
+}
+
+static void getCleanGameName(const char *src, char *dst, int max_len) {
+    int i = 0, j = 0;
+    while (src[i] != '\0' && j < max_len - 1) {
+        char c = src[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+            dst[j++] = c;
+        } else if (c == ' ') {
+            dst[j++] = '_';
+        }
+        i++;
+    }
+    dst[j] = '\0';
+}
+
+static void joinPath(char *dst, size_t maxLen, const char *dir, const char *file) {
+    char sep = '/';
+    if (strncasecmp(dir, "host", 4) == 0) {
+        sep = '\\';
+    }
+    snprintf(dst, maxLen, "%s%c%s", dir, sep, file);
+}
+
+static void getGameColors(const char *title, u8 *cardR, u8 *cardG, u8 *cardB, u8 *bgR, u8 *bgG, u8 *bgB);
+
+static void updateCacheState(const char *title, int state, int hasColor, u8 cardR, u8 cardG, u8 cardB, u8 bgR, u8 bgG, u8 bgB, const char *coverPath) {
+    int i;
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (strcmp(gNetCache[i].gameTitle, title) == 0) {
+            gNetCache[i].state = state;
+            if (hasColor) {
+                gNetCache[i].cardR = cardR;
+                gNetCache[i].cardG = cardG;
+                gNetCache[i].cardB = cardB;
+                gNetCache[i].bgR = bgR;
+                gNetCache[i].bgG = bgG;
+                gNetCache[i].bgB = bgB;
+                gNetCache[i].hasColor = 1;
+            }
+            if (coverPath) {
+                strncpy(gNetCache[i].coverPath, coverPath, sizeof(gNetCache[i].coverPath) - 1);
+                gNetCache[i].coverPath[sizeof(gNetCache[i].coverPath) - 1] = '\0';
+                gNetCache[i].hasTex = 0;
+            }
+            break;
+        }
+    }
+}
+
+static const char *stopwords[] = {
+    "the", "and", "for", "with", "you", "are", "this", "that", "from", "der", "die", "das", "und", "ein", "eine", "of", "in", "on", "at", "by", "an", "to", "is", "a", "or", "as"
+};
+
+static int isStopword(const char *word) {
+    int i;
+    for (i = 0; i < sizeof(stopwords) / sizeof(stopwords[0]); i++) {
+        if (strcmp(word, stopwords[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int getTitleKeywords(const char *title, char keywords[16][32]) {
+    int count = 0;
+    char temp[128];
+    int i;
+    for (i = 0; title[i] && i < 127; i++) {
+        char c = title[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            temp[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
+        } else {
+            temp[i] = ' ';
+        }
+    }
+    temp[i] = '\0';
+
+    char *tok = strtok(temp, " ");
+    while (tok && count < 16) {
+        if (strlen(tok) >= 2 && !isStopword(tok)) {
+            strncpy(keywords[count], tok, 31);
+            keywords[count][31] = '\0';
+            count++;
+        }
+        tok = strtok(NULL, " ");
+    }
+    return count;
+}
+
+static int countKeywordMatches(const char *fileNameLower, char keywords[16][32], int keywordCount) {
+    int matches = 0;
+    int i;
+    for (i = 0; i < keywordCount; i++) {
+        if (strstr(fileNameLower, keywords[i]) != NULL) {
+            matches++;
+        }
+    }
+    return matches;
+}
+
+static int hasKeywordRun(const char *fileNameLower, char keywords[16][32], int keywordCount, int runLength)
+{
+    int i;
+    char pattern[128];
+
+    if (keywordCount < runLength)
+        return 0;
+
+    for (i = 0; i <= keywordCount - runLength; i++) {
+        int j;
+        pattern[0] = '\0';
+        for (j = 0; j < runLength; j++) {
+            if (j > 0)
+                strncat(pattern, "_", sizeof(pattern) - strlen(pattern) - 1);
+            strncat(pattern, keywords[i + j], sizeof(pattern) - strlen(pattern) - 1);
+        }
+        if (strstr(fileNameLower, pattern) != NULL)
+            return 1;
+    }
+
+    return 0;
+}
+
+static void normalizeAlphaNumLower(const char *src, char *dst, int maxLen)
+{
+    int i, j = 0;
+    for (i = 0; src[i] && j < maxLen - 1; i++) {
+        char c = src[i];
+        if (c >= 'A' && c <= 'Z')
+            c = c - 'A' + 'a';
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            dst[j++] = c;
+    }
+    dst[j] = '\0';
+}
+
+static int scoreCoverName(const char *coverName, char keywords[16][32], int keywordCount, const char *exactTitle)
+{
+    char coverAlpha[128];
+    int matches;
+
+    normalizeAlphaNumLower(coverName, coverAlpha, sizeof(coverAlpha));
+    if (!strcmp(coverAlpha, exactTitle))
+        return 1000;
+
+    matches = countKeywordMatches(coverName, keywords, keywordCount);
+    if (hasKeywordRun(coverName, keywords, keywordCount, 3) || matches >= 3)
+        return 300 + matches;
+    if (hasKeywordRun(coverName, keywords, keywordCount, 2) || matches >= 2)
+        return 200 + matches;
+
+    return 0;
+}
+
+static void findBuiltInCoverForGame(const char *gameTitle, char *matchedPath, int maxLen)
+{
+    char keywords[16][32];
+    char exactTitle[128];
+    int keywordCount = getTitleKeywords(gameTitle, keywords);
+    int i;
+    int bestScore = 0;
+    int bestIdx = -1;
+
+    normalizeAlphaNumLower(gameTitle, exactTitle, sizeof(exactTitle));
+
+    for (i = 0; i < gPS5CoverAssetCount; i++) {
+        int score = scoreCoverName(gPS5CoverAssets[i].name, keywords, keywordCount, exactTitle);
+        if (score > bestScore) {
+            bestScore = score;
+            bestIdx = i;
+        }
+    }
+
+    if (bestIdx >= 0)
+        snprintf(matchedPath, maxLen, "embedded:%s", gPS5CoverAssets[bestIdx].name);
+    else
+        matchedPath[0] = '\0';
+}
+
+static void findCoverInCoversFolder(const char *gameTitle, const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
+    char keywords[16][32];
+    int keywordCount = getTitleKeywords(gameTitle, keywords);
+
+    char exactTitle[128];
+    int i;
+    normalizeAlphaNumLower(gameTitle, exactTitle, sizeof(exactTitle));
+
+    DIR *pdir = NULL;
+    char coversPath[256];
+    
+    static char dirPref[256];
+    static char dirPREF[256];
+    if (devicePrefix && devicePrefix[0] != '\0') {
+        snprintf(dirPref, sizeof(dirPref), "%sART", devicePrefix);
+        snprintf(dirPREF, sizeof(dirPREF), "%sart", devicePrefix);
+    } else {
+        strcpy(dirPref, "host:ART");
+        strcpy(dirPREF, "host:art");
+    }
+
+    const char *dirCandidates[] = {
+        dirPref,
+        dirPREF,
+        "host:ART",
+        "host:art",
+        "ART",
+        "art",
+        "mass0:ART",
+        "mass0:art",
+        NULL
+    };
+
+    int dIdx = 0;
+    while (dirCandidates[dIdx] != NULL) {
+        strcpy(coversPath, dirCandidates[dIdx]);
+        pdir = opendir(coversPath);
+        if (pdir) {
+            break;
+        }
+        dIdx++;
+    }
+    
+    if (!pdir) {
+        // Fall back to active device covers directory as default if opendir failed
+        strcpy(coversPath, dirPref);
+    }
+
+    int bestScore = 0; int exactFound = 0; char bestFile[256] = ""; if (pdir && startup && startup[0] != '\0') { struct dirent *sd; while ((sd = readdir(pdir)) != NULL) { if (sd->d_name[0] == '.') continue; char nl[256]; int i; for (i = 0; sd->d_name[i]; i++) { char c = sd->d_name[i]; nl[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c; } nl[i] = '\0'; if (strstr(nl, "_cov") == NULL) continue; char cs[256] = ""; int cl = 0; for (i = 0; startup[i]; i++) { char c = startup[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cs[cl++] = c; else if (c >= 'A' && c <= 'Z') cs[cl++] = c + 32; } cs[cl] = '\0'; char cn[256] = ""; int cnl = 0; char *pCov = strstr(nl, "_cov"); int covLen = pCov - nl; for (i = 0; i < covLen; i++) { char c = nl[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cn[cnl++] = c; } cn[cnl] = '\0'; if (strcmp(cn, cs) == 0) { strcpy(bestFile, sd->d_name); exactFound = 1; break; } } rewinddir(pdir); }
+    /* bestScore duplicate removed */
+    /* exactFound duplicate removed */
+
+    if (pdir) {
+        struct dirent *pdirent;
+        while ((pdirent = readdir(pdir)) != NULL) {
+            if (pdirent->d_name[0] == '.') continue;
+
+            char nameLower[256];
+            int len = strlen(pdirent->d_name);
+            if (len < 5) continue;
+            
+            const char *ext = pdirent->d_name + len - 4;
+            if (strcasecmp(ext, ".png") != 0 && strcasecmp(ext, ".jpg") != 0) continue;
+
+            for (i = 0; i < len; i++) {
+                char c = pdirent->d_name[i];
+                nameLower[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
+            }
+            nameLower[len] = '\0';
+
+            char nameClean[256];
+            strncpy(nameClean, nameLower, len - 4);
+            nameClean[len - 4] = '\0';
+
+            char nameAlpha[256];
+            int matches;
+            int score = 0;
+            normalizeAlphaNumLower(nameClean, nameAlpha, sizeof(nameAlpha));
+
+            if (strcmp(nameAlpha, exactTitle) == 0) {
+                strcpy(bestFile, pdirent->d_name);
+                exactFound = 1;
+                break;
+            }
+
+            matches = countKeywordMatches(nameLower, keywords, keywordCount);
+            if (hasKeywordRun(nameLower, keywords, keywordCount, 3) || matches >= 3) {
+                score = 300 + matches;
+            } else if (hasKeywordRun(nameLower, keywords, keywordCount, 2) || matches >= 2) {
+                score = 200 + matches;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                strcpy(bestFile, pdirent->d_name);
+            }
+        }
+        closedir(pdir);
+    }
+
+    if (!exactFound && bestScore == 0) {
+        char clean[256];
+        getCleanGameName(gameTitle, clean, sizeof(clean));
+        
+        char cleanLower[256];
+        int cleanLen = 0;
+        int lastWasUnderscore = 0;
+        for (i = 0; clean[i]; i++) {
+            char c = clean[i];
+            if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+            else if (c >= 'a' && c <= 'z') {}
+            else if (c >= '0' && c <= '9') {}
+            else c = '_';
+
+            if (c == '_') {
+                if (!lastWasUnderscore && cleanLen > 0) {
+                    cleanLower[cleanLen++] = '_';
+                    lastWasUnderscore = 1;
+                }
+            } else {
+                cleanLower[cleanLen++] = c;
+                lastWasUnderscore = 0;
+            }
+        }
+        if (cleanLen > 0 && cleanLower[cleanLen - 1] == '_') {
+            cleanLen--;
+        }
+        cleanLower[cleanLen] = '\0';
+
+        char testPath[512];
+        int fdTest = -1;
+
+        if (cleanLen > 0) {
+            char filename[256];
+            snprintf(filename, sizeof(filename), "%s.png", cleanLower);
+            joinPath(testPath, sizeof(testPath), coversPath, filename);
+            fdTest = open(testPath, O_RDONLY);
+            if (fdTest >= 0) {
+                close(fdTest);
+                exactFound = 1;
+                strcpy(bestFile, cleanLower);
+                strcat(bestFile, ".png");
+            } else {
+                snprintf(filename, sizeof(filename), "%s.jpg", cleanLower);
+                joinPath(testPath, sizeof(testPath), coversPath, filename);
+                fdTest = open(testPath, O_RDONLY);
+                if (fdTest >= 0) {
+                    close(fdTest);
+                    exactFound = 1;
+                    strcpy(bestFile, cleanLower);
+                    strcat(bestFile, ".jpg");
+                }
+            }
+        }
+
+        if (!exactFound) {
+            char alias[256] = "";
+            if (strstr(cleanLower, "grand_theft_auto")) {
+                if (strstr(cleanLower, "san_andreas")) strcpy(alias, "gta_san_andreas");
+                else if (strstr(cleanLower, "vice_city")) strcpy(alias, "gta_vice_city");
+                else if (strstr(cleanLower, "iii")) strcpy(alias, "gta_iii");
+                else strcpy(alias, "gta");
+            }
+            if (alias[0] != '\0') {
+                char filename[256];
+                snprintf(filename, sizeof(filename), "%s.png", alias);
+                joinPath(testPath, sizeof(testPath), coversPath, filename);
+                fdTest = open(testPath, O_RDONLY);
+                if (fdTest >= 0) {
+                    close(fdTest);
+                    exactFound = 1;
+                    strcpy(bestFile, alias);
+                    strcat(bestFile, ".png");
+                }
+            }
+        }
+    }
+
+    if (exactFound || bestScore > 0) {
+        joinPath(matchedPath, maxLen, coversPath, bestFile);
+    } else {
+        matchedPath[0] = '\0';
+    }
+}
+
+static void netFetchThreadFunc(void *arg) {
+    net_req_t *req = (net_req_t *)arg;
+    if (!req) {
+        ExitDeleteThread();
+        return;
+    }
+    void *stackPtr = req->threadStack;
+
+    char matchedPath[256] = {0};
+    findCoverInCoversFolder(req->gameTitle, req->startup, req->devicePrefix, matchedPath, sizeof(matchedPath));
+    if (matchedPath[0] == '\0') {
+        findBuiltInCoverForGame(req->gameTitle, matchedPath, sizeof(matchedPath));
+    }
+
+    sprintf(gNetDebugMsg, "Cover search matched: %s", matchedPath);
+
+    u8 cardR = 100, cardG = 100, cardB = 100;
+    u8 bgR = 24, bgG = 24, bgB = 24;
+    getGameColors(req->gameTitle, &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
+
+    updateCacheState(req->gameTitle, 2, 1, cardR, cardG, cardB, bgR, bgG, bgB, matchedPath);
+    sprintf(gNetDebugMsg, "Cover matched for '%s'", req->gameTitle);
+
+    free(req);
+    if (stackPtr) free(stackPtr);
+    ExitDeleteThread();
+}
+
+static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix) {
+    int i;
+    char matchedPath[256];
+    u8 cardR = 100, cardG = 100, cardB = 100;
+    u8 bgR = 24, bgG = 24, bgB = 24;
+
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (strcmp(gNetCache[i].gameTitle, title) == 0) {
+            return;
+        }
+    }
+
+    if (gNetCacheCount >= MAX_NET_CACHED_GAMES) return;
+
+    int idx = gNetCacheCount++;
+    strncpy(gNetCache[idx].gameTitle, title, 63);
+    gNetCache[idx].gameTitle[63] = '\0';
+    getCleanGameName(title, gNetCache[idx].cleanName, 64); if (startup) { strncpy(gNetCache[idx].startup, startup, sizeof(gNetCache[idx].startup) - 1); gNetCache[idx].startup[sizeof(gNetCache[idx].startup) - 1] = '\0'; } else { gNetCache[idx].startup[0] = '\0'; }
+    if (devicePrefix) {
+        strncpy(gNetCache[idx].devicePrefix, devicePrefix, sizeof(gNetCache[idx].devicePrefix) - 1);
+        gNetCache[idx].devicePrefix[sizeof(gNetCache[idx].devicePrefix) - 1] = '\0';
+    } else {
+        gNetCache[idx].devicePrefix[0] = '\0';
+    }
+    gNetCache[idx].state = 1;
+    gNetCache[idx].hasColor = 0;
+
+    findBuiltInCoverForGame(title, matchedPath, sizeof(matchedPath));
+    getGameColors(title, &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
+    updateCacheState(title, 2, 1, cardR, cardG, cardB, bgR, bgG, bgB, matchedPath);
+}
+
+static void getGameColors(const char *title, u8 *cardR, u8 *cardG, u8 *cardB, u8 *bgR, u8 *bgG, u8 *bgB)
+{
+    int cacheIdx;
+    for (cacheIdx = 0; cacheIdx < gNetCacheCount; cacheIdx++) {
+        if (strcmp(gNetCache[cacheIdx].gameTitle, title) == 0) {
+            if (gNetCache[cacheIdx].hasColor) {
+                *cardR = gNetCache[cacheIdx].cardR;
+                *cardG = gNetCache[cacheIdx].cardG;
+                *cardB = gNetCache[cacheIdx].cardB;
+                *bgR = gNetCache[cacheIdx].bgR;
+                *bgG = gNetCache[cacheIdx].bgG;
+                *bgB = gNetCache[cacheIdx].bgB;
+                return;
+            }
+            break;
+        }
+    }
+    if (strstr(title, "God of War")) {
+        *cardR = 180; *cardG = 20;  *cardB = 30; // God of War Crimson
+        *bgR = 48;   *bgG = 5;   *bgB = 8;
+    } else if (strstr(title, "Grand Theft Auto") || strstr(title, "GTA")) {
+        *cardR = 210; *cardG = 120; *cardB = 10; // San Andreas Orange
+        *bgR = 56;   *bgG = 28;  *bgB = 3;
+    } else if (strstr(title, "Gran Turismo")) {
+        *cardR = 30;  *cardG = 100; *cardB = 210; // Racing Blue
+        *bgR = 8;    *bgG = 24;  *bgB = 52;
+    } else if (strstr(title, "Metal Gear")) {
+        *cardR = 40;  *cardG = 110; *cardB = 50; // Jungle Green
+        *bgR = 10;   *bgG = 28;  *bgB = 12;
+    } else if (strstr(title, "Devil May Cry")) {
+        *cardR = 90;  *cardG = 30;  *cardB = 180; // DMC Violet/Indigo
+        *bgR = 24;   *bgG = 8;   *bgB = 48;
+    } else if (strstr(title, "Final Fantasy")) {
+        *cardR = 20;  *cardG = 150; *cardB = 160; // FF Cyan/Aqua
+        *bgR = 5;    *bgG = 36;  *bgB = 40;
+    } else if (strstr(title, "Shadow of the Colossus")) {
+        *cardR = 120; *cardG = 120; *cardB = 125; // Shadow Stone Grey
+        *bgR = 32;   *bgG = 32;  *bgB = 34;
+    } else if (strstr(title, "Resident Evil")) {
+        *cardR = 130; *cardG = 20;  *cardB = 50; // RE Blood Burgundy
+        *bgR = 32;   *bgG = 5;   *bgB = 12;
+    } else if (strstr(title, "Tekken")) {
+        *cardR = 190; *cardG = 150; *cardB = 20; // Tekken Gold
+        *bgR = 48;   *bgG = 38;  *bgB = 5;
+    } else if (strstr(title, "Silent Hill")) {
+        *cardR = 70;  *cardG = 95;  *cardB = 90; // Silent Teal/Misty Grey
+        *bgR = 18;   *bgG = 24;  *bgB = 22;
+    } else {
+        // Generate a beautiful, unique dominant color for each game based on its title!
+        unsigned int hash = 5381;
+        const char *p;
+        for (p = title; *p; p++) {
+            hash = ((hash << 5) + hash) + (unsigned char)*p;
+        }
+        
+        // Stabilize brightness so cards are visible but premium
+        *cardR = 50 + (hash % 100);
+        *cardG = 50 + ((hash >> 8) % 100);
+        *cardB = 50 + ((hash >> 16) % 100);
+
+        // Subdued background color for smooth transitions
+        *bgR = *cardR / 4;
+        *bgG = *cardG / 4;
+        *bgB = *cardB / 4;
+    }
+}
+
+typedef struct {
+    const char *serial;     // Cleaned lowercase alphanumeric serial
+    const char *cleanTitle; // Cleaned lowercase alphanumeric title
+    const char *company;
+} popular_game_t;
+
+static const popular_game_t gPopularGames[] = {
+    // GTA Series
+    {"slus20946", "grandtheftautosanandreas", "Rockstar Games"},
+    {"sles52541", "grandtheftautosanandreas", "Rockstar Games"},
+    {"slpm66119", "grandtheftautosanandreas", "Rockstar Games"},
+    {"slus20552", "grandtheftautovicecity", "Rockstar Games"},
+    {"sles51061", "grandtheftautovicecity", "Rockstar Games"},
+    {"slus20062", "grandtheftauto3", "Rockstar Games"},
+    {"sles50330", "grandtheftauto3", "Rockstar Games"},
+    {"slus20062", "grandtheftautoiii", "Rockstar Games"},
+    {"sles50330", "grandtheftautoiii", "Rockstar Games"},
+
+    // Gran Turismo
+    {"scus97102", "granturismo3aspec", "Polyphony Digital"},
+    {"sces50294", "granturismo3aspec", "Polyphony Digital"},
+    {"scus97102", "granturismo3", "Polyphony Digital"},
+    {"sces50294", "granturismo3", "Polyphony Digital"},
+    {"scus97328", "granturismo4", "Polyphony Digital"},
+    {"sces51719", "granturismo4", "Polyphony Digital"},
+
+    // God of War
+    {"scus97111", "godofwar", "Santa Monica Studio"},
+    {"sces53081", "godofwar", "Santa Monica Studio"},
+    {"scus97481", "godofwar2", "Santa Monica Studio"},
+    {"sces54206", "godofwar2", "Santa Monica Studio"},
+    {"scus97481", "godofwarii", "Santa Monica Studio"},
+    {"sces54206", "godofwarii", "Santa Monica Studio"},
+
+    // Metal Gear Solid
+    {"slus20915", "metalgearsolid3snakeeter", "Konami"},
+    {"sles52584", "metalgearsolid3snakeeter", "Konami"},
+    {"slus20915", "metalgearsolid3", "Konami"},
+    {"sles52584", "metalgearsolid3", "Konami"},
+    {"slus20144", "metalgearsolid2sonsofliberty", "Konami"},
+    {"sles50383", "metalgearsolid2sonsofliberty", "Konami"},
+    {"slus20144", "metalgearsolid2", "Konami"},
+    {"sles50383", "metalgearsolid2", "Konami"},
+
+    // Final Fantasy
+    {"slus20312", "finalfantasy10", "Square Enix"},
+    {"sles50490", "finalfantasy10", "Square Enix"},
+    {"slus20312", "finalfantasyx", "Square Enix"},
+    {"sles50490", "finalfantasyx", "Square Enix"},
+    {"slus20963", "finalfantasy12", "Square Enix"},
+    {"sles54354", "finalfantasy12", "Square Enix"},
+    {"slus20963", "finalfantasyxii", "Square Enix"},
+    {"sles54354", "finalfantasyxii", "Square Enix"},
+
+    // Resident Evil & Silent Hill
+    {"slus21134", "residentevil4", "Capcom"},
+    {"sles53702", "residentevil4", "Capcom"},
+    {"slus20228", "silenthill2", "Konami"},
+    {"sles50382", "silenthill2", "Konami"},
+    {"sles51156", "silenthill2", "Konami"},
+    {"slus20633", "silenthill3", "Konami"},
+    {"sles51434", "silenthill3", "Konami"},
+    {"slus20873", "silenthill4", "Konami"},
+    {"sles52445", "silenthill4", "Konami"},
+    {"slus20184", "residentevilcodeveronica", "Capcom"},
+    {"sles50306", "residentevilcodeveronica", "Capcom"},
+    {"slus20765", "residenteviloutbreak", "Capcom"},
+    {"sles51586", "residenteviloutbreak", "Capcom"},
+
+    // Kingdom Hearts
+    {"slus20374", "kingdomhearts", "Square Enix"},
+    {"sles51228", "kingdomhearts", "Square Enix"},
+    {"slus21005", "kingdomhearts2", "Square Enix"},
+    {"sles54114", "kingdomhearts2", "Square Enix"},
+    {"slus21005", "kingdomheartsii", "Square Enix"},
+    {"sles54114", "kingdomheartsii", "Square Enix"},
+
+    // Others
+    {"slus21207", "dragonquestviii", "Level-5"},
+    {"sles53974", "dragonquestviii", "Level-5"},
+    {"slus21207", "dragonquest8", "Level-5"},
+    {"sles53974", "dragonquest8", "Level-5"},
+    {"slus21361", "okami", "Capcom"},
+    {"sles54439", "okami", "Capcom"},
+    {"slus20022", "devilmaycry", "Capcom"},
+    {"sles50386", "devilmaycry", "Capcom"},
+    {"slus21132", "devilmaycry3", "Capcom"},
+    {"sles53038", "devilmaycry3", "Capcom"},
+    {"scus97472", "shadowofthecolossus", "Team Ico"},
+    {"sces53326", "shadowofthecolossus", "Team Ico"},
+
+    {"scus97124", "jakanddaxter", "Naughty Dog"},
+    {"sces50361", "jakanddaxter", "Naughty Dog"},
+    {"scus97265", "jak2", "Naughty Dog"},
+    {"sces51608", "jak2", "Naughty Dog"},
+    {"scus97330", "jak3", "Naughty Dog"},
+    {"sces52460", "jak3", "Naughty Dog"},
+
+    {"scus97199", "ratchetclank", "Insomniac Games"},
+    {"sces50916", "ratchetclank", "Insomniac Games"},
+    {"scus97155", "slycooper", "Sucker Punch"},
+    {"sces51190", "slycooper", "Sucker Punch"},
+    {"scus97316", "sly2", "Sucker Punch"},
+    {"sces52529", "sly2", "Sucker Punch"},
+    {"scus97464", "sly3", "Sucker Punch"},
+    {"sces53845", "sly3", "Sucker Punch"},
+
+    {"slus21050", "burnout3", "Criterion Games"},
+    {"sles52585", "burnout3", "Criterion Games"},
+    {"slus21242", "burnoutrevenge", "Criterion Games"},
+    {"sles53506", "burnoutrevenge", "Criterion Games"},
+
+    {"slus20811", "needforspeedunderground", "EA Games"},
+    {"sles51967", "needforspeedunderground", "EA Games"},
+    {"slus21065", "needforspeedunderground2", "EA Games"},
+    {"sles52725", "needforspeedunderground2", "EA Games"},
+    {"slus21244", "needforspeedmostwanted", "EA Games"},
+    {"sles53507", "needforspeedmostwanted", "EA Games"},
+
+    {"slus21269", "bully", "Rockstar Games"},
+    {"sles54227", "bully", "Rockstar Games"},
+    {"slus20743", "princeofpersia", "Ubisoft"},
+    {"sles51918", "princeofpersia", "Ubisoft"},
+
+    {"slus21022", "tekken5", "Namco"},
+    {"sles53201", "tekken5", "Namco"},
+    {"slus20015", "tekkentag", "Namco"},
+    {"sles50001", "tekkentag", "Namco"},
+    {"slus20643", "soulcalibur2", "Namco"},
+    {"sles51702", "soulcalibur2", "Namco"},
+    {"slus21223", "soulcalibur3", "Namco"},
+    {"sles53312", "soulcalibur3", "Namco"},
+
+    {"slus21004", "defjamfightforny", "EA Games"},
+    {"sles52545", "defjamfightforny", "EA Games"},
+    {"slus20565", "defjamvendetta", "EA Games"},
+    {"sles51459", "defjamvendetta", "EA Games"},
+
+    {"slus20322", "midnightclub2", "Rockstar Games"},
+    {"sles51356", "midnightclub2", "Rockstar Games"},
+    {"slus21029", "midnightclub3", "Rockstar Games"},
+    {"sles53036", "midnightclub3", "Rockstar Games"},
+
+    {"slus20041", "tonyhawksproskater3", "Activision"},
+    {"sles50438", "tonyhawksproskater3", "Activision"},
+    {"slus20504", "tonyhawksproskater4", "Activision"},
+    {"sles51196", "tonyhawksproskater4", "Activision"},
+    {"slus20729", "tonyhawksunderground", "Activision"},
+    {"sles51882", "tonyhawksunderground", "Activision"},
+    {"slus21020", "tonyhawksunderground2", "Activision"},
+    {"sles52647", "tonyhawksunderground2", "Activision"},
+
+    {"slus21376", "black", "Criterion Games"},
+    {"sles53886", "black", "Criterion Games"},
+
+    {"slus20881", "mortalkombatdeception", "Midway Games"},
+    {"sles52724", "mortalkombatdeception", "Midway Games"},
+    {"slus20423", "mortalkombatdeadlyalliance", "Midway Games"},
+    {"sles51244", "mortalkombatdeadlyalliance", "Midway Games"},
+    {"slus21087", "mortalkombatshaolinmonks", "Midway Games"},
+    {"sles53524", "mortalkombatshaolinmonks", "Midway Games"},
+    {"slus21410", "mortalkombatarmageddon", "Midway Games"},
+    {"sles54316", "mortalkombatarmageddon", "Midway Games"},
+
+    {"slus20724", "spiderman2", "Activision"},
+    {"sles52372", "spiderman2", "Activision"},
+    {"slus21240", "starwarsbattlefront2", "LucasArts"},
+    {"sles53531", "starwarsbattlefront2", "LucasArts"},
+    {"slus21240", "starwarsbattlefrontii", "LucasArts"},
+    {"sles53531", "starwarsbattlefrontii", "LucasArts"},
+    {"slus20898", "starwarsbattlefront", "LucasArts"},
+    {"sles52450", "starwarsbattlefront", "LucasArts"},
+
+    {"slus21106", "splintercellchaostheory", "Ubisoft"},
+    {"sles53106", "splintercellchaostheory", "Ubisoft"},
+    {"slus20321", "splintercell", "Ubisoft"},
+    {"sles51256", "splintercell", "Ubisoft"},
+
+    {"slus21153", "hitmanbloodmoney", "IO Interactive"},
+    {"sles53656", "hitmanbloodmoney", "IO Interactive"},
+    {"slus20144", "hitman2", "IO Interactive"},
+    {"sles50703", "hitman2", "IO Interactive"},
+    {"slus20882", "hitmancontracts", "IO Interactive"},
+    {"sles52014", "hitmancontracts", "IO Interactive"},
+
+    {"slus20216", "maxpayne", "Rockstar Games"},
+    {"sles50277", "maxpayne", "Rockstar Games"},
+    {"slus20728", "maxpayne2", "Rockstar Games"},
+    {"sles52091", "maxpayne2", "Rockstar Games"},
+
+    {"slus20018", "onimushawarlords", "Capcom"},
+    {"sles50181", "onimushawarlords", "Capcom"},
+    {"slus20393", "onimusha2", "Capcom"},
+    {"sles50930", "onimusha2", "Capcom"},
+    {"slus20694", "onimusha3", "Capcom"},
+    {"sles52157", "onimusha3", "Capcom"},
+
+    {"slus20204", "beyondgoodevil", "Ubisoft"},
+    {"sles51916", "beyondgoodevil", "Ubisoft"},
+    {"slus21008", "katamaridamacy", "Namco"},
+    {"slus21237", "welovekatamari", "Namco"},
+    {"sles54035", "welovekatamari", "Namco"},
+
+    {"slus20326", "ssxtricky", "EA Sports"},
+    {"sles50577", "ssxtricky", "EA Sports"},
+    {"slus20772", "ssx3", "EA Sports"},
+    {"sles51648", "ssx3", "EA Sports"},
+    {"slus20650", "nbastreetvol2", "EA Sports"},
+    {"sles51568", "nbastreetvol2", "EA Sports"},
+    {"slus20968", "nbastreetv3", "EA Sports"},
+    {"sles52956", "nbastreetv3", "EA Sports"},
+
+    {"slus20979", "destroyallhumans", "THQ"},
+    {"sles53160", "destroyallhumans", "THQ"},
+    {"slus21437", "destroyallhumans2", "THQ"},
+    {"sles54245", "destroyallhumans2", "THQ"},
+
+    {"slus20624", "simpsonshitrun", "Vivendi Games"},
+    {"sles51823", "simpsonshitrun", "Vivendi Games"},
+    {"slus20199", "simpsonsroadrage", "Vivendi Games"},
+    {"sles50460", "simpsonsroadrage", "Vivendi Games"},
+
+    {"slus20238", "crashbandicoot", "Traveller's Tales"},
+    {"sles50386", "crashbandicoot", "Traveller's Tales"},
+    {"slus20909", "crashtwinsanity", "Traveller's Tales"},
+    {"sles52568", "crashtwinsanity", "Traveller's Tales"},
+    {"slus20453", "spyro", "Universal Interactive"},
+    {"sles51153", "spyro", "Universal Interactive"},
+
+    {"slus21224", "guitarhero", "RedOctane"},
+    {"slus21443", "guitarhero2", "RedOctane"},
+    {"sles54435", "guitarhero2", "RedOctane"},
+    {"slus21671", "guitarhero3", "Activision"},
+    {"sles54944", "guitarhero3", "Activision"},
+
+    {"slus21569", "persona3", "Atlus"},
+    {"sles55018", "persona3", "Atlus"},
+    {"slus21782", "persona4", "Atlus"},
+    {"sles55473", "persona4", "Atlus"},
+
+    {"slus20685", "apeescape2", "Sony Computer Ent."},
+    {"sces50964", "apeescape2", "Sony Computer Ent."},
+    {"slus21177", "apeescape3", "Sony Computer Ent."},
+    {"sces53642", "apeescape3", "Sony Computer Ent."},
+
+    {"slus20827", "manhunt", "Rockstar Games"},
+    {"sles52023", "manhunt", "Rockstar Games"},
+    {"slus21613", "manhunt2", "Rockstar Games"},
+    {"sles54819", "manhunt2", "Rockstar Games"},
+
+    {"slus20565", "championsofnorrath", "Sony Online Ent."},
+    {"sles52325", "championsofnorrath", "Sony Online Ent."},
+    {"scus97111", "darkcloud", "Level-5"},
+    {"sces50252", "darkcloud", "Level-5"},
+    {"scus97213", "darkcloud2", "Level-5"},
+    {"sces51624", "darkcloud2", "Level-5"},
+    {"slus20469", "xenosaga", "Monolith Soft"},
+    {"slus20666", "disgaeahourofdarkness", "Nippon Ichi"},
+    {"sles52329", "disgaeahourofdarkness", "Nippon Ichi"},
+    {"slus21218", "urbanreign", "Bandai Namco"},
+    {"sles53553", "urbanreign", "Bandai Namco"}
+};
+
+static const char *getGameDeveloper(const char *startup, const char *title)
+{
+    int i;
+    int numPopularGames = sizeof(gPopularGames) / sizeof(gPopularGames[0]);
+
+    if (startup && startup[0] != '\0') {
+        char cleanStartup[64];
+        int sLen = 0;
+        for (i = 0; startup[i] != '\0' && sLen < 63; i++) {
+            char c = startup[i];
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                cleanStartup[sLen++] = c;
+            } else if (c >= 'A' && c <= 'Z') {
+                cleanStartup[sLen++] = c + 32;
+            }
+        }
+        cleanStartup[sLen] = '\0';
+
+        // 1. Direct Game ID (Serial) matching (highest priority!)
+        for (i = 0; i < numPopularGames; i++) {
+            if (gPopularGames[i].serial && gPopularGames[i].serial[0] != '\0') {
+                if (strcmp(cleanStartup, gPopularGames[i].serial) == 0) {
+                    return gPopularGames[i].company;
+                }
+            }
+        }
+    }
+
+    // 2. Title matching (fallback)
+    static char cleanTitle[128];
+    getCleanGameName(title, cleanTitle, sizeof(cleanTitle));
+
+    // Convert cleanTitle to lowercase alphanumeric (remove underscores, etc.)
+    char cleanTitleAlpha[128];
+    int tLen = 0;
+    for (i = 0; cleanTitle[i] != '\0' && tLen < 127; i++) {
+        char c = cleanTitle[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            cleanTitleAlpha[tLen++] = c;
+        } else if (c >= 'A' && c <= 'Z') {
+            cleanTitleAlpha[tLen++] = c + 32;
+        }
+    }
+    cleanTitleAlpha[tLen] = '\0';
+
+    for (i = 0; i < numPopularGames; i++) {
+        if (gPopularGames[i].cleanTitle && gPopularGames[i].cleanTitle[0] != '\0') {
+            if (strstr(cleanTitleAlpha, gPopularGames[i].cleanTitle) != NULL ||
+                strstr(gPopularGames[i].cleanTitle, cleanTitleAlpha) != NULL) {
+                return gPopularGames[i].company;
+            }
+        }
+    }
+
+    return "PlayStation 2";
+}
+
+static int drawPS5IconAndText(int iconId, const char *text, int font, int x, int y, u64 color)
+{
+    GSTEXTURE *iconTex = thmGetTexture(iconId);
+    int w = 0;
+    int h = 14;
+
+    if (iconTex && iconTex->Mem) {
+        w = (iconTex->Width * h) / iconTex->Height;
+        rmDrawPixmap(iconTex, x, y, ALIGN_VCENTER | ALIGN_LEFT, w, h, 1, color);
+        x += rmWideScale(w) + 6;
+    }
+
+    x = fntRenderString(font, x, y, ALIGN_VCENTER | ALIGN_LEFT, 0.65f, 0.65f, text, color);
+    return x;
+}
+
+static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, struct theme_element *elem)
+{
+    // Initialize Fonts and Mask Textures if not loaded
+    initPS5MaskTextures();
+
+    if (item && gPS5ActiveTab == 0) {
+        char *prefix = "";
+        const char *startup = NULL;
+        item_list_t *list = (item_list_t *)menu->item->userdata;
+        if (list) {
+            if (list->itemGetPrefix) {
+                prefix = list->itemGetPrefix(list);
+            }
+            if (list->itemGetStartup) {
+                startup = list->itemGetStartup(list, item->item.id);
+            }
+        }
+        triggerNetFetch(submenuItemGetText(&item->item), startup, prefix);
+    }
+
+    // 1. Get PS2 Realtime clock
+    time_t rawtime;
+    struct tm *timeinfo;
+    char timeStr[16];
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    if (timeinfo) {
+        int hour = timeinfo->tm_hour;
+        int minute = timeinfo->tm_min;
+        const char *am_pm = "AM";
+        if (hour >= 12) {
+            am_pm = "PM";
+            if (hour > 12) hour -= 12;
+        }
+        if (hour == 0) hour = 12;
+        snprintf(timeStr, sizeof(timeStr), "%d:%02d %s", hour, minute, am_pm);
+    } else {
+        strncpy(timeStr, "12:00 PM", sizeof(timeStr));
+    }
+
+    // Header Navigation (Top Left & Top Right)
+    if (gPS5ActiveTab == 0) {
+        fntRenderString(gPS5RegFont, 50, 32, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, 140, 32, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x40));
+    } else {
+        fntRenderString(gPS5RegFont, 50, 32, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x40));
+        fntRenderString(gPS5RegFont, 140, 32, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    }
+    // Small L1/R1 indicators (smaller font size, offset adjusted for alignment)
+    fntRenderString(gPS5RegFont, 30, 33, ALIGN_LEFT, 0.40f, 0.40f, "L1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+    fntRenderString(gPS5RegFont, 212, 33, ALIGN_LEFT, 0.40f, 0.40f, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+    extern int gPS5ShowTime;
+    if (gPS5ShowTime) {
+        fntRenderString(gPS5RegFont, screenWidth - 64, 32, ALIGN_RIGHT, 0, 0, timeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    }
+
+    if (gPS5ActiveTab == 0) {
+        if (item) {
+            // 2. Horizontal Carousel of Cards
+            submenu_list_t *first_item = item;
+            while (first_item->prev) {
+                first_item = first_item->prev;
+            }
+
+            int selected_index = 0;
+            submenu_list_t *curr = item;
+            while (curr->prev) {
+                selected_index++;
+                curr = curr->prev;
+            }
+
+            if (gPS5AnimPos < 0.0f) {
+                gPS5AnimPos = selected_index;
+            } else {
+                gPS5AnimPos += (selected_index - gPS5AnimPos) * 0.36f;
+                float diff = selected_index - gPS5AnimPos;
+                if (diff < 0.0f) diff = -diff;
+                if (diff < 0.002f) {
+                    gPS5AnimPos = selected_index;
+                }
+            }
+
+            // Calculate card center positions and sizes dynamically to ensure zero overlap
+            int total_items = 0;
+            submenu_list_t *count_curr = first_item;
+            while (count_curr) {
+                total_items++;
+                count_curr = count_curr->next;
+            }
+
+            int total_count = total_items > 512 ? 512 : total_items;
+            static float x_centers[512];
+            static float card_sizes[512];
+
+            int i;
+            for (i = 0; i < total_count; i++) {
+                float dist = i - gPS5AnimPos;
+                if (dist < 0.0f) dist = -dist;
+
+                float t = 1.0f - dist;
+                if (t < 0.0f) t = 0.0f;
+                if (t > 1.0f) t = 1.0f;
+                t = t * t * (3.0f - 2.0f * t);
+
+                // Unselected size = 80, Fully selected size = 130
+                card_sizes[i] = 80.0f + t * 50.0f;
+            }
+
+            if (total_count > 0) {
+                x_centers[0] = 0.0f;
+                for (i = 0; i < total_count - 1; i++) {
+                    x_centers[i + 1] = x_centers[i] + (card_sizes[i] + card_sizes[i + 1]) / 2.0f + 16.0f;
+                }
+            }
+
+            int k = (int)gPS5AnimPos;
+            float frac = gPS5AnimPos - k;
+            float x_focus = 0.0f;
+            if (total_count > 0) {
+                if (k < total_count - 1) {
+                    x_focus = x_centers[k] + frac * (x_centers[k + 1] - x_centers[k]);
+                } else {
+                    x_focus = x_centers[total_count - 1];
+                }
+            }
+
+            // Shift so that the focus point is anchored horizontally at 120.0f
+            float shift = 120.0f - x_focus;
+
+            submenu_list_t *curr_item = first_item;
+            int idx = 0;
+            while (curr_item && idx < total_count) {
+                float cx = x_centers[idx] + shift;
+                if (cx > -80.0f && cx < 720.0f) {
+                    int size = (int)card_sizes[idx];
+                    int hw = size / 2;
+                    int x1 = (int)cx - hw;
+                    int y1 = 96; // Anchor at the top edge for downward scaling!
+
+                    // Dynamic Alpha based on distance from focus
+                    float dist = idx - gPS5AnimPos;
+                    if (dist < 0.0f) dist = -dist;
+                    float t = 1.0f - dist;
+                    if (t < 0.0f) t = 0.0f;
+                    if (t > 1.0f) t = 1.0f;
+                    t = t * t * (3.0f - 2.0f * t);
+                    int cardAlpha = (int)(0x22 + t * (0x74 - 0x22));
+
+                    // 2a. Card Body (with custom Corner Radius & Dynamic Colors / Covers!)
+                    u8 cR, cG, cB, bR, bG, bB;
+                    const char *gameTitleText = submenuItemGetText(&curr_item->item);
+                    int hasCover = 0;
+                    int cacheIdx;
+                    net_req_t *cacheEntry = NULL;
+
+                    getGameColors(gameTitleText, &cR, &cG, &cB, &bR, &bG, &bB);
+
+                    for (cacheIdx = 0; cacheIdx < gNetCacheCount; cacheIdx++) {
+                        if (strcmp(gNetCache[cacheIdx].gameTitle, gameTitleText) == 0) {
+                            cacheEntry = &gNetCache[cacheIdx];
+                            break;
+                        }
+                    }
+
+                    if (cacheEntry) {
+                        if (cacheEntry->state == 2 && cacheEntry->coverPath[0] != '\0') {
+                            if (cacheEntry->hasTex == 0) {
+                                if (loadPS5CoverTexture(&cacheEntry->coverTex, cacheEntry->coverPath) >= 0)
+                                    cacheEntry->hasTex = 1;
+                                else
+                                    cacheEntry->hasTex = -1;
+                            }
+                            hasCover = (cacheEntry->hasTex == 1);
+                        }
+                    } else {
+                        char *prefix = "";
+                        const char *startup = NULL;
+                        item_list_t *list = (item_list_t *)menu->item->userdata;
+                        if (list) {
+                            if (list->itemGetPrefix) {
+                                prefix = list->itemGetPrefix(list);
+                            }
+                            if (list->itemGetStartup) {
+                                startup = list->itemGetStartup(list, curr_item->item.id);
+                            }
+                        }
+                        triggerNetFetch(gameTitleText, startup, prefix);
+                    }
+
+                    if (hasCover && cacheEntry) {
+                        rmDrawRoundedCover(&cacheEntry->coverTex, x1, y1, size, size, 12);
+                    } else {
+                        // 1. Draw beautifully colored rounded card
+                        rmDrawRoundedRectWide(x1, y1, size, size, 12, GS_SETREG_RGBA(cR, cG, cB, cardAlpha));
+
+                        // 2. Extract initials of the game dynamically
+                        char initials[8];
+                        int initCount = 0;
+                        const char *pStr = gameTitleText;
+                        
+                        // Skip system prefixes (e.g. SLES_525.41, SLUS_209.46)
+                        if (strlen(pStr) > 5 && pStr[4] == '_') {
+                            pStr += 5;
+                            while (*pStr && (*pStr == '_' || *pStr == '-' || *pStr == '.' || (*pStr >= '0' && *pStr <= '9'))) {
+                                pStr++;
+                            }
+                        }
+                        
+                        while (*pStr && initCount < 4) {
+                            if ((*pStr >= 'A' && *pStr <= 'Z') || (*pStr >= '0' && *pStr <= '9')) {
+                                initials[initCount++] = *pStr;
+                            } else if (*pStr >= 'a' && *pStr <= 'z') {
+                                if (pStr == gameTitleText || *(pStr - 1) == ' ' || *(pStr - 1) == '_' || *(pStr - 1) == '-') {
+                                    initials[initCount++] = *pStr - 32; // Convert to Uppercase
+                                }
+                            }
+                            pStr++;
+                        }
+                        
+                        if (initCount == 0) {
+                            strncpy(initials, "PS2", sizeof(initials));
+                            initCount = 3;
+                        }
+                        initials[initCount] = '\0';
+
+                        // 3. Draw the game's initials elegantly in the center of the card
+                        float fontScale = (size / 130.0f) * 0.70f;
+                        fntRenderString(gPS5BoldFont, cx, y1 + size / 2, ALIGN_CENTER | ALIGN_VCENTER, fontScale, fontScale, initials, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, cardAlpha * 2 / 3));
+                    }
+                }
+                curr_item = curr_item->next;
+                idx++;
+            }
+
+            // 3. Dynamic Background Color Smooth Transition
+            u8 cardR, cardG, cardB, bgR, bgG, bgB;
+            getGameColors(submenuItemGetText(&item->item), &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
+
+            // Avoid white/grey/bright background colors for the gradient to prevent noise artifacts in 1080p
+            // Cap background color channels at a maximum of 40 to guarantee dark, premium colors
+            if (bgR > 40) bgR = 40;
+            if (bgG > 40) bgG = 40;
+            if (bgB > 40) bgB = 40;
+
+            // If the color is grey/desaturated, shift it to a deep premium PS5 midnight blue
+            int maxVal = bgR > bgG ? (bgR > bgB ? bgR : bgB) : (bgG > bgB ? bgG : bgB);
+            int minVal = bgR < bgG ? (bgR < bgB ? bgR : bgB) : (bgG < bgB ? bgG : bgB);
+            if (maxVal - minVal < 10) {
+                // It's grey/neutral. Replace with a beautiful cinematic deep dark blue/violet
+                bgR = 10;
+                bgG = 14;
+                bgB = 28;
+            }
+
+            static float currentBgR = 16.0f;
+            static float currentBgG = 16.0f;
+            static float currentBgB = 16.0f;
+
+            currentBgR += ((float)bgR - currentBgR) * 0.10f;
+            currentBgG += ((float)bgG - currentBgG) * 0.10f;
+            currentBgB += ((float)bgB - currentBgB) * 0.10f;
+
+            gPS5BgColorR = (u8)currentBgR;
+            gPS5BgColorG = (u8)currentBgG;
+            gPS5BgColorB = (u8)currentBgB;
+
+            const char *fullTitle = submenuItemGetText(&item->item);
+            fntRenderString(gPS5TitleFont, 50, 316, ALIGN_LEFT, 0, 0, fullTitle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+            // Developer name (using Game ID lookup)
+            item_list_t *support = (item_list_t *)menu->item->userdata;
+            const char *startup = NULL;
+            if (support && support->itemGetStartup) {
+                startup = support->itemGetStartup(support, item->item.id);
+            }
+            fntRenderString(gPS5RegFont, 50, 354, ALIGN_LEFT, 0, 0, getGameDeveloper(startup, fullTitle), GS_SETREG_RGBA(0xF0, 0xF0, 0xF0, 0x56));
+
+        } else {
+            // No games placeholder card/text
+            // No games placeholder card/text
+            fntRenderString(gPS5BoldFont, 320, 245, ALIGN_CENTER, 0, 0, "NO GAMES FOUND", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x2C));
+        }
+
+        // Draw bottom helper buttons in Games list (very bottom-left with 20px margin)
+        int helperY = 428;
+        int nextX = drawPS5IconAndText(SQUARE_ICON, "Refresh", gPS5RegFont, 50, helperY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x40));
+        drawPS5IconAndText(CROSS_ICON, "Play", gPS5RegFont, nextX + 20, helperY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x40));
+    } else {
+        extern int gPS5SubSel;
+        extern int gPS5TempVMode;
+        extern int gPS5TempShowTime;
+        extern int gPS5TempUISound;
+        extern int gPS5SettingsSel;
+        extern unsigned int gPS5SaveNotifyFrame;
+        extern int guiFrameId;
+
+        int rowX = 64;
+        int rowY = 160;
+
+        // 1. Draw Resolution label and bracketed value
+        const char *resText = "Standard";
+        if (gPS5TempVMode == 3) resText = "Progressive 480p";
+        else if (gPS5TempVMode == 10) resText = "720p";
+        else if (gPS5TempVMode == 11) resText = "1080p";
+
+        char valStr[64];
+        snprintf(valStr, sizeof(valStr), "< %s >", resText);
+
+        int rightX = screenWidth - 64;
+
+        if (gPS5SubSel == 0) { // Resolution focused
+            fntRenderString(gPS5RegFont, rowX, rowY, ALIGN_LEFT, 0, 0, "Resolution", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gPS5RegFont, rightX, rowY, ALIGN_RIGHT, 0, 0, valStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        } else { // Resolution unfocused
+            fntRenderString(gPS5RegFont, rowX, rowY, ALIGN_LEFT, 0, 0, "Resolution", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+            fntRenderString(gPS5RegFont, rightX, rowY, ALIGN_RIGHT, 0, 0, valStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+        }
+
+        // 2. Draw Show Time label and bracketed value
+        char showTimeStr[64];
+        snprintf(showTimeStr, sizeof(showTimeStr), "< %s >", gPS5TempShowTime ? "On" : "Off");
+
+        if (gPS5SubSel == 1) { // Show Time focused
+            fntRenderString(gPS5RegFont, rowX, rowY + 36, ALIGN_LEFT, 0, 0, "Show Time", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gPS5RegFont, rightX, rowY + 36, ALIGN_RIGHT, 0, 0, showTimeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        } else { // Show Time unfocused
+            fntRenderString(gPS5RegFont, rowX, rowY + 36, ALIGN_LEFT, 0, 0, "Show Time", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+            fntRenderString(gPS5RegFont, rightX, rowY + 36, ALIGN_RIGHT, 0, 0, showTimeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+        }
+
+        // 3. Draw UI Sound label and bracketed value
+        char uiSoundStr[64];
+        snprintf(uiSoundStr, sizeof(uiSoundStr), "< %s >", gPS5TempUISound ? "On" : "Off");
+
+        if (gPS5SubSel == 2) { // UI Sound focused
+            fntRenderString(gPS5RegFont, rowX, rowY + 72, ALIGN_LEFT, 0, 0, "UI Sound", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gPS5RegFont, rightX, rowY + 72, ALIGN_RIGHT, 0, 0, uiSoundStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        } else { // UI Sound unfocused
+            fntRenderString(gPS5RegFont, rowX, rowY + 72, ALIGN_LEFT, 0, 0, "UI Sound", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+            fntRenderString(gPS5RegFont, rightX, rowY + 72, ALIGN_RIGHT, 0, 0, uiSoundStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+        }
+
+        // 4. Draw irfanmatheena in lowercase with Instagram icon at bottom-left (aligned vertically to Save center)
+        extern GSTEXTURE gPS5InstagramTex;
+        extern int gPS5InstagramTexLoaded;
+        extern void *Instagram_icon_png;
+
+        if (!gPS5InstagramTexLoaded) {
+            memset(&gPS5InstagramTex, 0, sizeof(GSTEXTURE));
+            if (texLoadMem(&gPS5InstagramTex, &Instagram_icon_png) >= 0) {
+                gPS5InstagramTexLoaded = 1;
+            } else {
+                LOG("Failed to load Instagram icon from memory\n");
+            }
+        }
+
+        int textStartX = 50;
+        if (gPS5InstagramTexLoaded) {
+            // Draw Instagram icon (16x16, vertically aligned to Y=428) with full opacity
+            rmDrawPixmap(&gPS5InstagramTex, 50, 428, ALIGN_LEFT | ALIGN_VCENTER, 16, 16, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            textStartX = 50 + 22;
+        }
+
+        fntRenderString(gPS5RegFont, textStartX, 428, ALIGN_LEFT | ALIGN_VCENTER, 0.65f, 0.65f, "irfanmatheena", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+
+        // 5. Draw Save text at bottom-right (aligned perfectly with version text on the left)
+        u64 saveTextColor;
+
+        if (gPS5SubSel == 3) { // Save text focused
+            // Full opacity white
+            saveTextColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
+        } else { // Save text unfocused
+            // Low opacity white
+            saveTextColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x28);
+        }
+
+        fntRenderString(gPS5RegFont, 590, 428, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Save", saveTextColor);
+
+        if (gPS5SubSel == 0) { // Resolution focused
+            u64 applyColor = (gVMode != gPS5TempVMode) ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
+            drawPS5IconAndText(CROSS_ICON, "Apply", gPS5RegFont, 480, 428, applyColor);
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    }
+}
+
 static void drawItemsList(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode) {
+        drawPS5Launcher(menu, item, elem);
+        return;
+    }
+
     if (item) {
+
         items_list_t *itemsList = (items_list_t *)elem->extended;
 
         int posX = elem->posX, posY = elem->posY;
@@ -914,6 +2528,9 @@ static void drawItemText(struct menu_list *menu, struct submenu_list *item, conf
 
 static void drawHintText(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
+    if (gPS5Mode)
+        return;
+
     menu_hint_item_t *hint = menu->item->hints;
     if (hint) {
         int x = elem->posX;
@@ -986,6 +2603,19 @@ static void validateItemsList(const char *themePath, config_set_t *themeConfig, 
                 decoratorElem = decoratorElem->next;
             }
             itemsList->decorator = NULL;
+        }
+        if (!itemsList->decoratorImage) {
+            theme_element_t *decoratorElem = mainElems->first;
+            while (decoratorElem) {
+                if (decoratorElem->type == ELEM_TYPE_GAME_IMAGE) {
+                    mutable_image_t *gameImage = (mutable_image_t *)decoratorElem->extended;
+                    if (gameImage->cache && (!strcmp(gameImage->cache->suffix, "COV") || !strcmp(gameImage->cache->suffix, "ICO"))) {
+                        itemsList->decoratorImage = gameImage;
+                        break;
+                    }
+                }
+                decoratorElem = decoratorElem->next;
+            }
         }
     } else {
         LOG("THEMES No itemsList found, adding a default one\n");
@@ -1131,6 +2761,15 @@ GSTEXTURE *thmGetTexture(unsigned int id)
 static void thmFree(theme_t *theme)
 {
     if (theme) {
+        int i;
+        for (i = 0; i < gNetCacheCount; i++) {
+            if (gNetCache[i].hasTex == 1) {
+                rmUnloadTexture(&gNetCache[i].coverTex);
+                texFree(&gNetCache[i].coverTex);
+                gNetCache[i].hasTex = 0;
+            }
+        }
+        gNetCacheCount = 0;
         // free elements
         freeGUIElems(&theme->mainElems);
         freeGUIElems(&theme->infoElems);
@@ -1266,8 +2905,7 @@ static void thmLoad(const char *themePath)
     newT->itemsList = NULL;
     newT->gamesItemsList = NULL;
     newT->appsItemsList = NULL;
-    newT->loadingIcon = NULL;
-    newT->loadingIconCount = LOAD7_ICON - LOAD0_ICON + 1;
+    newT->loadingIconCount = 1;
 
     config_set_t *themeConfig = NULL;
     if (!themePath) {
@@ -1356,19 +2994,8 @@ static void thmLoad(const char *themePath)
     texLoadInternal(&newT->textures[LOGO_PICTURE], LOGO_PICTURE);
 
     // First start with busy icon
-    const char *themePath_temp = themePath;
-    int customBusy = 0;
-    for (i = LOAD0_ICON; i <= LOAD7_ICON; i++) {
-        if (thmLoadResource(&newT->textures[i], i, themePath_temp, GS_PSM_CT32, newT->useDefault) >= 0)
-            customBusy = 1;
-        else {
-            if (customBusy)
-                break;
-            else
-                themePath_temp = NULL;
-        }
-    }
-    newT->loadingIconCount = i;
+    thmLoadResource(&newT->textures[LOADER_ICON], LOADER_ICON, themePath, GS_PSM_CT32, newT->useDefault);
+    newT->loadingIconCount = 1;
 
     // Customizable icons
     for (i = BDM_ICON; i <= START_ICON; i++)
@@ -1526,4 +3153,81 @@ void thmEnd(void)
     }
 
     free(guiThemesNames);
+
+    extern GSTEXTURE gPS5InstagramTex;
+    extern int gPS5InstagramTexLoaded;
+    if (gPS5InstagramTexLoaded) {
+        texFree(&gPS5InstagramTex);
+        gPS5InstagramTexLoaded = 0;
+    }
+}
+
+void playPS5LaunchTransition(const char *gameTitle)
+{
+    sfxPlay(SFX_GAME_LAUNCH);
+    int cacheIdx;
+    net_req_t *cacheEntry = NULL;
+    u8 cR = 16, cG = 16, cB = 16;
+    u8 bR = 16, bG = 16, bB = 16;
+
+    extern int gPS5Mode;
+    if (gPS5Mode) {
+        getGameColors(gameTitle, &cR, &cG, &cB, &bR, &bG, &bB);
+        for (cacheIdx = 0; cacheIdx < gNetCacheCount; cacheIdx++) {
+            if (strcmp(gNetCache[cacheIdx].gameTitle, gameTitle) == 0) {
+                cacheEntry = &gNetCache[cacheIdx];
+                break;
+            }
+        }
+    }
+
+    int frame;
+    const int total_frames = 35;
+    for (frame = 0; frame <= total_frames; frame++) {
+        float t = (float)frame / (float)total_frames;
+        // Cubic easing out
+        float ease = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+
+        // Zoom from card position (55, 96, 130, 130) to full screen (0, 0, 640, 480)
+        float startX = 55.0f;
+        float startY = 96.0f;
+        float startSize = 130.0f;
+
+        float currX = startX + ease * (0.0f - startX);
+        float currY = startY + ease * (0.0f - startY);
+        float currSizeW = startSize + ease * (640.0f - startSize);
+        float currSizeH = startSize + ease * (480.0f - startSize);
+        int currR = 12;
+
+        guiStartFrame();
+
+        // 1. Draw the gapless plasma background gradient (using the deep background colors of the game!)
+        if (gPS5Mode) {
+            extern u8 gPS5BgColorR;
+            extern u8 gPS5BgColorG;
+            extern u8 gPS5BgColorB;
+            gPS5BgColorR = bR;
+            gPS5BgColorG = bG;
+            gPS5BgColorB = bB;
+        }
+        guiDrawBGPlasma();
+
+        // 2. Draw the zooming card
+        int hasCover = (cacheEntry && cacheEntry->hasTex == 1);
+        if (hasCover) {
+            rmDrawRoundedCover(&cacheEntry->coverTex, (int)currX, (int)currY, (int)currSizeW, (int)currSizeH, currR);
+        } else {
+            rmDrawRoundedRectWide((int)currX, (int)currY, (int)currSizeW, (int)currSizeH, currR, GS_SETREG_RGBA(cR, cG, cB, 0x80));
+        }
+
+        // 3. Draw full-screen black overlay fading to pure black (fade faster)
+        float fadeT = t * 2.0f;
+        if (fadeT > 1.0f) fadeT = 1.0f;
+        int blackAlpha = (int)(fadeT * 255.0f);
+        if (blackAlpha > 255) blackAlpha = 255;
+        if (blackAlpha < 0) blackAlpha = 0;
+        rmDrawRect(0, 0, 640, 480, GS_SETREG_RGBA(0, 0, 0, blackAlpha));
+
+        guiEndFrame();
+    }
 }

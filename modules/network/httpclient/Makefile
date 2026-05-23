@@ -1,5 +1,5 @@
 IOP_BIN = httpclient.irx
-IOP_OBJS = main.o httpclient.o imports.o exports.o
+IOP_OBJS = exports.o main.o httpclient.o imports.o
 
 IOP_INCS += -I../common
 

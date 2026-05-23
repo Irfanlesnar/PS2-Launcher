@@ -5,6 +5,27 @@
 #include "include/texcache.h"
 #include "include/menusys.h"
 
+enum ELEM_ATTRIBUTE_TYPE {
+    ELEM_TYPE_ATTRIBUTE_TEXT = 0,
+    ELEM_TYPE_STATIC_TEXT,
+    ELEM_TYPE_ATTRIBUTE_IMAGE,
+    ELEM_TYPE_GAME_IMAGE,
+    ELEM_TYPE_STATIC_IMAGE,
+    ELEM_TYPE_BACKGROUND, // A static image can be specified as the background. Otherwise, the plasma background will be drawn.
+    ELEM_TYPE_MENU_ICON,
+    ELEM_TYPE_MENU_TEXT,
+    ELEM_TYPE_ITEMS_LIST,
+    ELEM_TYPE_ITEM_ICON,
+    ELEM_TYPE_ITEM_COVER,
+    ELEM_TYPE_ITEM_TEXT,
+    ELEM_TYPE_HINT_TEXT,
+    ELEM_TYPE_INFO_HINT_TEXT,
+    ELEM_TYPE_LOADING_ICON,
+    ELEM_TYPE_BDM_INDEX,
+    ELEM_TYPE_GAME_COUNT_TEXT,
+    ELEM_TYPE_COUNT
+};
+
 #define THM_MAX_FILES 64
 #define THM_MAX_FONTS 16
 
@@ -142,5 +163,10 @@ int thmGetGuiValue(void);
 int thmFindGuiID(const char *theme);
 const char **thmGetGuiList(void);
 char *thmGetFilePath(int themeID);
+
+extern int gPS5ActiveTab;
+void playPS5LaunchTransition(const char *gameTitle);
+void rmDrawRoundedRect(int x, int y, int w, int h, int r, u64 color);
+void rmDrawRoundedRectWide(int x, int y, int w, int h, int r, u64 color);
 
 #endif

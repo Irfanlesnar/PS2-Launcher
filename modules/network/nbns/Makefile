@@ -1,5 +1,5 @@
 IOP_BIN = nbns.irx
-IOP_OBJS = main.o nbns.o imports.o exports.o
+IOP_OBJS = exports.o main.o nbns.o imports.o
 
 IOP_INCS += -I../../../include
 

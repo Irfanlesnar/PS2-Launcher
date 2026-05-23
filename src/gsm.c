@@ -55,6 +55,20 @@ void InitGSMConfig(config_set_t *configSet)
             configGetInt(configGame, CONFIG_ITEM_GSMFIELDFIX, &gGSMFIELDFix);
         }
     }
+
+    // PS5 Global Progressive 480p Override:
+    // If the user selected Progressive 480p (gVMode == 3) in the PS5 settings,
+    // and no per-game GSM override is active, force GSM to DTV 480p progressive.
+    // predef_vmode index 6 = GS_NONINTERLACED, GS_MODE_DTV_480P, GS_FRAME
+    extern int gVMode;
+    if (gVMode == 3 && !gEnableGSM) {
+        gEnableGSM = 1;
+        gGSMVMode = 6;
+        gGSMXOffset = 0;
+        gGSMYOffset = 0;
+        gGSMFIELDFix = 0;
+        LOG("PS5 Global Override: Forcing Progressive 480p (GSM vmode 6)\n");
+    }
 }
 
 int GetGSMEnabled(void)

@@ -4,6 +4,8 @@
 #include "include/config.h"
 #include "include/dia.h"
 
+struct UIItem;
+
 /// a single submenu item
 typedef struct submenu_item
 {
@@ -120,5 +122,9 @@ void menuRemoveHints(menu_item_t *menu);
 
 int menuSetParentalLockCheckState(int enabled);
 int menuCheckParentalLock(void);
+
+submenu_list_t *menuGetMainMenu(void);
+submenu_list_t *menuGetMainMenuCurrent(void);
+void menuSetMainMenuCurrent(submenu_list_t *item);
 
 #endif

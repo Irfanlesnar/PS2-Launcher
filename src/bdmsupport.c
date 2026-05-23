@@ -18,7 +18,6 @@
 #include <ps2sdkapi.h>
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h> // fileXioIoctl, fileXioDevctl
-#include <delaythread.h>
 
 static int iLinkModLoaded = 0;
 static int mx4sioModLoaded = 0;
@@ -165,10 +164,14 @@ static int bdmNeedsUpdate(item_list_t *itemList)
 
     ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
 
-    // Check for forced refresh from deleting or renaming a game.
+    // Check for forced refresh from deleting, renaming, or the manual refresh button.
     if (pDeviceData->ForceRefresh != 0) {
         pDeviceData->ForceRefresh = 0;
-        return 1;
+        pDeviceData->bdmDeviceTick = -1;
+        pDeviceData->bdmModifiedCDPrev = 0;
+        pDeviceData->bdmModifiedDVDPrev = 0;
+        pDeviceData->bdmULSizePrev = -2;
+        result = 1;
     }
 
     // If the device menu is visible double check the device type and if support for this device type is enabled. If the user switches device support
@@ -204,8 +207,11 @@ static int bdmNeedsUpdate(item_list_t *itemList)
     pDeviceData->bdmDeviceTick = BdmGeneration;
 
     // Check if the device has been connected or removed.
-    if ((result = bdmUpdateDeviceData(itemList)) == 0)
+    int deviceResult = bdmUpdateDeviceData(itemList);
+    if (deviceResult == 0 && result == 0)
         return 0;
+    if (deviceResult != 0)
+        result = deviceResult;
 
     // If a device was added or removed play the appropriate UI sound.
     if (result == -1) {
@@ -255,6 +261,15 @@ static int bdmNeedsUpdate(item_list_t *itemList)
 static int bdmUpdateGameList(item_list_t *itemList)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
+    int visible = itemList->owner != NULL ? ((opl_io_module_t *)itemList->owner)->menuItem.visible : 0;
+
+    if (visible == 0 || pDeviceData->bdmPrefix[0] == '\0') {
+        free(pDeviceData->bdmGames);
+        pDeviceData->bdmGames = NULL;
+        pDeviceData->bdmGameCount = 0;
+        pDeviceData->bdmULSizePrev = -2;
+        return 0;
+    }
 
     sbReadList(&pDeviceData->bdmGames, pDeviceData->bdmPrefix, &pDeviceData->bdmULSizePrev, &pDeviceData->bdmGameCount);
     return pDeviceData->bdmGameCount;
@@ -373,8 +388,8 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
                             LOG("BDMSUPPORT Cluster Chain OK\n");
                             have_error = 0;
                             bdm_vmc_infos.active = 1;
-                            bdm_vmc_infos.start_sector = startingLBA;
-                            LOG("BDMSUPPORT VMC slot %d start: 0x%08x%08x\n", vmc_id, ((u32 *)&startingLBA)[1], ((u32 *)&startingLBA)[0]);
+                            bdm_vmc_infos.start_sector = (u32)startingLBA;
+                            LOG("BDMSUPPORT VMC slot %d start: 0x%X\n", vmc_id, (u32)startingLBA);
                         } else {
                             LOG("BDMSUPPORT Cluster Chain NG\n");
                             have_error = 2;
@@ -851,6 +866,13 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         }
 
         LOG("Mass device: %d (%d) disconnected\n", itemList->mode, pDeviceData->massDeviceIndex);
+        pDeviceData->bdmPrefix[0] = '\0';
+        pDeviceData->bdmDriver[0] = '\0';
+        pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
+        free(pDeviceData->bdmGames);
+        pDeviceData->bdmGames = NULL;
+        pDeviceData->bdmGameCount = 0;
+        pDeviceData->bdmULSizePrev = -2;
         return -1;
     }
 
@@ -858,116 +880,4 @@ int bdmUpdateDeviceData(item_list_t *itemList)
     if (dir >= 0)
         fileXioDclose(dir);
     return 0;
-}
-
-static int bdmWaitForDevice(int deviceId, u32 timeoutMs)
-{
-    const int RETRY_DELAY = 100;
-    char path[16];
-
-    u32 start = GetTimerSystemTime();
-    sprintf(path, "mass%d:/", deviceId);
-
-    while (1) {
-        int dir = fileXioDopen(path);
-
-        if (dir >= 0) {
-            fileXioDclose(dir);
-            return 1; // ready
-        }
-
-        u32 now = GetTimerSystemTime();
-        u32 elapsed_ms = (now - start) / (kBUSCLK / 1000);
-
-        if (elapsed_ms > timeoutMs) {
-            return 0; // timeout
-        }
-
-        DelayThread(RETRY_DELAY * 1000);
-    }
-}
-
-static int bdmDeviceIsPresent(int deviceId)
-{
-    char path[16];
-    sprintf(path, "mass%d:/", deviceId);
-    int dir = fileXioDopen(path);
-
-    if (dir >= 0) {
-        fileXioDclose(dir);
-        return 1; // ready
-    }
-
-    return 0;
-}
-
-static int bdmDeviceIsATA(int deviceId)
-{
-    char path[16];
-    bdm_device_data_t data;
-
-    sprintf(path, "mass%d:/", deviceId);
-    int dir = fileXioDopen(path);
-    if (dir < 0)
-        return 0;
-
-    fileXioIoctl2(dir, USBMASS_IOCTL_GET_DRIVERNAME, NULL, 0, &data.bdmDriver, sizeof(data.bdmDriver) - 1);
-    fileXioDclose(dir);
-
-    return (!strcmp(data.bdmDriver, "ata") && strlen(data.bdmDriver) == 3);
-}
-
-static int bdmGetATADeviceId()
-{
-    for (int i = 0; i < MAX_BDM_DEVICES; i++) {
-        if (bdmDeviceIsATA(i)) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-int bdmHDDIsPresent(u32 timeoutMs)
-{
-    int hdd_id = -1;
-    int timedout = 0;
-
-    if (!hddIsPresent())
-        return 0;
-
-    // 1. scan via normal methods first...
-    hdd_id = bdmGetATADeviceId();
-    if (hdd_id >= 0)
-        return 1;
-
-    // 2. try to scan as fast as possible if the previous scan fails...
-    hdd_id = 0;
-
-    for (int i = 0; i < MAX_BDM_DEVICES; i++) {
-        // find the first inaccessible device - this one should be the HDD once it's mounted (we don't have access to device data at this point yet!)
-        if (!bdmDeviceIsPresent(i)) {
-            hdd_id = i;
-            break;
-        }
-    }
-
-    if (bdmWaitForDevice(hdd_id, timeoutMs)) {
-        // double-check to see if this indeed is the HDD, and if it is, we can exit early without stalling any further
-        if (bdmDeviceIsATA(hdd_id)) {
-            return 1;
-        } else
-            LOG("bdmHDDIsPresent: device at id %d is not an ATA HDD...\n", hdd_id);
-    } else {
-        timedout = 1;
-        LOG("bdmHDDIsPresent: waiting for hdd at id %d timed out...\n", hdd_id);
-    }
-
-    // 3. last resort - time out (if needed) and scan again...
-    if (!timedout) {
-        // if we haven't timed out already, then we need to wait for the devices to wake up... wait for the timeout...
-        LOG("bdmHDDIsPresent: waiting for timeout before scanning again...\n", hdd_id);
-        DelayThread(timeoutMs * 1000);
-    }
-
-    return bdmGetATADeviceId() >= 0;
 }

@@ -92,12 +92,14 @@ void rmDrawQuad(rm_quad_t *q);
 
 /** Queues a specified pixmap (tinted with colour) to be rendered on specified position */
 void rmDrawPixmap(GSTEXTURE *txt, int x, int y, short aligned, int w, int h, short scaled, u64 color);
+void rmDrawRotatedPixmap(GSTEXTURE *txt, int cx, int cy, int w, int h, float angleRad, u64 color);
 
 void rmDrawOverlayPixmap(GSTEXTURE *overlay, int x, int y, short aligned, int w, int h, short scaled, u64 color,
                          GSTEXTURE *inlay, int ulx, int uly, int urx, int ury, int blx, int bly, int brx, int bry);
 
 /** Queues a opaque rectangle to be rendered */
 void rmDrawRect(int x, int y, int w, int h, u64 color);
+void rmDrawRectPrecise(int x1, int y1, int x2, int y2, u64 color);
 
 /** Queues a single color line to be rendered */
 void rmDrawLine(int x1, int y1, int x2, int y2, u64 color);
@@ -120,6 +122,7 @@ void rmSetAspectRatio(enum rm_aratio dar);
 
 /** Widescreen scaling */
 int rmWideScale(int x);
+int rmGetAspectWidth(void);
 
 /** Get Pixel Aspect Ratio of native resolution */
 float rmGetPAR();

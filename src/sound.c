@@ -44,6 +44,9 @@ extern unsigned int size_bd_connect_adp;
 extern unsigned char bd_disconnect_adp[];
 extern unsigned int size_bd_disconnect_adp;
 
+extern unsigned char game_launch_adp[];
+extern unsigned int size_game_launch_adp;
+
 struct sfxEffect
 {
     const char *name;
@@ -62,6 +65,7 @@ static struct sfxEffect sfx_files[SFX_COUNT] = {
     {"transition.adp"},
     {"bd_connect.adp"},
     {"bd_disconnect.adp"},
+    {"game_launch.adp"},
 };
 
 static struct audsrv_adpcm_t sfx[SFX_COUNT];
@@ -139,6 +143,8 @@ static void sfxInitDefaults(void)
     sfx_files[SFX_BD_CONNECT].size = size_bd_connect_adp;
     sfx_files[SFX_BD_DISCONNECT].buffer = bd_disconnect_adp;
     sfx_files[SFX_BD_DISCONNECT].size = size_bd_disconnect_adp;
+    sfx_files[SFX_GAME_LAUNCH].buffer = game_launch_adp;
+    sfx_files[SFX_GAME_LAUNCH].size = size_game_launch_adp;
 }
 
 // Returns 0 (AUDSRV_ERR_NOERROR) if the sound was loaded successfully.
@@ -152,7 +158,16 @@ static int sfxLoad(struct sfxEffect *sfxData, audsrv_adpcm_t *sfx)
     if (sfxData->duration_ms == 0)
         sfxData->duration_ms = sfxData->size / 47;
 
+    LOG("SFX: Loading VAG effect '%s' into SPU buffer, ptr=%p, size=%d, duration=%dms\n",
+        sfxData->name ? sfxData->name : "unknown", sfxData->buffer, sfxData->size, sfxData->duration_ms);
+
     ret = audsrv_load_adpcm(sfx, sfxData->buffer, sfxData->size);
+    if (ret == 0) {
+        LOG("SFX: SPU transfer success for '%s', uploaded to SPU RAM\n", sfxData->name ? sfxData->name : "unknown");
+    } else {
+        LOG("SFX: SPU transfer FAILED for '%s', error=%d\n", sfxData->name ? sfxData->name : "unknown", ret);
+    }
+
     if (sfxData->builtin == 0) {
         free(sfxData->buffer);
         sfxData->buffer = NULL; // Mark the buffer as freed.
@@ -231,12 +246,18 @@ int sfxGetSoundDuration(int id)
 void sfxPlay(int id)
 {
     if (!audio_initialized) {
-        LOG("SFX: %s: ERROR: not initialized!\n", __FUNCTION__);
+        LOG("SFX: sfxPlay(%d): ERROR: audio not initialized!\n", id);
         return;
     }
 
-    if (gEnableSFX) {
-        audsrv_ch_play_adpcm(id, &sfx[id]);
+    extern int gPS5UISound;
+    if (gEnableSFX && gPS5UISound) {
+        int ret = audsrv_ch_play_adpcm(id, &sfx[id]);
+        LOG("SFX: SPU voice triggered for effect id=%d ('%s'), duration=%dms, SPU playback return/channel=%d (gEnableSFX=1, gPS5UISound=1)\n",
+            id, sfx_files[id].name ? sfx_files[id].name : "unknown", sfx_files[id].duration_ms, ret);
+    } else {
+        LOG("SFX: SPU voice play id=%d ('%s') skipped (gEnableSFX=%d, gPS5UISound=%d)\n",
+            id, sfx_files[id].name ? sfx_files[id].name : "unknown", gEnableSFX, gPS5UISound);
     }
 }
 
@@ -558,9 +579,11 @@ void audioSetVolume(void)
     int i;
 
     if (!audio_initialized) {
-        LOG("AUDIO: %s: ERROR: not initialized!\n", __FUNCTION__);
+        LOG("AUDIO: audioSetVolume: ERROR: not initialized!\n", __FUNCTION__);
         return;
     }
+
+    LOG("AUDIO: Setting SPU volumes: gSFXVolume=%d, gBootSndVolume=%d, gBGMVolume=%d\n", gSFXVolume, gBootSndVolume, gBGMVolume);
 
     for (i = 1; i < SFX_COUNT; i++)
         audsrv_adpcm_set_volume(i, gSFXVolume);
