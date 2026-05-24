@@ -4,6 +4,10 @@ PS2 Launcher is a modern PlayStation 2 game launcher focused on delivering a cle
 
 Built for real PlayStation 2 hardware, PS2 Launcher introduces visual improvements, enhanced game browsing, modernized layouts, and display optimizations designed to make PS2 game management feel more polished and user-friendly.
 
+<img width="700" height="400" alt="Untitled-1" src="https://github.com/user-attachments/assets/6eae6c73-83e6-434f-a317-84a55aaf06bf" />
+
+
+
 ## Features
 
 - Modern launcher-style interface
@@ -37,6 +41,11 @@ PS2 Launcher includes extensive display optimizations to improve image quality o
 - Smoother UI rendering across supported display modes
 
 These improvements help provide a cleaner and more modern visual experience while preserving compatibility with original PlayStation 2 hardware.
+
+## Download
+
+- **Latest Release:** https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v1.0.0/PS2-Launcher.ELF
+- **All Releases:** https://github.com/Irfanlesnar/PS2-Launcher/releases
 
 ## Credits
 
