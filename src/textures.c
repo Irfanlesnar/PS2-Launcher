@@ -4,6 +4,8 @@
 #include "include/ioman.h"
 #include <png.h>
 
+extern int debugOpenProbe(const char *path);
+
 extern void *loader_png;
 extern void *logo_png;
 extern void *cross_png;
@@ -397,7 +399,7 @@ static int texLoadAll(GSTEXTURE *texture, const char *filePath, int texId, void 
     void *pFileBuffer = NULL;
 
     if (filePath) {
-        int fd = open(filePath, O_RDONLY, 0);
+        int fd = debugOpenProbe(filePath);
         if (fd < 0)
             return ERR_BAD_FILE;
 
@@ -557,7 +559,7 @@ int texDiscoverLoad(GSTEXTURE *texture, const char *path, int texId)
         }
     }
 
-    int fd = open(filePath, O_RDONLY);
+    int fd = debugOpenProbe(filePath);
     if (fd >= 0) {
         // File found, load it
         close(fd);

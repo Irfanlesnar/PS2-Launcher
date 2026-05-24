@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <stdio.h>
 #include "httpclient.h"
+#include <stdarg.h>
 
 #define MENU_POS_V     50
 #define HINT_HEIGHT    32
@@ -1406,204 +1407,68 @@ static void findBuiltInCoverForGame(const char *gameTitle, char *matchedPath, in
         matchedPath[0] = '\0';
 }
 
+extern volatile int gBdmDisconnected;
+extern volatile unsigned int gBdmEventGeneration;
+
+int debugOpenProbe(const char *path) {
+    if (gBdmDisconnected && strncmp(path, "mass", 4) == 0) {
+        return -1; // Physically disconnected! Bypassing mass open!
+    }
+    return open(path, O_RDONLY);
+}
+
 static void findCoverInCoversFolder(const char *gameTitle, const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
-    char keywords[16][32];
-    int keywordCount = getTitleKeywords(gameTitle, keywords);
-
-    char exactTitle[128];
-    int i;
-    normalizeAlphaNumLower(gameTitle, exactTitle, sizeof(exactTitle));
-
-    DIR *pdir = NULL;
-    char coversPath[256];
-    
-    static char dirPref[256];
-    static char dirPREF[256];
-    static char dirPrefSlash[256];
-    static char dirPREFSlash[256];
-    if (devicePrefix && devicePrefix[0] != '\0') {
-        char cleanPrefix[256];
-        strncpy(cleanPrefix, devicePrefix, sizeof(cleanPrefix) - 1);
-        cleanPrefix[sizeof(cleanPrefix) - 1] = '\0';
-        int len = strlen(cleanPrefix);
-        if (len > 0 && cleanPrefix[len - 1] == '/') {
-            cleanPrefix[len - 1] = '\0';
-        }
-        snprintf(dirPref, sizeof(dirPref), "%sART", cleanPrefix);
-        snprintf(dirPREF, sizeof(dirPREF), "%sart", cleanPrefix);
-        snprintf(dirPrefSlash, sizeof(dirPrefSlash), "%s/ART", cleanPrefix);
-        snprintf(dirPREFSlash, sizeof(dirPREFSlash), "%s/art", cleanPrefix);
-    } else {
-        strcpy(dirPref, "host:ART");
-        strcpy(dirPREF, "host:art");
-        strcpy(dirPrefSlash, "host:/ART");
-        strcpy(dirPREFSlash, "host:/art");
-    }
-
-    const char *dirCandidates[] = {
-        dirPrefSlash,
-        dirPREFSlash,
-        dirPref,
-        dirPREF,
-        "host:ART",
-        "host:art",
-        "ART",
-        "art",
-        "mass0:ART",
-        "mass0:art",
-        "mass0:/ART",
-        "mass0:/art",
-        NULL
-    };
-
-    int dIdx = 0;
-    while (dirCandidates[dIdx] != NULL) {
-        strcpy(coversPath, dirCandidates[dIdx]);
-        pdir = opendir(coversPath);
-        if (pdir) {
-            break;
-        }
-        dIdx++;
-    }
-    
-    if (!pdir) {
-        // Fall back to active device covers directory as default if opendir failed
-        strcpy(coversPath, dirPrefSlash);
-    }
-
-    int bestScore = 0; int exactFound = 0; char bestFile[256] = ""; if (pdir && startup && startup[0] != '\0') { struct dirent *sd; while ((sd = readdir(pdir)) != NULL) { if (sd->d_name[0] == '.') continue; char nl[256]; int i; for (i = 0; sd->d_name[i]; i++) { char c = sd->d_name[i]; nl[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c; } nl[i] = '\0'; if (strstr(nl, "_cov") == NULL) continue; char cs[256] = ""; int cl = 0; for (i = 0; startup[i]; i++) { char c = startup[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cs[cl++] = c; else if (c >= 'A' && c <= 'Z') cs[cl++] = c + 32; } cs[cl] = '\0'; char cn[256] = ""; int cnl = 0; char *pCov = strstr(nl, "_cov"); int covLen = pCov - nl; for (i = 0; i < covLen; i++) { char c = nl[i]; if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cn[cnl++] = c; } cn[cnl] = '\0'; if (strcmp(cn, cs) == 0) { strcpy(bestFile, sd->d_name); exactFound = 1; break; } } rewinddir(pdir); }
-
-    if (pdir) {
-        struct dirent *pdirent;
-        while ((pdirent = readdir(pdir)) != NULL) {
-            if (pdirent->d_name[0] == '.') continue;
-
-            char nameLower[256];
-            int len = strlen(pdirent->d_name);
-            if (len < 5) continue;
-            
-            const char *ext = pdirent->d_name + len - 4;
-            if (strcasecmp(ext, ".png") != 0 && strcasecmp(ext, ".jpg") != 0) continue;
-
-            for (i = 0; i < len; i++) {
-                char c = pdirent->d_name[i];
-                nameLower[i] = (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
-            }
-            nameLower[len] = '\0';
-
-            char nameClean[256];
-            strncpy(nameClean, nameLower, len - 4);
-            nameClean[len - 4] = '\0';
-
-            char nameAlpha[256];
-            int matches;
-            int score = 0;
-            normalizeAlphaNumLower(nameClean, nameAlpha, sizeof(nameAlpha));
-
-            if (strcmp(nameAlpha, exactTitle) == 0) {
-                strcpy(bestFile, pdirent->d_name);
-                exactFound = 1;
-                break;
-            }
-
-            matches = countKeywordMatches(nameLower, keywords, keywordCount);
-            if (hasKeywordRun(nameLower, keywords, keywordCount, 3) || matches >= 3) {
-                score = 300 + matches;
-            } else if (hasKeywordRun(nameLower, keywords, keywordCount, 2) || matches >= 2) {
-                score = 200 + matches;
-            }
-
-            if (score > bestScore) {
-                bestScore = score;
-                strcpy(bestFile, pdirent->d_name);
-            }
-        }
-        closedir(pdir);
-    }
-
-    if (!exactFound && bestScore == 0) {
-        char clean[256];
-        getCleanGameName(gameTitle, clean, sizeof(clean));
-        
-        char cleanLower[256];
-        int cleanLen = 0;
-        int lastWasUnderscore = 0;
-        for (i = 0; clean[i]; i++) {
-            char c = clean[i];
-            if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
-            else if (c >= 'a' && c <= 'z') {}
-            else if (c >= '0' && c <= '9') {}
-            else c = '_';
-
-            if (c == '_') {
-                if (!lastWasUnderscore && cleanLen > 0) {
-                    cleanLower[cleanLen++] = '_';
-                    lastWasUnderscore = 1;
-                }
-            } else {
-                cleanLower[cleanLen++] = c;
-                lastWasUnderscore = 0;
-            }
-        }
-        if (cleanLen > 0 && cleanLower[cleanLen - 1] == '_') {
-            cleanLen--;
-        }
-        cleanLower[cleanLen] = '\0';
-
-        char testPath[512];
-        int fdTest = -1;
-
-        if (cleanLen > 0) {
-            char filename[256];
-            snprintf(filename, sizeof(filename), "%s.png", cleanLower);
-            joinPath(testPath, sizeof(testPath), coversPath, filename);
-            fdTest = open(testPath, O_RDONLY);
-            if (fdTest >= 0) {
-                close(fdTest);
-                exactFound = 1;
-                strcpy(bestFile, cleanLower);
-                strcat(bestFile, ".png");
-            } else {
-                snprintf(filename, sizeof(filename), "%s.jpg", cleanLower);
-                joinPath(testPath, sizeof(testPath), coversPath, filename);
-                fdTest = open(testPath, O_RDONLY);
-                if (fdTest >= 0) {
-                    close(fdTest);
-                    exactFound = 1;
-                    strcpy(bestFile, cleanLower);
-                    strcat(bestFile, ".jpg");
-                }
-            }
+    if (startup && startup[0] != '\0') {
+        char prefix[128];
+        if (devicePrefix && devicePrefix[0] != '\0') {
+            strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
+            prefix[sizeof(prefix) - 1] = '\0';
+            int len = strlen(prefix);
+            if (len > 0 && prefix[len - 1] == '/') prefix[len - 1] = '\0';
+        } else {
+            strcpy(prefix, "mass0:");
         }
 
-        if (!exactFound) {
-            char alias[256] = "";
-            if (strstr(cleanLower, "grand_theft_auto")) {
-                if (strstr(cleanLower, "san_andreas")) strcpy(alias, "gta_san_andreas");
-                else if (strstr(cleanLower, "vice_city")) strcpy(alias, "gta_vice_city");
-                else if (strstr(cleanLower, "iii")) strcpy(alias, "gta_iii");
-                else strcpy(alias, "gta");
-            }
-            if (alias[0] != '\0') {
-                char filename[256];
-                snprintf(filename, sizeof(filename), "%s.png", alias);
-                joinPath(testPath, sizeof(testPath), coversPath, filename);
-                fdTest = open(testPath, O_RDONLY);
-                if (fdTest >= 0) {
-                    close(fdTest);
-                    exactFound = 1;
-                    strcpy(bestFile, alias);
-                    strcat(bestFile, ".png");
-                }
-            }
+        // Try [prefix]/ART/[startup]_COV.png
+        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.png", prefix, startup);
+        int fd = debugOpenProbe(matchedPath);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        // Try [prefix]/ART/[startup]_COV.jpg
+        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.jpg", prefix, startup);
+        fd = debugOpenProbe(matchedPath);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        // Try lowercase
+        char startupLower[32];
+        int i;
+        for (i = 0; startup[i]; i++) {
+            startupLower[i] = (startup[i] >= 'A' && startup[i] <= 'Z') ? (startup[i] - 'A' + 'a') : startup[i];
+        }
+        startupLower[i] = '\0';
+
+        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.png", prefix, startupLower);
+        fd = debugOpenProbe(matchedPath);
+        if (fd >= 0) {
+            close(fd);
+            return;
+        }
+
+        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.jpg", prefix, startupLower);
+        fd = debugOpenProbe(matchedPath);
+        if (fd >= 0) {
+            close(fd);
+            return;
         }
     }
 
-    if (exactFound || bestScore > 0) {
-        joinPath(matchedPath, maxLen, coversPath, bestFile);
-    } else {
-        matchedPath[0] = '\0';
-    }
+    matchedPath[0] = '\0';
 }
 
 static void findLogoInLogosFolder(const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
@@ -1612,57 +1477,35 @@ static void findLogoInLogosFolder(const char *startup, const char *devicePrefix,
         return;
     }
 
+    char prefix[128];
+    if (devicePrefix && devicePrefix[0] != '\0') {
+        strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
+        prefix[sizeof(prefix) - 1] = '\0';
+        int len = strlen(prefix);
+        if (len > 0 && prefix[len - 1] == '/') prefix[len - 1] = '\0';
+    } else {
+        strcpy(prefix, "mass0:");
+    }
+
     char logoName[256];
     snprintf(logoName, sizeof(logoName), "%s_LOGO", startup);
 
-    char cleanPrefix[256];
-    if (devicePrefix && devicePrefix[0] != '\0') {
-        strncpy(cleanPrefix, devicePrefix, sizeof(cleanPrefix) - 1);
-        cleanPrefix[sizeof(cleanPrefix) - 1] = '\0';
-        int len = strlen(cleanPrefix);
-        if (len > 0 && cleanPrefix[len - 1] == '/') {
-            cleanPrefix[len - 1] = '\0';
-        }
-    } else {
-        strcpy(cleanPrefix, "host:");
-    }
-
-    char dirPref[256];
-    char dirPrefSlash[256];
-    char dirPREF[256];
-    char dirPREFSlash[256];
-    snprintf(dirPref, sizeof(dirPref), "%sLOGO", cleanPrefix);
-    snprintf(dirPrefSlash, sizeof(dirPrefSlash), "%s/LOGO", cleanPrefix);
-    snprintf(dirPREF, sizeof(dirPREF), "%slogo", cleanPrefix);
-    snprintf(dirPREFSlash, sizeof(dirPREFSlash), "%s/logo", cleanPrefix);
-
-    const char *dirCandidates[] = {
-        dirPrefSlash,
-        dirPREFSlash,
-        dirPref,
-        dirPREF,
-        "mass0:/LOGO",
-        "mass0:/logo",
-        "mass0:LOGO",
-        "mass0:logo",
-        "host:LOGO",
-        "host:logo",
-        NULL
-    };
-
-    int dIdx = 0;
-    while (dirCandidates[dIdx] != NULL) {
+    // Only try LOGO, logo, ART, art folders under the active prefix (maximum 16 extremely fast open() probes)
+    const char *folders[] = {"LOGO", "logo", "ART", "art"};
+    int fIdx;
+    int fd;
+    for (fIdx = 0; fIdx < 4; fIdx++) {
         // Try png
-        snprintf(matchedPath, maxLen, "%s/%s.png", dirCandidates[dIdx], logoName);
-        int fd = open(matchedPath, O_RDONLY);
+        snprintf(matchedPath, maxLen, "%s/%s/%s.png", prefix, folders[fIdx], logoName);
+        fd = debugOpenProbe(matchedPath);
         if (fd >= 0) {
             close(fd);
             return;
         }
 
         // Try jpg
-        snprintf(matchedPath, maxLen, "%s/%s.jpg", dirCandidates[dIdx], logoName);
-        fd = open(matchedPath, O_RDONLY);
+        snprintf(matchedPath, maxLen, "%s/%s/%s.jpg", prefix, folders[fIdx], logoName);
+        fd = debugOpenProbe(matchedPath);
         if (fd >= 0) {
             close(fd);
             return;
@@ -1676,27 +1519,25 @@ static void findLogoInLogosFolder(const char *startup, const char *devicePrefix,
         }
         logoNameLower[i] = '\0';
 
-        snprintf(matchedPath, maxLen, "%s/%s.png", dirCandidates[dIdx], logoNameLower);
-        fd = open(matchedPath, O_RDONLY);
+        snprintf(matchedPath, maxLen, "%s/%s/%s.png", prefix, folders[fIdx], logoNameLower);
+        fd = debugOpenProbe(matchedPath);
         if (fd >= 0) {
             close(fd);
             return;
         }
 
-        snprintf(matchedPath, maxLen, "%s/%s.jpg", dirCandidates[dIdx], logoNameLower);
-        fd = open(matchedPath, O_RDONLY);
+        snprintf(matchedPath, maxLen, "%s/%s/%s.jpg", prefix, folders[fIdx], logoNameLower);
+        fd = debugOpenProbe(matchedPath);
         if (fd >= 0) {
             close(fd);
             return;
         }
-
-        dIdx++;
     }
 
     matchedPath[0] = '\0';
 }
 
-static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix) {
+static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix, int allowDeviceProbe) {
     int i;
     char matchedPath[256];
     u8 cardR = 100, cardG = 100, cardB = 100;
@@ -1723,13 +1564,18 @@ static void triggerNetFetch(const char *title, const char *startup, const char *
     gNetCache[idx].state = 1;
     gNetCache[idx].hasColor = 0;
 
-    findCoverInCoversFolder(title, startup, devicePrefix, matchedPath, sizeof(matchedPath));
+    matchedPath[0] = '\0';
+    if (allowDeviceProbe) {
+        findCoverInCoversFolder(title, startup, devicePrefix, matchedPath, sizeof(matchedPath));
+    }
     if (matchedPath[0] == '\0') {
         findBuiltInCoverForGame(title, matchedPath, sizeof(matchedPath));
     }
-    
+
     char logoPath[256] = {0};
-    findLogoInLogosFolder(startup, devicePrefix, logoPath, sizeof(logoPath));
+    if (allowDeviceProbe) {
+        findLogoInLogosFolder(startup, devicePrefix, logoPath, sizeof(logoPath));
+    }
     strncpy(gNetCache[idx].logoPath, logoPath, sizeof(gNetCache[idx].logoPath) - 1);
     gNetCache[idx].logoPath[sizeof(gNetCache[idx].logoPath) - 1] = '\0';
     gNetCache[idx].hasLogoTex = 0;
@@ -1792,7 +1638,7 @@ static void getGameColors(const char *title, u8 *cardR, u8 *cardG, u8 *cardB, u8
         for (p = title; *p; p++) {
             hash = ((hash << 5) + hash) + (unsigned char)*p;
         }
-        
+
         // Stabilize brightness so cards are visible but premium
         *cardR = 50 + (hash % 100);
         *cardG = 50 + ((hash >> 8) % 100);
@@ -2141,24 +1987,62 @@ static int drawPS5IconAndText(int iconId, const char *text, int font, int x, int
     return x;
 }
 
+static void clearNetCache(void)
+{
+    int i;
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (gNetCache[i].hasTex == 1) {
+            rmUnloadTexture(&gNetCache[i].coverTex);
+            texFree(&gNetCache[i].coverTex);
+            gNetCache[i].hasTex = 0;
+        }
+        if (gNetCache[i].hasLogoTex == 1) {
+            rmUnloadTexture(&gNetCache[i].logoTex);
+            texFree(&gNetCache[i].logoTex);
+            gNetCache[i].hasLogoTex = 0;
+        }
+    }
+    gNetCacheCount = 0;
+}
+
 static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, struct theme_element *elem)
 {
     // Initialize Fonts and Mask Textures if not loaded
     initPS5MaskTextures();
 
+    static unsigned int lastBdmEventGeneration = 0;
+    if (lastBdmEventGeneration != gBdmEventGeneration) {
+        lastBdmEventGeneration = gBdmEventGeneration;
+        clearNetCache();
+    }
+
+    char *prefix = "";
+    int isUnplugged = 0;
+    int allowDeviceProbe = 1;
     if (item && gPS5ActiveTab == 0) {
-        char *prefix = "";
         const char *startup = NULL;
         item_list_t *list = (item_list_t *)menu->item->userdata;
         if (list) {
+            int isBdmMode = list->mode >= BDM_MODE && list->mode < ETH_MODE;
             if (list->itemGetPrefix) {
                 prefix = list->itemGetPrefix(list);
             }
-            if (list->itemGetStartup) {
+            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || gBdmDisconnected)) {
+                isUnplugged = 1;
+            }
+            if (!isUnplugged && list->itemGetStartup) {
                 startup = list->itemGetStartup(list, item->item.id);
             }
         }
-        triggerNetFetch(submenuItemGetText(&item->item), startup, prefix);
+
+        static int lastIsUnplugged = -1;
+        if (isUnplugged != lastIsUnplugged) {
+            lastIsUnplugged = isUnplugged;
+        }
+
+        if (list && list->itemGetCount(list) > 0 && !isUnplugged) {
+            triggerNetFetch(submenuItemGetText(&item->item), startup, prefix, allowDeviceProbe);
+        }
     }
 
     // 1. Get PS2 Realtime clock
@@ -2194,10 +2078,31 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
     fntRenderString(gPS5RegFont, 212, 33, ALIGN_LEFT, 0.40f, 0.40f, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
     extern int gPS5ShowTime;
     if (gPS5ShowTime) {
-        fntRenderString(gPS5RegFont, screenWidth - 64, 32, ALIGN_RIGHT, 0, 0, timeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, screenWidth - 50, 32, ALIGN_RIGHT, 0, 0, timeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     }
 
     if (gPS5ActiveTab == 0) {
+        // Detect if the game list has been refreshed, unmounted, or changed
+        submenu_list_t *first_item = item;
+        while (first_item && first_item->prev) {
+            first_item = first_item->prev;
+        }
+
+        static char lastFirstItemTitle[64] = "";
+        if (first_item) {
+            const char *firstTitle = submenuItemGetText(&first_item->item);
+            if (strcmp(lastFirstItemTitle, firstTitle) != 0) {
+                clearNetCache();
+                strncpy(lastFirstItemTitle, firstTitle, sizeof(lastFirstItemTitle) - 1);
+                lastFirstItemTitle[sizeof(lastFirstItemTitle) - 1] = '\0';
+            }
+        } else {
+            if (lastFirstItemTitle[0] != '\0') {
+                clearNetCache();
+                lastFirstItemTitle[0] = '\0';
+            }
+        }
+
         if (item) {
             // Load and render background game logo at bottom-right (smooth fade-in transition)
             static float logoAlpha = 0.0f;
@@ -2220,7 +2125,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             }
 
             if (selCache && selCache->logoPath[0] != '\0') {
-                if (selCache->hasLogoTex == 0) {
+                if (selCache->hasLogoTex == 0 && !isUnplugged) {
                     if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
                         selCache->hasLogoTex = 1;
                         logoAlpha = 0.0f; // Reset to 0 to ensure clean fade-in after load completes
@@ -2238,8 +2143,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         logoAspect = (float)selCache->logoTex.Width / (float)selCache->logoTex.Height;
                     }
                     
-                    int lw = 600;
-                    int lh = 300;
+                    int lw = 500;
+                    int lh = 250;
                     if (logoAspect < 2.0f) {
                         lw = (int)((float)lh * logoAspect);
                     } else {
@@ -2365,7 +2270,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
                     if (cacheEntry) {
                         if (cacheEntry->state == 2 && cacheEntry->coverPath[0] != '\0') {
-                            if (cacheEntry->hasTex == 0) {
+                            if (cacheEntry->hasTex == 0 && !isUnplugged) {
                                 if (loadPS5CoverTexture(&cacheEntry->coverTex, cacheEntry->coverPath) >= 0)
                                     cacheEntry->hasTex = 1;
                                 else
@@ -2373,19 +2278,23 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                             }
                             hasCover = (cacheEntry->hasTex == 1);
                         }
-                    } else {
+                    } else if (!isUnplugged) {
                         char *prefix = "";
                         const char *startup = NULL;
+                        int allowCardDeviceProbe = allowDeviceProbe;
                         item_list_t *list = (item_list_t *)menu->item->userdata;
                         if (list) {
+                            int isBdmMode = list->mode >= BDM_MODE && list->mode < ETH_MODE;
                             if (list->itemGetPrefix) {
                                 prefix = list->itemGetPrefix(list);
                             }
+                            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || gBdmDisconnected))
+                                allowCardDeviceProbe = 0;
                             if (list->itemGetStartup) {
                                 startup = list->itemGetStartup(list, curr_item->item.id);
                             }
                         }
-                        triggerNetFetch(gameTitleText, startup, prefix);
+                        triggerNetFetch(gameTitleText, startup, prefix, allowCardDeviceProbe);
                     }
 
                     if (hasCover && cacheEntry) {
@@ -2438,10 +2347,10 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             getGameColors(submenuItemGetText(&item->item), &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
 
             // Avoid white/grey/bright background colors for the gradient to prevent noise artifacts in 1080p
-            // Cap background color channels at a maximum of 40 to guarantee dark, premium colors
-            if (bgR > 40) bgR = 40;
-            if (bgG > 40) bgG = 40;
-            if (bgB > 40) bgB = 40;
+            // Cap background color channels at a maximum of 120 to guarantee dark, premium colors but allow rich vibrancy at the bottom
+            if (bgR > 120) bgR = 120;
+            if (bgG > 120) bgG = 120;
+            if (bgB > 120) bgB = 120;
 
             // If the color is grey/desaturated, shift it to a deep premium PS5 midnight blue
             int maxVal = bgR > bgG ? (bgR > bgB ? bgR : bgB) : (bgG > bgB ? bgG : bgB);
@@ -2471,7 +2380,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             // Developer name (using Game ID lookup)
             item_list_t *support = (item_list_t *)menu->item->userdata;
             const char *startup = NULL;
-            if (support && support->itemGetStartup) {
+            if (support && support->itemGetStartup && !isUnplugged) {
                 startup = support->itemGetStartup(support, item->item.id);
             }
             fntRenderString(gPS5RegFont, 50, 354, ALIGN_LEFT, 0, 0, getGameDeveloper(startup, fullTitle), GS_SETREG_RGBA(0xF0, 0xF0, 0xF0, 0x56));

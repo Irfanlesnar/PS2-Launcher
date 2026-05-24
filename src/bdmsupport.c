@@ -18,6 +18,10 @@
 #include <ps2sdkapi.h>
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h> // fileXioIoctl, fileXioDevctl
+#include <sifcmd.h>
+
+volatile int gBdmDisconnected = 0;
+volatile unsigned int gBdmEventGeneration = 0;
 
 static int iLinkModLoaded = 0;
 static int mx4sioModLoaded = 0;
@@ -27,6 +31,7 @@ int bdmDeviceModeStarted;
 
 static item_list_t bdmDeviceList[MAX_BDM_DEVICES];
 static int bdmDeviceListInitialized = 0;
+static char bdmEmptyString[] = "";
 
 void bdmInitDevicesData();
 int bdmUpdateDeviceData(item_list_t *itemList);
@@ -70,6 +75,15 @@ static unsigned int BdmGeneration = 0;
 static void bdmEventHandler(void *packet, void *opt)
 {
     BdmGeneration++;
+    gBdmEventGeneration++;
+    if (packet) {
+        SifCmdHeader_t *header = (SifCmdHeader_t *)packet;
+        if (header->opt == 0) { // BDM_EVENT_CB_UMOUNT
+            gBdmDisconnected = 1;
+        } else if (header->opt == 1) { // BDM_EVENT_CB_MOUNT
+            gBdmDisconnected = 0;
+        }
+    }
 }
 
 static void bdmLoadBlockDeviceModules(void)
@@ -264,6 +278,8 @@ static int bdmUpdateGameList(item_list_t *itemList)
     int visible = itemList->owner != NULL ? ((opl_io_module_t *)itemList->owner)->menuItem.visible : 0;
 
     if (visible == 0 || pDeviceData->bdmPrefix[0] == '\0') {
+        // The submenu has already been cleared by the caller; it is now safe to
+        // release the game array that submenu entries used for their text.
         free(pDeviceData->bdmGames);
         pDeviceData->bdmGames = NULL;
         pDeviceData->bdmGameCount = 0;
@@ -275,30 +291,38 @@ static int bdmUpdateGameList(item_list_t *itemList)
     return pDeviceData->bdmGameCount;
 }
 
+static int bdmGameIdValid(bdm_device_data_t *pDeviceData, int id)
+{
+    return pDeviceData->bdmGames != NULL && id >= 0 && id < pDeviceData->bdmGameCount;
+}
+
 static int bdmGetGameCount(item_list_t *itemList)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    return pDeviceData->bdmGameCount;
+    return pDeviceData->bdmPrefix[0] != '\0' ? pDeviceData->bdmGameCount : 0;
 }
 
 static void *bdmGetGame(item_list_t *itemList, int id)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    return (void *)&pDeviceData->bdmGames[id];
+    return bdmGameIdValid(pDeviceData, id) ? (void *)&pDeviceData->bdmGames[id] : NULL;
 }
 
 static char *bdmGetGameName(item_list_t *itemList, int id)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    return pDeviceData->bdmGames[id].name;
+    return bdmGameIdValid(pDeviceData, id) ? pDeviceData->bdmGames[id].name : bdmEmptyString;
 }
 
 static int bdmGetGameNameLength(item_list_t *itemList, int id)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
+
+    if (!bdmGameIdValid(pDeviceData, id))
+        return 1;
 
     return ((pDeviceData->bdmGames[id].format != GAME_FORMAT_USBLD) ? ISO_GAME_NAME_MAX + 1 : UL_GAME_NAME_MAX + 1);
 }
@@ -307,7 +331,7 @@ static char *bdmGetGameStartup(item_list_t *itemList, int id)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    return pDeviceData->bdmGames[id].startup;
+    return bdmGameIdValid(pDeviceData, id) ? pDeviceData->bdmGames[id].startup : bdmEmptyString;
 }
 
 static void bdmDeleteGame(item_list_t *itemList, int id)
@@ -345,6 +369,9 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
 
     if (gAutoLaunchBDMGame == NULL) {
         pDeviceData = (bdm_device_data_t *)itemList->priv;
+        if (!bdmGameIdValid(pDeviceData, id) || pDeviceData->bdmPrefix[0] == '\0')
+            return;
+
         game = &pDeviceData->bdmGames[id];
     } else {
         pDeviceData = gAutoLaunchDeviceData;
@@ -587,6 +614,9 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
 static config_set_t *bdmGetConfig(item_list_t *itemList, int id)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
+    if (!bdmGameIdValid(pDeviceData, id) || pDeviceData->bdmPrefix[0] == '\0')
+        return NULL;
+
     return sbPopulateConfig(&pDeviceData->bdmGames[id], pDeviceData->bdmPrefix, "/");
 }
 
@@ -595,6 +625,9 @@ static int bdmGetImage(item_list_t *itemList, char *folder, int isRelative, char
     char path[256];
 
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
+
+    if (isRelative && (pDeviceData->bdmPrefix[0] == '\0' || gBdmDisconnected))
+        return -1;
 
     if (isRelative)
         snprintf(path, sizeof(path), "%s%s/%s_%s", pDeviceData->bdmPrefix, folder, value, suffix);
@@ -812,7 +845,12 @@ int bdmUpdateDeviceData(item_list_t *itemList)
 
     // Format the device path and try to open the device.
     sprintf(path, "mass%d:/", itemList->mode);
-    int dir = fileXioDopen(path);
+    int dir;
+    if (gBdmDisconnected) {
+        dir = -1; // Physically disconnected! Bypassing fileXioDopen to prevent deadlock/lag!
+    } else {
+        dir = fileXioDopen(path);
+    }
     // LOG("opendir %s -> %d\n", path, dir);
 
     // If we opened the device and the menu isn't visible (OR is visible but hasn't been initialized ex: manual device start) initialize device info.
@@ -857,7 +895,7 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         // Close the device handle.
         fileXioDclose(dir);
         return 1;
-    } else if (dir < 0 && visible == 1) {
+    } else if (dir < 0 && (visible == 1 || pDeviceData->bdmPrefix[0] != '\0')) {
         // Device has been removed, make the menu item invisible. We can't really cleanup resources (like the game list) just yet
         // as we don't know if the data is being used asynchronously.
         if (itemList->owner != NULL) {
@@ -869,10 +907,11 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         pDeviceData->bdmPrefix[0] = '\0';
         pDeviceData->bdmDriver[0] = '\0';
         pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
-        free(pDeviceData->bdmGames);
-        pDeviceData->bdmGames = NULL;
-        pDeviceData->bdmGameCount = 0;
+        pDeviceData->bdmModifiedCDPrev = 0;
+        pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
+        pDeviceData->ThemesLoaded = 0;
+        pDeviceData->LanguagesLoaded = 0;
         return -1;
     }
 

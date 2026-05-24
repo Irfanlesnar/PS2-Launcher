@@ -1292,19 +1292,7 @@ u8 gPS5BgColorB = 16;
 void guiDrawBGPlasma()
 {
     if (gPS5Mode) {
-        int i;
-        for (i = 0; i < 32; i++) {
-            float factor = (float)i / 31.0f;
-            int ri = (int)(gPS5BgColorR * factor);
-            int gi = (int)(gPS5BgColorG * factor);
-            int bi = (int)(gPS5BgColorB * factor);
-            u8 r = (u8)(ri > 255 ? 255 : ri);
-            u8 g = (u8)(gi > 255 ? 255 : gi);
-            u8 b = (u8)(bi > 255 ? 255 : bi);
-            int y1 = (i * screenHeight) / 32;
-            int y2 = ((i + 1) * screenHeight) / 32;
-            rmDrawRectPrecise(0, y1, screenWidth, y2, GS_SETREG_RGBA(r, g, b, 0x80));
-        }
+        rmDrawRectPrecise(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
         return;
     }
 
