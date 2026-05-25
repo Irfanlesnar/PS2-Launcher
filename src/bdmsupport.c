@@ -626,7 +626,10 @@ static int bdmGetImage(item_list_t *itemList, char *folder, int isRelative, char
 
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    if (isRelative && (pDeviceData->bdmPrefix[0] == '\0' || gBdmDisconnected))
+    if (isRelative && pDeviceData->bdmPrefix[0] == '\0')
+        return -1;
+
+    if (isRelative && gBdmDisconnected && pDeviceData->bdmDeviceType == BDM_TYPE_USB)
         return -1;
 
     if (isRelative)
@@ -755,6 +758,7 @@ void bdmInitDevicesData()
             // Setup the per-device data.
             bdm_device_data_t *pDeviceData = (bdm_device_data_t *)malloc(sizeof(bdm_device_data_t));
             memset(pDeviceData, 0, sizeof(bdm_device_data_t));
+            pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
             pDeviceSupport->priv = pDeviceData;
         }
     }
@@ -829,6 +833,29 @@ void bdmResolveLBA_UDMA(bdm_device_data_t *pDeviceData)
     hddSetTransferMode(0x40, pDeviceData->ataHighestUDMAMode);
 }
 
+int bdmIsUsbPath(const char *path)
+{
+    int index = 0;
+    int hasIndex = 0;
+    const char *p;
+
+    if (path == NULL || strncmp(path, "mass", 4) != 0)
+        return 0;
+
+    p = path + 4;
+    while (*p >= '0' && *p <= '9') {
+        hasIndex = 1;
+        index = index * 10 + (*p - '0');
+        p++;
+    }
+
+    if (!hasIndex || *p != ':' || index < 0 || index >= MAX_BDM_DEVICES)
+        return 0;
+
+    bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[index].priv;
+    return pDeviceData != NULL && pDeviceData->bdmDeviceType == BDM_TYPE_USB;
+}
+
 int bdmUpdateDeviceData(item_list_t *itemList)
 {
     char path[16] = {0};
@@ -846,7 +873,7 @@ int bdmUpdateDeviceData(item_list_t *itemList)
     // Format the device path and try to open the device.
     sprintf(path, "mass%d:/", itemList->mode);
     int dir;
-    if (gBdmDisconnected) {
+    if (gBdmDisconnected && pDeviceData->bdmDeviceType == BDM_TYPE_USB) {
         dir = -1; // Physically disconnected! Bypassing fileXioDopen to prevent deadlock/lag!
     } else {
         dir = fileXioDopen(path);
@@ -905,8 +932,10 @@ int bdmUpdateDeviceData(item_list_t *itemList)
 
         LOG("Mass device: %d (%d) disconnected\n", itemList->mode, pDeviceData->massDeviceIndex);
         pDeviceData->bdmPrefix[0] = '\0';
-        pDeviceData->bdmDriver[0] = '\0';
-        pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
+        if (pDeviceData->bdmDeviceType != BDM_TYPE_USB) {
+            pDeviceData->bdmDriver[0] = '\0';
+            pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
+        }
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;

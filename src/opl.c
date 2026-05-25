@@ -711,8 +711,15 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
         }
     }
 
-    if (gAutosort) {
+    if (gAutosort && count > 0) {
         gup = guiOpCreate(GUI_OP_SORT);
+        gup->menu.menu = &mdl->menuItem;
+        gup->menu.subMenu = &mdl->subMenu;
+        guiDeferUpdate(gup);
+    }
+
+    if (gPS5Mode && count > 0 && mdl->support->mode != APP_MODE) {
+        gup = guiOpCreate(GUI_OP_SELECT_MENU);
         gup->menu.menu = &mdl->menuItem;
         gup->menu.subMenu = &mdl->subMenu;
         guiDeferUpdate(gup);
@@ -1855,7 +1862,7 @@ static void deferredInit(void)
         }
     }
 
-    if (list_support[device].support) {
+    if (list_support[device].support && list_support[device].menuItem.current) {
         id = guiOpCreate(GUI_OP_SELECT_MENU);
         id->menu.menu = &list_support[device].menuItem;
         guiDeferUpdate(id);

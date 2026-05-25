@@ -5,6 +5,7 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdarg.h>
 #ifdef __EESIO_DEBUG
 #include <sio.h>
 #endif

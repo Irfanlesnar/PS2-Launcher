@@ -996,6 +996,8 @@ int guiDeferUpdate(struct gui_update_t *op)
 static void guiHandleOp(struct gui_update_t *item)
 {
     submenu_list_t *result = NULL;
+    item_list_t *list = NULL;
+    int wasEmpty;
 
     switch (item->type) {
         case GUI_INIT_DONE:
@@ -1007,11 +1009,13 @@ static void guiHandleOp(struct gui_update_t *item)
             break;
 
         case GUI_OP_APPEND_MENU:
+            wasEmpty = !item->menu.menu->submenu;
             result = submenuAppendItem(item->menu.subMenu, item->submenu.icon_id,
                                        item->submenu.text, item->submenu.id, item->submenu.text_id);
 
-            if (!item->menu.menu->submenu) { // first subitem in list
-                item->menu.menu->submenu = result;
+            item->menu.menu->submenu = *item->menu.subMenu;
+
+            if (wasEmpty) { // first subitem in list
                 item->menu.menu->current = result;
                 item->menu.menu->pagestart = result;
             } else if (item->submenu.selected) { // remember last played game feature
@@ -1027,6 +1031,10 @@ static void guiHandleOp(struct gui_update_t *item)
             break;
 
         case GUI_OP_SELECT_MENU:
+            list = item->menu.menu ? item->menu.menu->userdata : NULL;
+            if (list && list->mode != APP_MODE && !item->menu.menu->current)
+                break;
+
             menuSetSelectedItem(item->menu.menu);
             screenHandler = &screenHandlers[GUI_SCREEN_MAIN];
             break;

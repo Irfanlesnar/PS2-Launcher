@@ -144,10 +144,17 @@ static int hddGetHDLGameInfo(struct GameDataEntry *game, hdl_game_info_t *ginfo)
 {
     int ret;
 
+    APA_TRACE("APA_TRACE hddGetHDLGameInfo: read partition='%s' lba=%lu accumulated_size=%lu\n",
+        game->id, (unsigned long)game->lba, (unsigned long)game->size);
+
     ret = hddReadSectors(game->lba, 2, IOBuffer);
     if (ret == 0) {
 
         hdl_apa_header *hdl_header = (hdl_apa_header *)IOBuffer;
+
+        APA_TRACE("APA_TRACE hddGetHDLGameInfo: header partition='%s' magic=0x%08lx game='%s' startup='%s' discType=%lu parts=%d layer1=%lu\n",
+            game->id, (unsigned long)hdl_header->magic, hdl_header->gamename, hdl_header->startup,
+            (unsigned long)hdl_header->discType, hdl_header->num_partitions, (unsigned long)hdl_header->layer1_start);
 
         strncpy(ginfo->partition_name, game->id, APA_IDMAX);
         ginfo->partition_name[APA_IDMAX] = '\0';
@@ -163,8 +170,14 @@ static int hddGetHDLGameInfo(struct GameDataEntry *game, hdl_game_info_t *ginfo)
         ginfo->disctype = (u8)hdl_header->discType;
         ginfo->start_sector = game->lba;
         ginfo->total_size_in_kb = game->size * 2; // size * 2048 / 1024 = 2x
-    } else
+        APA_TRACE("APA_TRACE hddGetHDLGameInfo: created game partition='%s' name='%s' startup='%s' start_sector=%lu total_kb=%lu\n",
+            ginfo->partition_name, ginfo->name, ginfo->startup,
+            (unsigned long)ginfo->start_sector, (unsigned long)ginfo->total_size_in_kb);
+    } else {
+        APA_TRACE("APA_TRACE hddGetHDLGameInfo: reject partition='%s' reason=read_failed ret=%d lba=%lu\n",
+            game->id, ret, (unsigned long)game->lba);
         ret = -1;
+    }
 
     return ret;
 }
@@ -188,16 +201,23 @@ int hddGetHDLGamelist(hdl_games_list_t *game_list)
     struct GameDataEntry *head, *current, *next, *pGameEntry;
     unsigned int count, i;
     iox_dirent_t dirent;
-    int fd, ret;
+    int dread, fd, ret;
 
+    APA_TRACE("APA_TRACE hddGetHDLGamelist: begin output_list=%p existing_count=%lu\n",
+        game_list, (unsigned long)game_list->count);
     hddFreeHDLGamelist(game_list);
 
     ret = 0;
     if ((fd = fileXioDopen("hdd0:")) >= 0) {
+        APA_TRACE("APA_TRACE hddGetHDLGamelist: opened hdd0 fd=%d\n", fd);
         head = current = NULL;
         count = 0;
-        while (fileXioDread(fd, &dirent) > 0) {
+        while ((dread = fileXioDread(fd, &dirent)) > 0) {
+            APA_TRACE("APA_TRACE hddGetHDLGamelist: partition name='%s' mode=0x%04x attr=0x%04x size=%lu lba=%lu\n",
+                dirent.name, (unsigned int)dirent.stat.mode, (unsigned int)dirent.stat.attr,
+                (unsigned long)dirent.stat.size, (unsigned long)dirent.stat.private_5);
             if (dirent.stat.mode == HDL_FS_MAGIC) {
+                APA_TRACE("APA_TRACE hddGetHDLGamelist: accept partition='%s' reason=mode_matches_hdl_magic\n", dirent.name);
                 if ((pGameEntry = GetGameListRecord(head, dirent.name)) == NULL) {
                     if (head == NULL) {
                         current = head = malloc(sizeof(struct GameDataEntry));
@@ -205,8 +225,10 @@ int hddGetHDLGamelist(hdl_games_list_t *game_list)
                         current = current->next = malloc(sizeof(struct GameDataEntry));
                     }
 
-                    if (current == NULL)
+                    if (current == NULL) {
+                        APA_TRACE("APA_TRACE hddGetHDLGamelist: reject partition='%s' reason=malloc_failed\n", dirent.name);
                         break;
+                    }
 
                     strncpy(current->id, dirent.name, APA_IDMAX);
                     current->id[APA_IDMAX] = '\0';
@@ -215,47 +237,77 @@ int hddGetHDLGamelist(hdl_games_list_t *game_list)
                     current->size = 0;
                     current->lba = 0;
                     pGameEntry = current;
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: created record partition='%s' current_count=%lu\n",
+                        current->id, (unsigned long)count);
+                } else {
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: merge partition='%s' into existing record\n", dirent.name);
                 }
 
                 if (!(dirent.stat.attr & APA_FLAG_SUB)) {
                     // Note: The APA specification states that there is a 4KB area used for storing the partition's information, before the extended attribute area.
                     pGameEntry->lba = dirent.stat.private_5 + (HDL_GAME_DATA_OFFSET + 4096) / 512;
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: primary partition='%s' data_lba=%lu\n",
+                        dirent.name, (unsigned long)pGameEntry->lba);
+                } else {
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: sub partition='%s' added_to_size\n", dirent.name);
                 }
 
                 pGameEntry->size += (dirent.stat.size / 4); // size in HDD sectors * (512 / 2048) = 0.25x
+                APA_TRACE("APA_TRACE hddGetHDLGamelist: size partition='%s' accumulated_size=%lu\n",
+                    pGameEntry->id, (unsigned long)pGameEntry->size);
+            } else {
+                APA_TRACE("APA_TRACE hddGetHDLGamelist: reject partition='%s' reason=mode_mismatch expected=0x%04x actual=0x%04x\n",
+                    dirent.name, HDL_FS_MAGIC, (unsigned int)dirent.stat.mode);
             }
         }
+
+        if (dread < 0)
+            APA_TRACE("APA_TRACE hddGetHDLGamelist: dread_error ret=%d\n", dread);
+        else
+            APA_TRACE("APA_TRACE hddGetHDLGamelist: dread_complete ret=%d candidate_count=%lu\n", dread, (unsigned long)count);
 
         fileXioDclose(fd);
 
         if (head != NULL) {
+            APA_TRACE("APA_TRACE hddGetHDLGamelist: allocate game_list count=%lu\n", (unsigned long)count);
             if ((game_list->games = malloc(sizeof(hdl_game_info_t) * count)) != NULL) {
                 memset(game_list->games, 0, sizeof(hdl_game_info_t) * count);
 
                 for (i = 0, current = head; i < count; i++, current = current->next) {
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: populate index=%lu partition='%s' lba=%lu size=%lu\n",
+                        (unsigned long)i, current->id, (unsigned long)current->lba, (unsigned long)current->size);
                     if ((ret = hddGetHDLGameInfo(current, &game_list->games[i])) != 0)
                         break;
                 }
 
                 if (ret) {
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: discard list reason=game_info_failed ret=%d index=%lu\n",
+                        ret, (unsigned long)i);
                     free(game_list->games);
                     game_list->games = NULL;
                 } else {
                     game_list->count = count;
+                    APA_TRACE("APA_TRACE hddGetHDLGamelist: final count=%lu\n", (unsigned long)game_list->count);
                 }
             } else {
                 ret = ENOMEM;
+                APA_TRACE("APA_TRACE hddGetHDLGamelist: malloc game_list failed count=%lu\n", (unsigned long)count);
             }
 
             for (current = head; current != NULL; current = next) {
                 next = current->next;
                 free(current);
             }
+        } else {
+            APA_TRACE("APA_TRACE hddGetHDLGamelist: no HDL partitions accepted\n");
         }
     } else {
         ret = fd;
+        APA_TRACE("APA_TRACE hddGetHDLGamelist: fileXioDopen hdd0 failed ret=%d\n", ret);
     }
 
+    APA_TRACE("APA_TRACE hddGetHDLGamelist: end ret=%d final_count=%lu games=%p\n",
+        ret, (unsigned long)game_list->count, game_list->games);
     return ret;
 }
 
