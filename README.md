@@ -16,7 +16,6 @@ Built for real PlayStation 2 hardware, PS2 Launcher introduces visual improvemen
 - Automatic game detection
 - USB game loading
 - Internal HDD support
-- SMB network game loading
 - Fast game list navigation
 - Custom themes and visual enhancements
 - Background artwork support
