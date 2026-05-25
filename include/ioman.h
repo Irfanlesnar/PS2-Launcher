@@ -61,4 +61,6 @@ int ioBlockOps(int block);
 #define LOG(...)
 #endif
 
+#define APA_TRACE(...) ((void)0)
+
 #endif

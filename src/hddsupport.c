@@ -43,8 +43,11 @@ static int hddUpdateGameListCache(hdl_games_list_t *cache, hdl_games_list_t *gam
 
 static void hddInitModules(void)
 {
+    APA_TRACE("APA_TRACE hddInitModules: begin gOPLPart='%s' gHDDPrefix='%s'\n", gOPLPart, gHDDPrefix);
     hddLoadModules();
     hddLoadSupportModules();
+    APA_TRACE("APA_TRACE hddInitModules: modules requested supportLoaded=%u gOPLPart='%s' gHDDPrefix='%s'\n",
+        hddSupportModulesLoaded, gOPLPart, gHDDPrefix);
 
     // update Themes
     char path[256];
@@ -55,6 +58,7 @@ static void hddInitModules(void)
     lngAddLanguages(path, "/", hddGameList.mode);
 
     sbCreateFolders(gHDDPrefix, 0);
+    APA_TRACE("APA_TRACE hddInitModules: end gOPLPart='%s' gHDDPrefix='%s'\n", gOPLPart, gHDDPrefix);
 }
 
 // HD Pro Kit is mapping the 1st word in ROM0 seg as a main ATA controller,
@@ -119,17 +123,21 @@ static void hddFindOPLPartition(void)
     char name[64];
     int fd, ret = 0;
 
+    APA_TRACE("APA_TRACE hddFindOPLPartition: begin current_gOPLPart='%s'\n", gOPLPart);
     fileXioUmount(hddPrefix);
 
     ret = fileXioMount("pfs0:", "hdd0:__common", FIO_MT_RDWR);
+    APA_TRACE("APA_TRACE hddFindOPLPartition: mount __common ret=%d\n", ret);
     if (ret == 0) {
         fd = open("pfs0:PS2L/conf_hdd.cfg", O_RDONLY);
+        APA_TRACE("APA_TRACE hddFindOPLPartition: open existing PS2L/conf_hdd.cfg fd=%d\n", fd);
         if (fd >= 0) {
             config = configAlloc(0, NULL, "pfs0:PS2L/conf_hdd.cfg");
             configRead(config);
 
             configGetStrCopy(config, "hdd_partition", name, sizeof(name));
             snprintf(gOPLPart, sizeof(gOPLPart), "hdd0:%s", name);
+            APA_TRACE("APA_TRACE hddFindOPLPartition: config selected partition='%s' gOPLPart='%s'\n", name, gOPLPart);
 
             configFree(config);
             close(fd);
@@ -140,6 +148,7 @@ static void hddFindOPLPartition(void)
         hddCheckOPLFolder(hddPrefix);
 
         fd = open("pfs0:PS2L/conf_hdd.cfg", O_CREAT | O_TRUNC | O_WRONLY);
+        APA_TRACE("APA_TRACE hddFindOPLPartition: create PS2L/conf_hdd.cfg fd=%d\n", fd);
         if (fd >= 0) {
             config = configAlloc(0, NULL, "pfs0:PS2L/conf_hdd.cfg");
             configRead(config);
@@ -153,6 +162,7 @@ static void hddFindOPLPartition(void)
     }
 
     snprintf(gOPLPart, sizeof(gOPLPart), "hdd0:+OPL");
+    APA_TRACE("APA_TRACE hddFindOPLPartition: default gOPLPart='%s'\n", gOPLPart);
 
     return;
 }
@@ -179,6 +189,7 @@ void hddLoadModules(void)
     int ret;
 
     LOG("HDDSUPPORT LoadModules %d\n", hddModulesLoadCount);
+    APA_TRACE("APA_TRACE hddLoadModules: begin loadCount=%u hdpro=%u\n", hddModulesLoadCount, hddHDProKitDetected);
 
     if (hddModulesLoadCount == 0) {
         // Increment the load count as soon as possible to prevent thread scheduling from allowing another thread to
@@ -194,24 +205,30 @@ void hddLoadModules(void)
         if (hddHDProKitDetected) {
             LOG("[ATAD_HDPRO]:\n");
             ret = sysLoadModuleBuffer(&hdpro_atad_irx, size_hdpro_atad_irx, 0, NULL);
+            APA_TRACE("APA_TRACE hddLoadModules: load ATAD_HDPRO ret=%d\n", ret);
             LOG("[XHDD]:\n");
-            sysLoadModuleBuffer(&xhdd_irx, size_xhdd_irx, 6, "-hdpro");
+            int xret = sysLoadModuleBuffer(&xhdd_irx, size_xhdd_irx, 6, "-hdpro");
+            APA_TRACE("APA_TRACE hddLoadModules: load XHDD hdpro ret=%d\n", xret);
         } else {
             LOG("[ATAD]:\n");
             ret = sysLoadModuleBuffer(&ps2atad_irx, size_ps2atad_irx, 0, NULL);
+            APA_TRACE("APA_TRACE hddLoadModules: load ATAD ret=%d\n", ret);
             LOG("[XHDD]:\n");
-            sysLoadModuleBuffer(&xhdd_irx, size_xhdd_irx, 0, NULL);
+            int xret = sysLoadModuleBuffer(&xhdd_irx, size_xhdd_irx, 0, NULL);
+            APA_TRACE("APA_TRACE hddLoadModules: load XHDD ret=%d\n", xret);
         }
 
         if (ret < 0) {
             LOG("HDD: No HardDisk Drive detected.\n");
             // setErrorMessageWithCode(_STR_HDD_NOT_CONNECTED_ERROR, ERROR_HDD_IF_NOT_DETECTED);
+            APA_TRACE("APA_TRACE hddLoadModules: abort ret=%d\n", ret);
             return;
         }
     } else
         hddModulesLoadCount++;
 
     LOG("HDDSUPPORT LoadModules done\n");
+    APA_TRACE("APA_TRACE hddLoadModules: end loadCount=%u\n", hddModulesLoadCount);
 }
 
 // Returns 1 for MBR/GPT, 0 for APA, and -1 if an error occured
@@ -229,6 +246,7 @@ int hddDetectNonSonyFileSystem()
     // the risk of corrupting the HDD. To avoid that get the first two sectors and perform some sanity checks. If
     // we reasonably suspect the disk is not APA formatted bail out from loading the sony fs irx modules.
     result = fileXioDevctl("xhdd0:", ATA_DEVCTL_READ_PARTITION_SECTOR, NULL, 0, pSectorData, 512 * 2);
+    APA_TRACE("APA_TRACE hddDetectNonSonyFileSystem: read partition sector ret=%d\n", result);
     if (result < 0) {
         LOG("hddDetectNonSonyFileSystem: failed to read data from hdd %d\n", result);
         free(pSectorData);
@@ -247,6 +265,8 @@ int hddDetectNonSonyFileSystem()
     } else if (strncmp((const char *)&pSectorData[4], "APA", 3) == 0) {
         // Found APA partition type.
         LOG("hddDetectNonSonyFileSystem: found APA partition data\n");
+        APA_TRACE("APA_TRACE hddDetectNonSonyFileSystem: accepted APA signature bytes='%c%c%c'\n",
+            pSectorData[4], pSectorData[5], pSectorData[6]);
         result = 0;
     } else {
         // Even though we didn't find evidence of non-APA partition data, if we load the APA irx module
@@ -257,6 +277,7 @@ int hddDetectNonSonyFileSystem()
 
     // Cleanup and return.
     free(pSectorData);
+    APA_TRACE("APA_TRACE hddDetectNonSonyFileSystem: end result=%d\n", result);
     return result;
 }
 
@@ -279,36 +300,48 @@ void hddLoadSupportModules(void)
                            "40"; // Default value: 8 | Max value: 127
 
     LOG("HDDSUPPORT LoadSupportModules\n");
+    APA_TRACE("APA_TRACE hddLoadSupportModules: begin supportLoaded=%u gOPLPart='%s' gHDDPrefix='%s'\n",
+        hddSupportModulesLoaded, gOPLPart, gHDDPrefix);
 
     // Check if the drive contains MBR/GPT partition data before we load the APA/PFS modules. If the drive is not
     // APA then loading the APA irx modules can corrupt the drive as it will try to write APA partition data.
-    if (hddDetectNonSonyFileSystem() != 0) {
+    int fsType = hddDetectNonSonyFileSystem();
+    APA_TRACE("APA_TRACE hddLoadSupportModules: filesystem_probe=%d\n", fsType);
+    if (fsType != 0) {
         // Drive is MBR/GPT style, or unknown, bail out or risk corrupting the drive.
         LOG("HDDSUPPORT LoadSupportModules bailing out early...\n");
+        APA_TRACE("APA_TRACE hddLoadSupportModules: abort reason=not_apa fsType=%d\n", fsType);
         return;
     }
 
     if (!hddSupportModulesLoaded) {
         LOG("[HDD]:\n");
         int ret = sysLoadModuleBuffer(&ps2hdd_irx, size_ps2hdd_irx, sizeof(hddarg), hddarg);
+        APA_TRACE("APA_TRACE hddLoadSupportModules: load PS2HDD ret=%d\n", ret);
         if (ret < 0) {
             LOG("HDD: No HardDisk Drive detected.\n");
             // setErrorMessageWithCode(_STR_HDD_NOT_CONNECTED_ERROR, ERROR_HDD_MODULE_HDD_FAILURE);
+            APA_TRACE("APA_TRACE hddLoadSupportModules: abort reason=ps2hdd_load_failed ret=%d\n", ret);
             return;
         }
 
         // Check if a HDD unit is connected
-        if (hddCheck() < 0) {
+        int checkRet = hddCheck();
+        APA_TRACE("APA_TRACE hddLoadSupportModules: hddCheck ret=%d\n", checkRet);
+        if (checkRet < 0) {
             LOG("HDD: No HardDisk Drive detected.\n");
             // setErrorMessageWithCode(_STR_HDD_NOT_CONNECTED_ERROR, ERROR_HDD_NOT_DETECTED);
+            APA_TRACE("APA_TRACE hddLoadSupportModules: abort reason=hdd_check_failed ret=%d\n", checkRet);
             return;
         }
 
         LOG("[PS2FS]:\n");
         ret = sysLoadModuleBuffer(&ps2fs_irx, size_ps2fs_irx, sizeof(pfsarg), pfsarg);
+        APA_TRACE("APA_TRACE hddLoadSupportModules: load PS2FS ret=%d\n", ret);
         if (ret < 0) {
             LOG("HDD: HardDisk Drive not formatted (PFS).\n");
             // setErrorMessageWithCode(_STR_HDD_NOT_FORMATTED_ERROR, ERROR_HDD_MODULE_PFS_FAILURE);
+            APA_TRACE("APA_TRACE hddLoadSupportModules: abort reason=ps2fs_load_failed ret=%d\n", ret);
             return;
         }
 
@@ -321,10 +354,15 @@ void hddLoadSupportModules(void)
         fileXioUmount(hddPrefix);
 
         ret = fileXioMount(hddPrefix, gOPLPart, FIO_MT_RDWR);
+        APA_TRACE("APA_TRACE hddLoadSupportModules: mount opl partition='%s' ret=%d\n", gOPLPart, ret);
         if (ret == -ENOENT) {
             // Attempt to create the partition.
-            if ((hddCreateOPLPartition(gOPLPart)) >= 0)
-                fileXioMount(hddPrefix, gOPLPart, FIO_MT_RDWR);
+            int createRet = hddCreateOPLPartition(gOPLPart);
+            APA_TRACE("APA_TRACE hddLoadSupportModules: create opl partition='%s' ret=%d\n", gOPLPart, createRet);
+            if (createRet >= 0) {
+                ret = fileXioMount(hddPrefix, gOPLPart, FIO_MT_RDWR);
+                APA_TRACE("APA_TRACE hddLoadSupportModules: remount opl partition='%s' ret=%d\n", gOPLPart, ret);
+            }
         }
 
         if (gOPLPart[5] != '+') {
@@ -332,19 +370,27 @@ void hddLoadSupportModules(void)
             gHDDPrefix = "pfs0:PS2L/";
         }
     }
+    APA_TRACE("APA_TRACE hddLoadSupportModules: end supportLoaded=%u gOPLPart='%s' gHDDPrefix='%s'\n",
+        hddSupportModulesLoaded, gOPLPart, gHDDPrefix);
 }
 
 void hddInit(item_list_t *itemList)
 {
     LOG("HDDSUPPORT Init\n");
+    APA_TRACE("APA_TRACE hddInit: begin itemList=%p enabled=%d delay=%d updateDelay=%d gHDDStartMode=%d gEnableBdmHDD=%d\n",
+        itemList, hddGameList.enabled, hddGameList.delay, hddGameList.updateDelay, gHDDStartMode, gEnableBdmHDD);
     hddForceUpdate = 0; // Use cache at initial startup.
     configGetInt(configGetByType(CONFIG_OPL), "hdd_frames_delay", &hddGameList.delay);
     ioPutRequest(IO_CUSTOM_SIMPLEACTION, &hddInitModules);
     hddGameList.enabled = 1;
+    APA_TRACE("APA_TRACE hddInit: end enabled=%d delay=%d forceUpdate=%u\n",
+        hddGameList.enabled, hddGameList.delay, hddForceUpdate);
 }
 
 item_list_t *hddGetObject(int initOnly)
 {
+    APA_TRACE("APA_TRACE hddGetObject: initOnly=%d enabled=%d returning=%s\n",
+        initOnly, hddGameList.enabled, (initOnly && !hddGameList.enabled) ? "NULL" : "hddGameList");
     if (initOnly && !hddGameList.enabled)
         return NULL;
     return &hddGameList;
@@ -414,19 +460,34 @@ static int hddUpdateGameList(item_list_t *itemList)
     hdl_games_list_t hddGamesNew;
     int ret = -1;
 
+    APA_TRACE("APA_TRACE hddUpdateGameList: begin itemList=%p cacheEnabled=%d forceUpdate=%u existing_count=%lu existing_games=%p gHDDPrefix='%s'\n",
+        itemList, gHDDGameListCache, hddForceUpdate, (unsigned long)hddGames.count, hddGames.games, gHDDPrefix);
     if (((ret = hddLoadGameListCache(&hddGames)) != 0) || (hddForceUpdate)) {
+        APA_TRACE("APA_TRACE hddUpdateGameList: scanning reason=%s cache_ret=%d forceUpdate=%u\n",
+            ret != 0 ? "cache_miss_or_disabled" : "force_update", ret, hddForceUpdate);
         hddGamesNew.count = 0;
         hddGamesNew.games = NULL;
         ret = hddGetHDLGamelist(&hddGamesNew);
+        APA_TRACE("APA_TRACE hddUpdateGameList: hddGetHDLGamelist ret=%d new_count=%lu new_games=%p\n",
+            ret, (unsigned long)hddGamesNew.count, hddGamesNew.games);
         if (ret == 0) {
-            hddUpdateGameListCache(&hddGames, &hddGamesNew);
+            int cacheRet = hddUpdateGameListCache(&hddGames, &hddGamesNew);
+            APA_TRACE("APA_TRACE hddUpdateGameList: update cache ret=%d old_count=%lu new_count=%lu\n",
+                cacheRet, (unsigned long)hddGames.count, (unsigned long)hddGamesNew.count);
             hddFreeHDLGamelist(&hddGames);
             hddGames = hddGamesNew;
+            APA_TRACE("APA_TRACE hddUpdateGameList: assigned global_count=%lu global_games=%p\n",
+                (unsigned long)hddGames.count, hddGames.games);
         }
+    } else {
+        APA_TRACE("APA_TRACE hddUpdateGameList: using cache count=%lu games=%p\n",
+            (unsigned long)hddGames.count, hddGames.games);
     }
 
     hddForceUpdate = 1; // Subsequent refresh operations will cause the HDD to be scanned.
 
+    APA_TRACE("APA_TRACE hddUpdateGameList: end ret=%d returned_count=%lu global_count=%lu forceUpdate=%u\n",
+        ret, (unsigned long)(ret == 0 ? hddGames.count : 0), (unsigned long)hddGames.count, hddForceUpdate);
     return (ret == 0 ? hddGames.count : 0);
 }
 
@@ -761,12 +822,15 @@ static int hddLoadGameListCache(hdl_games_list_t *cache)
     hdl_game_info_t *games;
     int result, size, count;
 
-    if (!gHDDGameListCache)
+    if (!gHDDGameListCache) {
+        APA_TRACE("APA_TRACE hddLoadGameListCache: disabled\n");
         return 1;
+    }
 
     hddFreeHDLGamelist(cache);
 
     sprintf(filename, "%sgames.bin", gHDDPrefix);
+    APA_TRACE("APA_TRACE hddLoadGameListCache: open filename='%s'\n", filename);
     file = fopen(filename, "rb");
     if (file != NULL) {
         fseek(file, 0, SEEK_END);
@@ -774,6 +838,7 @@ static int hddLoadGameListCache(hdl_games_list_t *cache)
         rewind(file);
 
         count = size / sizeof(hdl_game_info_t);
+        APA_TRACE("APA_TRACE hddLoadGameListCache: size=%d count=%d\n", size, count);
         if (count > 0) {
             games = memalign(64, count * sizeof(hdl_game_info_t));
             if (games != NULL) {
@@ -800,6 +865,8 @@ static int hddLoadGameListCache(hdl_games_list_t *cache)
         result = ENOENT;
     }
 
+    APA_TRACE("APA_TRACE hddLoadGameListCache: end result=%d count=%lu games=%p\n",
+        result, (unsigned long)cache->count, cache->games);
     return result;
 }
 
@@ -809,9 +876,14 @@ static int hddUpdateGameListCache(hdl_games_list_t *cache, hdl_games_list_t *gam
     FILE *file;
     int result, i, j, modified;
 
-    if (!gHDDGameListCache)
+    if (!gHDDGameListCache) {
+        APA_TRACE("APA_TRACE hddUpdateGameListCache: disabled old_count=%lu new_count=%lu\n",
+            (unsigned long)cache->count, (unsigned long)game_list->count);
         return 1;
+    }
 
+    APA_TRACE("APA_TRACE hddUpdateGameListCache: begin old_count=%lu new_count=%lu\n",
+        (unsigned long)cache->count, (unsigned long)game_list->count);
     if (cache->count > 0) {
         modified = 0;
         for (i = 0; i < cache->count; i++) {
@@ -854,6 +926,7 @@ static int hddUpdateGameListCache(hdl_games_list_t *cache, hdl_games_list_t *gam
         result = 0;
     }
 
+    APA_TRACE("APA_TRACE hddUpdateGameListCache: end result=%d modified=%d\n", result, modified);
     return result;
 }
 

@@ -1411,8 +1411,8 @@ extern volatile int gBdmDisconnected;
 extern volatile unsigned int gBdmEventGeneration;
 
 int debugOpenProbe(const char *path) {
-    if (gBdmDisconnected && strncmp(path, "mass", 4) == 0) {
-        return -1; // Physically disconnected! Bypassing mass open!
+    if (gBdmDisconnected && bdmIsUsbPath(path)) {
+        return -1; // Physically disconnected USB device. Do not block APA/ATA mass paths.
     }
     return open(path, O_RDONLY);
 }
@@ -2027,7 +2027,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             if (list->itemGetPrefix) {
                 prefix = list->itemGetPrefix(list);
             }
-            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || gBdmDisconnected)) {
+            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || (gBdmDisconnected && bdmIsUsbPath(prefix)))) {
                 isUnplugged = 1;
             }
             if (!isUnplugged && list->itemGetStartup) {
@@ -2288,7 +2288,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                             if (list->itemGetPrefix) {
                                 prefix = list->itemGetPrefix(list);
                             }
-                            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || gBdmDisconnected))
+                            if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || (gBdmDisconnected && bdmIsUsbPath(prefix))))
                                 allowCardDeviceProbe = 0;
                             if (list->itemGetStartup) {
                                 startup = list->itemGetStartup(list, curr_item->item.id);
