@@ -532,10 +532,21 @@ int sbProbeISO9660(const char *path, base_game_info_t *game, u32 layer1_offset)
                     result = 0;
                 }
             } else {
-                if (lseek64(fd, (u64)layer1_offset * 2048, SEEK_SET) == (u64)layer1_offset * 2048) {
-                    if ((read(fd, buffer, sizeof(buffer)) == sizeof(buffer)) &&
-                        ((buffer[0x00] == 1) && (!strncmp(&buffer[0x01], "CD001", 5)))) {
-                        result = 0;
+                struct stat st;
+                int is_dl = 1;
+                if (stat(path, &st) == 0) {
+                    u64 fileSize = st.st_size;
+                    u64 layer1_offset_bytes = (u64)layer1_offset * 2048;
+                    if (layer1_offset_bytes >= fileSize) {
+                        is_dl = 0;
+                    }
+                }
+                if (is_dl) {
+                    if (lseek64(fd, (u64)layer1_offset * 2048, SEEK_SET) == (u64)layer1_offset * 2048) {
+                        if ((read(fd, buffer, sizeof(buffer)) == sizeof(buffer)) &&
+                            ((buffer[0x00] == 1) && (!strncmp(&buffer[0x01], "CD001", 5)))) {
+                            result = 0;
+                        }
                     }
                 }
             }
