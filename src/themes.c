@@ -2401,6 +2401,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5TempShowTime;
         extern int gPS5TempUISound;
         extern int gPS5SettingsSel;
+        extern int gPS5InternetStatus;
         extern unsigned int gPS5SaveNotifyFrame;
         extern int guiFrameId;
 
@@ -2450,6 +2451,19 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             fntRenderString(gPS5RegFont, rightX, rowY + 72, ALIGN_RIGHT, 0, 0, uiSoundStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
         }
 
+        // 4. Draw Internet check action/status
+        const char *internetText = "Check Internet";
+        u64 internetColor = (gPS5SubSel == 3) ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30);
+
+        if (gPS5InternetStatus == 1)
+            internetText = "Checking...";
+        else if (gPS5InternetStatus == 2)
+            internetText = "Internet available";
+        else if (gPS5InternetStatus == 3)
+            internetText = "No access";
+
+        fntRenderString(gPS5RegFont, rowX, rowY + 108, ALIGN_LEFT, 0, 0, internetText, internetColor);
+
         // 4. Draw irfanmatheena in lowercase with Instagram icon at bottom-left (aligned vertically to Save center)
         extern GSTEXTURE gPS5InstagramTex;
         extern int gPS5InstagramTexLoaded;
@@ -2476,7 +2490,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         // 5. Draw Save text at bottom-right (aligned perfectly with version text on the left)
         u64 saveTextColor;
 
-        if (gPS5SubSel == 3) { // Save text focused
+        if (gPS5SubSel == 4) { // Save text focused
             // Full opacity white
             saveTextColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
         } else { // Save text unfocused

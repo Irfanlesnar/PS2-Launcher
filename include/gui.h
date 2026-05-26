@@ -155,6 +155,7 @@ void guiRenderTextScreen(const char *message);
 void guiWarning(const char *text, int count);
 
 int guiConfirmVideoMode(void);
+int guiConfirmVideoModeChange(void);
 
 int guiGameShowRemoveSettings(config_set_t *configSet, config_set_t *configGame);
 

@@ -17,6 +17,7 @@
 #include "include/system.h"
 #include "include/ioman.h"
 #include "include/sound.h"
+#include "include/ethsupport.h"
 #include <assert.h>
 
 enum MENU_IDs {
@@ -839,12 +840,32 @@ int gPS5SavedShowTime = -1;
 int gPS5TempShowTime = 1;
 int gPS5SavedUISound = -1;
 int gPS5TempUISound = 1;
+int gPS5InternetStatus = 0;
+static int gPS5InternetCheckPending = 0;
+
+static void menuCheckInternet(void)
+{
+    gPS5InternetStatus = (ethCheckInternet() == 0) ? 2 : 3;
+    gPS5InternetCheckPending = 0;
+}
+
+static void menuStartInternetCheck(void)
+{
+    if (gPS5InternetCheckPending)
+        return;
+
+    gPS5InternetStatus = 1;
+    gPS5InternetCheckPending = 1;
+
+    if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &menuCheckInternet) != IO_OK) {
+        gPS5InternetStatus = 3;
+        gPS5InternetCheckPending = 0;
+    }
+}
 
 void menuHandleInputMenu()
 {
     if (gPS5Mode) {
-        extern int gPS5SettingsPage;
-        extern int gPS5SettingsSel;
         extern int gPS5TempVMode;
         extern int gPS5SubSel;
         extern int gVMode;
@@ -898,6 +919,9 @@ void menuHandleInputMenu()
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
                 if (gVMode != gPS5TempVMode) {
+                    if (!guiConfirmVideoModeChange())
+                        return;
+
                     int oldMode = gVMode;
                     gVMode = gPS5TempVMode;
                     applyConfig(-1, -1, 0); // Apply explicitly when CROSS is pressed!
@@ -944,12 +968,25 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_DOWN)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 3; // Move down to Save text
+                gPS5SubSel = 3; // Move down to Check Internet
             }
-        } else if (gPS5SubSel == 3) { // Focus is on the Save text
+        } else if (gPS5SubSel == 3) { // Focus is on Check Internet
             if (getKeyOn(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5SubSel = 2; // Move up to UI Sound
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 4; // Move down to Save text
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                sfxPlay(SFX_CONFIRM);
+                menuStartInternetCheck();
+            }
+        } else if (gPS5SubSel == 4) { // Focus is on the Save text
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 3; // Move up to Check Internet
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);

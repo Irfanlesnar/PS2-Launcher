@@ -78,7 +78,7 @@ FRONTEND_OBJS = pad.o xparam.o fntsys.o renderman.o menusys.o OSDHistory.o syste
 IOP_OBJS =	iomanx.o filexio.o ps2fs.o usbd.o bdmevent.o \
 		bdm.o bdmfs_fatfs.o usbmass_bd.o iLinkman.o IEEE1394_bd.o mx4sio_bd.o \
 		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o \
-		ps2dev9.o smsutils.o \
+		ps2dev9.o smsutils.o ps2ip.o smap.o httpclient-iop.o netman.o ps2ips.o \
 		isofs.o \
 		sio2man.o padman.o mcman.o mcserv.o \
 		bdm_mcemu.o hdd_mcemu.o \
@@ -118,7 +118,7 @@ PNG_ASSETS_DIR = gfx/
 MAPFILE = opl.map
 EE_LDFLAGS += -Wl,-Map,$(MAPFILE)
 
-EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
+EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -lnetman -lps2ips -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
 EE_INCS += -I$(PS2SDK)/ports/include -I$(PS2SDK)/ports/include/freetype2 -I$(GSKIT)/include -I$(GSKIT)/ee/dma/include -I$(GSKIT)/ee/gs/include -Imodules/iopcore/common -Imodules/network/common -Imodules/hdd/common -Iinclude
 BIN2C = $(PS2SDK)/bin/bin2c
 
