@@ -50,4 +50,6 @@ int CheckPS2Logo(int fd, u32 lba);
 
 void delay(int count);
 
+#define write_debug_log(...) do {} while(0)
+
 #endif

@@ -36,7 +36,11 @@ void bdm_connect_bd(struct block_device *bd)
 {
     DPRINTF("connecting device %s%dp%d\n", bd->name, bd->devNr, bd->parNr);
 
+#ifdef USE_BDM_ATA
+    if (g_bd == NULL && strncmp(bd->name, "ata", 3) == 0) {
+#else
     if (g_bd == NULL && bd->devNr == cdvdman_settings.bdDeviceId) {
+#endif
         DPRINTF("attaching to %s%dp%d\n", bd->name, bd->devNr, bd->parNr);
         g_bd = bd;
         g_bd_sectors_per_sector = (2048 / bd->sectorSize);
@@ -80,9 +84,17 @@ void DeviceInit(void)
 
 #ifdef USE_BDM_ATA
     RegisterLibraryEntries(&_exp_atad);
+    lba_48bit = cdvdman_settings.hddIsLBA48;
     // Initialize ATA interface which will register the HDD as a block device.
     atad_start();
     atad_inited = 1;
+
+    // Wait for the ATA HDD to become ready by attempting to read sector 0 (MBR)
+    u8 temp_buf[512] __attribute__((aligned(64)));
+    int r;
+    while ((r = sceAtaDmaTransfer(0, temp_buf, 0, 1, ATA_DIR_READ)) != 0) {
+        DelayThread(20000); // 20ms delay
+    }
 #endif
 }
 

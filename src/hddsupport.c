@@ -11,6 +11,7 @@
 #include "include/system.h"
 #include "include/extern_irx.h"
 #include "include/cheatman.h"
+#include "include/OSDHistory.h"
 #include "modules/iopcore/common/cdvd_config.h"
 
 #define NEWLIB_PORT_AWARE
@@ -49,15 +50,17 @@ static void hddInitModules(void)
     APA_TRACE("APA_TRACE hddInitModules: modules requested supportLoaded=%u gOPLPart='%s' gHDDPrefix='%s'\n",
         hddSupportModulesLoaded, gOPLPart, gHDDPrefix);
 
-    // update Themes
-    char path[256];
-    sprintf(path, "%sTHM", gHDDPrefix);
-    thmAddElements(path, "/", 1);
+    if (hddSupportModulesLoaded && gHDDPrefix != NULL) {
+        // update Themes
+        char path[256];
+        sprintf(path, "%sTHM", gHDDPrefix);
+        thmAddElements(path, "/", 1);
 
-    sprintf(path, "%sLNG", gHDDPrefix);
-    lngAddLanguages(path, "/", hddGameList.mode);
+        sprintf(path, "%sLNG", gHDDPrefix);
+        lngAddLanguages(path, "/", hddGameList.mode);
 
-    sbCreateFolders(gHDDPrefix, 0);
+        sbCreateFolders(gHDDPrefix, 0);
+    }
     APA_TRACE("APA_TRACE hddInitModules: end gOPLPart='%s' gHDDPrefix='%s'\n", gOPLPart, gHDDPrefix);
 }
 
@@ -700,6 +703,10 @@ void hddLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
         }
     }
 
+
+#if (!defined(__DEBUG) && !defined(_DTL_T10000))
+    AddHistoryRecordUsingFullPath(filename);
+#endif
     if (gAutoLaunchGame == NULL)
         deinit(NO_EXCEPTION, HDD_MODE); // CAREFUL: deinit will call hddCleanUp, so hddGames/game will be freed
     else {

@@ -444,6 +444,22 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
 
 static void initAllSupport(int force_reinit)
 {
+    // Auto-detect internal HDD format to dynamically enable traditional APA vs BDM exFAT modes
+    hddLoadModules();
+    int fsType = hddDetectNonSonyFileSystem();
+    if (fsType == 1) { // MBR/GPT (exFAT) drive detected
+        LOG("initAllSupport: exFAT GPT/MBR HDD detected. Enabling BDM HDD, disabling traditional HDD.\n");
+        gHDDStartMode = START_MODE_DISABLED;
+        gEnableBdmHDD = 1;
+    } else if (fsType == 0) { // APA (Sony PS2 format) drive detected
+        LOG("initAllSupport: APA PS2 HDD detected. Enabling traditional HDD, disabling BDM HDD.\n");
+        gHDDStartMode = START_MODE_AUTO;
+        gEnableBdmHDD = 0;
+    } else {
+        LOG("initAllSupport: No internal HDD or unrecognized filesystem (%d). Disabling traditional HDD.\n", fsType);
+        gHDDStartMode = START_MODE_DISABLED;
+    }
+
     bdmEnumerateDevices();
     initSupport(ethGetObject(0), ETH_MODE, force_reinit || (gNetworkStartup >= ERROR_ETH_SMB_CONN));
     initSupport(hddGetObject(0), HDD_MODE, force_reinit);

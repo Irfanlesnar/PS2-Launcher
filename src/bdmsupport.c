@@ -11,6 +11,7 @@
 #include "include/extern_irx.h"
 #include "include/cheatman.h"
 #include "include/sound.h"
+#include "include/OSDHistory.h"
 #include "modules/iopcore/common/cdvd_config.h"
 
 #include <usbhdfsd-common.h>
@@ -354,6 +355,7 @@ static void bdmRenameGame(item_list_t *itemList, int id, char *newName)
 
 void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
 {
+    write_debug_log("bdmLaunchGame: launching BDM game index=%d", id);
     int i, fd, iop_fd, index, compatmask = 0;
     int EnablePS2Logo = 0;
     int result;
@@ -369,14 +371,18 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
 
     if (gAutoLaunchBDMGame == NULL) {
         pDeviceData = (bdm_device_data_t *)itemList->priv;
-        if (!bdmGameIdValid(pDeviceData, id) || pDeviceData->bdmPrefix[0] == '\0')
+        if (!bdmGameIdValid(pDeviceData, id) || pDeviceData->bdmPrefix[0] == '\0') {
+            write_debug_log("bdmLaunchGame: invalid game ID or empty bdmPrefix. Exiting.");
             return;
+        }
 
         game = &pDeviceData->bdmGames[id];
     } else {
         pDeviceData = gAutoLaunchDeviceData;
         game = gAutoLaunchBDMGame;
     }
+
+    write_debug_log("bdmLaunchGame: startup='%s', name='%s', parts=%d, format=%d", game->startup, game->name, game->parts, game->format);
 
     char vmc_name[32], vmc_path[256], have_error = 0;
     int vmc_id, size_mcemu_irx = 0;
@@ -389,6 +395,7 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
         if (vmc_name[0]) {
             have_error = 1;
             int vmcSizeInMb = sysCheckVMC(pDeviceData->bdmPrefix, "/", vmc_name, 0, &vmc_superblock);
+            write_debug_log("bdmLaunchGame: VMC slot %d name='%s', size=%dMB", vmc_id, vmc_name, vmcSizeInMb);
             if (vmcSizeInMb > 0) {
                 bdm_vmc_infos.flags = vmc_superblock.mc_flag & 0xFF;
                 bdm_vmc_infos.flags |= 0x100;
@@ -408,6 +415,7 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
                         int vmcSectorCount = vmcSizeInMb * ((1024 * 1024) / 512); // size in MB * sectors per MB
                         if (startingLBA + vmcSectorCount > 0x100000000) {
                             LOG("BDMSUPPORT VMC bad LBA range\n");
+                            write_debug_log("bdmLaunchGame: VMC slot %d bad LBA range, start=%u, count=%d", vmc_id, (u32)startingLBA, vmcSectorCount);
                             have_error = 2;
                         }
                         // Check VMC cluster chain for fragmentation (write operation can cause damage to the filesystem).
@@ -417,30 +425,42 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
                             bdm_vmc_infos.active = 1;
                             bdm_vmc_infos.start_sector = (u32)startingLBA;
                             LOG("BDMSUPPORT VMC slot %d start: 0x%X\n", vmc_id, (u32)startingLBA);
+                            write_debug_log("bdmLaunchGame: VMC slot %d active, start_sector=0x%x", vmc_id, (u32)startingLBA);
                         } else {
                             LOG("BDMSUPPORT Cluster Chain NG\n");
+                            write_debug_log("bdmLaunchGame: VMC slot %d cluster chain NG", vmc_id);
                             have_error = 2;
                         }
+                    } else {
+                        write_debug_log("bdmLaunchGame: VMC slot %d failed GET_LBA or GET_CLUSTER", vmc_id);
                     }
 
                     close(fd);
+                } else {
+                    write_debug_log("bdmLaunchGame: VMC slot %d failed to open file '%s'", vmc_id, vmc_path);
                 }
             }
         }
 
         if (gAutoLaunchBDMGame == NULL) {
             if (have_error) {
+                write_debug_log("bdmLaunchGame: VMC slot %d error detected=%d", vmc_id, have_error);
                 char error[256];
                 if (have_error == 2) // VMC file is fragmented
                     snprintf(error, sizeof(error), _l(_STR_ERR_VMC_FRAGMENTED_CONTINUE), vmc_name, (vmc_id + 1));
                 else
                     snprintf(error, sizeof(error), _l(_STR_ERR_VMC_CONTINUE), vmc_name, (vmc_id + 1));
                 if (!guiMsgBox(error, 1, NULL)) {
+                    write_debug_log("bdmLaunchGame: user aborted due to VMC slot %d error", vmc_id);
                     return;
                 }
             }
-        } else
+        } else {
             LOG("VMC error\n");
+            if (have_error) {
+                write_debug_log("bdmLaunchGame: VMC autolaunch error=%d", have_error);
+            }
+        }
 
         for (i = 0; i < size_bdm_mcemu_irx; i++) {
             if (((u32 *)&bdm_mcemu_irx)[i] == (0xC0DEFAC0 + vmc_id)) {
@@ -461,16 +481,21 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
         irx = &bdm_cdvdman_irx;
         irx_size = size_bdm_cdvdman_irx;
     }
+    write_debug_log("bdmLaunchGame: driver='%s', selected cdvdman size=%d", pDeviceData->bdmDriver, irx_size);
 
+    index = -1;
     compatmask = sbPrepare(game, configSet, irx_size, irx, &index);
-    settings = (struct cdvdman_settings_bdm *)((u8 *)irx + index);
-    if (settings == NULL)
+    write_debug_log("bdmLaunchGame: sbPrepare compatmask=0x%x, settings_offset=%d", compatmask, index);
+    if (compatmask < 0 || index < 0) {
+        write_debug_log("bdmLaunchGame: error sbPrepare failed! compatmask=%d, index=%d", compatmask, index);
         return;
+    }
+    settings = (struct cdvdman_settings_bdm *)((u8 *)irx + index);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
     memset(&settings->frags[0], 0, sizeof(bd_fragment_t) * BDM_MAX_FRAGS);
 #pragma GCC diagnostic pop
-    u8 iTotalFragCount = 0;
+    int iTotalFragCount = 0;
 
     //
     // Add ISO as fragfile[0] to fragment list
@@ -482,17 +507,19 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
         // Open file
         sbCreatePath(game, partname, pDeviceData->bdmPrefix, "/", i);
         fd = open(partname, O_RDONLY);
-        iop_fd = ps2sdk_get_iop_fd(fd);
         if (fd < 0) {
+            write_debug_log("bdmLaunchGame: failed to open part file='%s'", partname);
             sbUnprepare(&settings->common);
             guiMsgBox(_l(_STR_ERR_FILE_INVALID), 0, NULL);
             return;
         }
+        iop_fd = ps2sdk_get_iop_fd(fd);
 
         // Get fragment list
         int iFragCount = fileXioIoctl2(iop_fd, USBMASS_IOCTL_GET_FRAGLIST, NULL, 0, (void *)&settings->frags[iTotalFragCount], sizeof(bd_fragment_t) * (BDM_MAX_FRAGS - iTotalFragCount));
-        if (iFragCount > BDM_MAX_FRAGS) {
-            // Too many fragments
+        write_debug_log("bdmLaunchGame: part %d path='%s' fd=%d fragCount=%d", i, partname, fd, iFragCount);
+        if (iFragCount <= 0 || iFragCount > (BDM_MAX_FRAGS - iTotalFragCount)) {
+            write_debug_log("bdmLaunchGame: error reading fragment list, iFragCount=%d, remaining_frags=%d", iFragCount, BDM_MAX_FRAGS - iTotalFragCount);
             close(fd);
             sbUnprepare(&settings->common);
             guiMsgBox(_l(_STR_ERR_FRAGMENTED), 0, NULL);
@@ -501,15 +528,19 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
         iso_frag->frag_count += iFragCount;
         iTotalFragCount += iFragCount;
 
-        if ((gPS2Logo) && (i == 0))
+        if ((gPS2Logo) && (i == 0)) {
             EnablePS2Logo = CheckPS2Logo(fd, 0);
+            write_debug_log("bdmLaunchGame: PS2Logo check result=%d", EnablePS2Logo);
+        }
 
         close(fd);
     }
+    write_debug_log("bdmLaunchGame: accumulated total fragments count=%d", iTotalFragCount);
 
     // Initialize layer 1 information.
     sbCreatePath(game, partname, pDeviceData->bdmPrefix, "/", 0);
     layer1_start = sbGetISO9660MaxLBA(partname);
+    write_debug_log("bdmLaunchGame: initial layer1_start LBA=%d", layer1_start);
 
     switch (game->format) {
         case GAME_FORMAT_USBLD:
@@ -525,16 +556,21 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
     if (sbProbeISO9660(partname, game, layer1_offset) != 0) {
         layer1_start = 0;
         LOG("DVD detected.\n");
+        write_debug_log("bdmLaunchGame: DVD probe successful");
     } else {
         layer1_start -= 16;
         LOG("DVD-DL layer 1 @ part %u sector 0x%lx.\n", layer1_part, layer1_offset);
+        write_debug_log("bdmLaunchGame: DVD-DL layer 1 probe: part=%u, sector=0x%lx", layer1_part, layer1_offset);
     }
     settings->common.layer1_start = layer1_start;
+    write_debug_log("bdmLaunchGame: common.layer1_start set to=%d", settings->common.layer1_start);
 
     // adjust ZSO cache
     settings->common.zso_cache = bdmCacheSize;
+    write_debug_log("bdmLaunchGame: common.zso_cache set to=%d", settings->common.zso_cache);
 
     if ((result = sbLoadCheats(pDeviceData->bdmPrefix, game->startup)) < 0) {
+        write_debug_log("bdmLaunchGame: sbLoadCheats result=%d", result);
         if (gAutoLaunchBDMGame == NULL) {
             switch (result) {
                 case -ENOENT:
@@ -545,11 +581,14 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
             }
         } else
             LOG("Cheats error\n");
+    } else {
+        write_debug_log("bdmLaunchGame: cheats successfully loaded");
     }
 
     if (gRememberLastPlayed) {
         configSetStr(configGetByType(CONFIG_LAST), "last_played", game->startup);
         saveConfig(CONFIG_LAST, 0);
+        write_debug_log("bdmLaunchGame: recorded last played game startup");
     }
 
     if (configGetStrCopy(configSet, CONFIG_ITEM_ALTSTARTUP, filename, sizeof(filename)) == 0)
@@ -559,6 +598,7 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
     char bdmCurrentDriver[32];
     snprintf(bdmCurrentDriver, sizeof(bdmCurrentDriver), "%s", pDeviceData->bdmDriver);
     settings->bdDeviceId = pDeviceData->massDeviceIndex;
+    write_debug_log("bdmLaunchGame: target altstartup/filename='%s', currentDriver='%s', deviceId=%d", filename, bdmCurrentDriver, settings->bdDeviceId);
 
     if (!strcmp(bdmCurrentDriver, "ata") && strlen(bdmCurrentDriver) == 3) {
         // Get DMA settings for ATA mode.
@@ -576,12 +616,19 @@ void bdmLaunchGame(item_list_t *itemList, int id, config_set_t *configSet)
                 dmaMode -= 3;
         }
 
+        write_debug_log("bdmLaunchGame: setting up ATA mode. highestUDMA=%d, selected dmaType=0x%x, dmaMode=%d", pDeviceData->ataHighestUDMAMode, dmaType, dmaMode);
         hddSetTransferMode(dmaType, dmaMode);
         // gHDDSpindown [0..20] -> spindown [0..240] -> seconds [0..1200]
         hddSetIdleTimeout(gHDDSpindown * 12);
         settings->hddIsLBA48 = pDeviceData->bdmHddIsLBA48;
+        write_debug_log("bdmLaunchGame: HDD settings configured. spindown=%d, hddIsLBA48=%d", gHDDSpindown, settings->hddIsLBA48);
     }
 
+    write_debug_log("bdmLaunchGame: pre sysLaunchLoaderElf, driver='%s', filename='%s', irx_size=%d", bdmCurrentDriver, filename, irx_size);
+    write_debug_log("bdmLaunchGame: performing system deinit sequence");
+#if (!defined(__DEBUG) && !defined(_DTL_T10000))
+    AddHistoryRecordUsingFullPath(filename);
+#endif
     if (gAutoLaunchBDMGame == NULL)
         deinit(NO_EXCEPTION, itemList->mode); // CAREFUL: deinit will call bdmCleanUp, so bdmGames/game will be freed
     else {

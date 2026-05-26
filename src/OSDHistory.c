@@ -133,8 +133,9 @@ int AddHistoryRecord(const char *name)
     char path[32];
     DEBUG_PRINTF("OSDHistory@%s: starts\n", __func__);
 
+    int mcFree;
     for (i = 0; i < 2; i++) { // increase number of slots for mt (not sure how multi tap works haven’t looked at docs ie mc0 - mc4 ?)
-        mcGetInfo(i, 0, &mcType, NULL, &format);
+        mcGetInfo(i, 0, &mcType, &mcFree, &format);
         mcSync(0, NULL, &result);
         DEBUG_PRINTF("\tslot=%d, mctype=%d, format=%d\n", i, mcType, format);
         if ((mcType == sceMcTypePS2) && (format == MC_FORMATTED))
@@ -273,6 +274,8 @@ static void GetBootFilename(const char *bootpath, char *filename)
             if (length > 2 && bootpath[length - 1] == '1' && bootpath[length - 2] == ';')
                 length -= 2;
             length -= (i + 1);
+            if (length > 16)
+                length = 16;
             strncpy(filename, &bootpath[i + 1], length);
             filename[length] = '\0';
             break;
@@ -280,7 +283,8 @@ static void GetBootFilename(const char *bootpath, char *filename)
     }
 
     if (i == 0) { // The boot path contains only the filename.
-        strcpy(filename, bootpath);
+        strncpy(filename, bootpath, 16);
+        filename[16] = '\0';
     }
 }
 

@@ -63,6 +63,7 @@ void hddInit(item_list_t *itemList);
 item_list_t *hddGetObject(int initOnly);
 void hddLoadModules(void);
 void hddLoadSupportModules(void);
+int hddDetectNonSonyFileSystem(void);
 void hddLaunchGame(item_list_t *itemList, int id, config_set_t *configSet);
 
 #endif

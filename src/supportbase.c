@@ -284,6 +284,7 @@ static int queryISOGameListCache(const struct game_cache_list *cache, base_game_
 
 static int scanForISO(char *path, char type, struct game_list_t **glist)
 {
+    write_debug_log("scanForISO: start scanning directory '%s'", path);
     int count = 0;
     struct game_cache_list cache = {0, NULL};
     base_game_info_t cachedGInfo;
@@ -353,6 +354,7 @@ static int scanForISO(char *path, char type, struct game_list_t **glist)
             game->format = format;
             game->sizeMB = 0;
 
+            write_debug_log("scanForISO: added ISO game '%s' (startup: '%s')", game->name, game->startup);
             count++;
         }
         closedir(dir);
@@ -365,11 +367,13 @@ static int scanForISO(char *path, char type, struct game_list_t **glist)
         updateISOGameList(path, NULL, *glist, count);
     }
 
+    write_debug_log("scanForISO: scan completed for '%s', count=%d", path, count);
     return count;
 }
 
 int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gamecount)
 {
+    write_debug_log("sbReadList: start reading list for prefix='%s'", prefix);
     int fd, size, id = 0, result;
     int count;
     char path[256];
@@ -426,6 +430,8 @@ int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gam
                     g->format = GAME_FORMAT_USBLD;
                     g->sizeMB = 0;
 
+                    write_debug_log("sbReadList: added UL game '%s' (startup: '%s', parts: %d)", g->name, g->startup, g->parts);
+
                     /* TODO: size calculation is very slow
                     implmented some caching, or do not touch at all */
 
@@ -466,6 +472,7 @@ int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gam
     if (count > 0)
         *gamecount = count;
 
+    write_debug_log("sbReadList: finished, loaded %d games total", *gamecount);
     return count;
 }
 
@@ -525,6 +532,10 @@ int sbProbeISO9660(const char *path, base_game_info_t *game, u32 layer1_offset)
 
     result = -1;
     if (game->media == SCECdPS2DVD) { // Only DVDs can have multiple layers.
+        if (layer1_offset > 2086912) {
+            return -1; // Physically impossible to be dual-layer DVD-9
+        }
+
         if ((fd = open(path, O_RDONLY, 0666)) >= 0) {
             if (ProbeZISO(fd)) {
                 if (ziso_read_sector(IOBuffer, layer1_offset, 1) == 1 &&
@@ -532,21 +543,10 @@ int sbProbeISO9660(const char *path, base_game_info_t *game, u32 layer1_offset)
                     result = 0;
                 }
             } else {
-                struct stat st;
-                int is_dl = 1;
-                if (stat(path, &st) == 0) {
-                    u64 fileSize = st.st_size;
-                    u64 layer1_offset_bytes = (u64)layer1_offset * 2048;
-                    if (layer1_offset_bytes >= fileSize) {
-                        is_dl = 0;
-                    }
-                }
-                if (is_dl) {
-                    if (lseek64(fd, (u64)layer1_offset * 2048, SEEK_SET) == (u64)layer1_offset * 2048) {
-                        if ((read(fd, buffer, sizeof(buffer)) == sizeof(buffer)) &&
-                            ((buffer[0x00] == 1) && (!strncmp(&buffer[0x01], "CD001", 5)))) {
-                            result = 0;
-                        }
+                if (lseek64(fd, (u64)layer1_offset * 2048, SEEK_SET) == (u64)layer1_offset * 2048) {
+                    if ((read(fd, buffer, sizeof(buffer)) == sizeof(buffer)) &&
+                        ((buffer[0x00] == 1) && (!strncmp(&buffer[0x01], "CD001", 5)))) {
+                        result = 0;
                     }
                 }
             }
