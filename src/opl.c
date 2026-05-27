@@ -429,7 +429,7 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
     else if (mode == APP_MODE)
         startMode = gAPPStartMode;
 
-    if (gPS5Mode && startMode == START_MODE_DISABLED) {
+    if (gPS5Mode && startMode == START_MODE_DISABLED && !(mode == HDD_MODE && gEnableBdmHDD)) {
         startMode = START_MODE_MANUAL;
     }
 
@@ -855,6 +855,27 @@ static int checkLoadConfigHDD(int types)
     return 0;
 }
 
+static void applyAutomaticInternalHDDMode(void)
+{
+    int fsType;
+
+    if (!gPS5Mode)
+        return;
+
+    hddLoadModules();
+    fsType = hddDetectNonSonyFileSystem();
+    if (fsType == 0) {
+        gEnableBdmHDD = 0;
+        gHDDStartMode = START_MODE_AUTO;
+        gDefaultDevice = HDD_MODE;
+    } else if (fsType == 1) {
+        gEnableBdmHDD = 1;
+        gBDMStartMode = START_MODE_AUTO;
+        gHDDStartMode = START_MODE_DISABLED;
+        gDefaultDevice = BDM_MODE;
+    }
+}
+
 // When this function is called, the current device for loading/saving config is the memory card.
 static int tryAlternateDevice(int types)
 {
@@ -1037,6 +1058,7 @@ static void _loadConfig()
         }
     }
 
+    applyAutomaticInternalHDDMode();
     applyConfig(themeID, langID, 0);
 
     lscret = result;
