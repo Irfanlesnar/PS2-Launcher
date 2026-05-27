@@ -101,7 +101,7 @@ static void clearIOModuleT(opl_io_module_t *mod)
 
 // forward decl
 static void clearMenuGameList(opl_io_module_t *mdl);
-static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected);
+static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected, int selectedBdmHdd);
 static void reset(void);
 static void deferredAudioInit(void);
 
@@ -259,6 +259,16 @@ static void itemInitSupport(item_list_t *support)
     // Manual refreshing can only be done if either auto refresh is disabled or auto refresh is disabled for the item.
     if (!gAutoRefresh || (support->updateDelay == MENU_UPD_DELAY_NOUPDATE))
         ioPutRequest(IO_MENU_UPDATE_DEFFERED, &support->mode);
+}
+
+static int isSelectedBdmHdd(int modeSelected)
+{
+    if (modeSelected >= BDM_MODE && modeSelected < ETH_MODE && list_support[modeSelected].support != NULL) {
+        bdm_device_data_t *bdmData = (bdm_device_data_t *)list_support[modeSelected].support->priv;
+        return bdmData != NULL && bdmData->bdmDeviceType == BDM_TYPE_ATA;
+    }
+
+    return 0;
 }
 
 static void itemExecSelect(struct menu_item *curMenu)
@@ -452,9 +462,11 @@ static void initAllSupport(int force_reinit)
 
 static void deinitAllSupport(int exception, int modeSelected)
 {
+    int selectedBdmHdd = isSelectedBdmHdd(modeSelected);
+
     for (int i = 0; i < MODE_COUNT; i++) {
         if (list_support[i].support != NULL)
-            moduleCleanup(&list_support[i], exception, modeSelected);
+            moduleCleanup(&list_support[i], exception, modeSelected, selectedBdmHdd);
     }
 }
 
@@ -1642,14 +1654,17 @@ static void reset(void)
     mcInit(MC_TYPE_XMC);
 }
 
-static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected)
+static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected, int selectedBdmHdd)
 {
     if (!mod->support)
         return;
 
     // Shutdown if not required anymore.
     if ((mod->support->mode != modeSelected) && (modeSelected != IO_MODE_SELECTED_ALL)) {
-        if (mod->support->itemShutdown)
+        if (mod->support->mode == HDD_MODE && selectedBdmHdd) {
+            if (mod->support->itemCleanUp)
+                mod->support->itemCleanUp(mod->support, exception);
+        } else if (mod->support->itemShutdown)
             mod->support->itemShutdown(mod->support);
     } else {
         if (mod->support->itemCleanUp)
