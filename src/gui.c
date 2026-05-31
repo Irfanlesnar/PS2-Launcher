@@ -1740,7 +1740,8 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
             int bodyY = dlgY + topPad;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 7, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 6, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -1889,7 +1890,8 @@ int guiConfirmVideoModeChange(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 7, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 6, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + titleY, ALIGN_LEFT, 0, 0, "Change video output now?", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x60));

@@ -1608,7 +1608,24 @@ static int coverIsLocalGameSupport(item_list_t *support)
 
 static void coverDebugLog(const char *format, ...)
 {
-    (void)format;
+    char line[256];
+    int fd;
+    va_list args;
+
+    va_start(args, format);
+    vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+
+    LOG("%s\n", line);
+
+    mkdir("mc0:/PS2L", 0777);
+    fd = open("mc0:/PS2L/debug.log", O_WRONLY | O_CREAT, 0666);
+    if (fd >= 0) {
+        lseek(fd, 0, SEEK_END);
+        write(fd, line, strlen(line));
+        write(fd, "\n", 1);
+        close(fd);
+    }
 }
 
 static void coverNormalizePrefix(const char *prefix, char *out, int outSize)
@@ -1681,13 +1698,19 @@ static int coverEnsureFolder(const char *prefix, const char *folder)
     coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
     snprintf(path, sizeof(path), "%s/%s", cleanPrefix, folder);
 
+    coverDebugLog("COVERSAVE mkdir check path='%s'", path);
     dir = opendir(path);
     if (dir != NULL) {
         closedir(dir);
+        coverDebugLog("COVERSAVE mkdir exists path='%s'", path);
         return 0;
     }
 
-    return mkdir(path, 0777);
+    {
+        int result = mkdir(path, 0777);
+        coverDebugLog("COVERSAVE mkdir result=%d path='%s'", result, path);
+        return result;
+    }
 }
 
 static int coverParseHttpUrl(const char *url, char *host, int hostSize, char *uri, int uriSize)
@@ -1744,24 +1767,32 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     int result, socket, fd;
 
     result = coverParseHttpUrl(url, host, sizeof(host), uri, sizeof(uri));
-    if (result < 0)
+    if (result < 0) {
+        coverDebugLog("COVERSAVE parse failed result=%d url='%s'", result, url != NULL ? url : "(null)");
         return result;
+    }
 
-    if (coverEnsureFolder(prefix, folder) < 0)
+    if (coverEnsureFolder(prefix, folder) < 0) {
+        coverDebugLog("COVERSAVE folder failed prefix='%s' folder='%s'", prefix != NULL ? prefix : "(null)", folder);
         return -EIO;
+    }
 
     coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
     snprintf(path, sizeof(path), "%s/%s/%s_%s.png", cleanPrefix, folder, startup, suffix);
+    coverDebugLog("COVERSAVE begin host='%s' uri='%s' path='%s'", host, uri, path);
 
     buffer = memalign(64, COVER_IMAGE_IOBUF_SIZE);
-    if (buffer == NULL)
+    if (buffer == NULL) {
+        coverDebugLog("COVERSAVE alloc failed size=%d", COVER_IMAGE_IOBUF_SIZE);
         return -ENOMEM;
+    }
 
     strncpy(connectHost, (!strcmp(host, COVER_HTTP_HOST)) ? COVER_HTTP_CONNECT_HOST : host, sizeof(connectHost) - 1);
     connectHost[sizeof(connectHost) - 1] = '\0';
 
     fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) {
+        coverDebugLog("COVERSAVE open failed fd=%d path='%s'", fd, path);
         free(buffer);
         return fd;
     }
@@ -1773,6 +1804,7 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
 
         socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
         if (socket < 0) {
+            coverDebugLog("COVERSAVE connect failed socket=%d connectHost='%s'", socket, connectHost);
             result = socket;
             break;
         }
@@ -1781,6 +1813,7 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
         length = COVER_IMAGE_IOBUF_SIZE;
         result = HttpSendGetRequestRange(socket, OPL_USER_AGENT, host, &connMode, uri, offset, offset + COVER_IMAGE_IOBUF_SIZE - 1, buffer, &length);
         HttpCloseConnection(socket);
+        coverDebugLog("COVERSAVE chunk offset=%lu http=%d len=%u mode=%d", offset, result, length, connMode);
 
         if (result == 416 && offset > 0) {
             result = 0;
@@ -1793,13 +1826,16 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
         }
 
         if (offset == 0 && (length < sizeof(pngSig) || memcmp(buffer, pngSig, sizeof(pngSig)) != 0)) {
+            coverDebugLog("COVERSAVE invalid png sig len=%u first=%02x%02x%02x%02x", length, length > 0 ? (unsigned char)buffer[0] : 0, length > 1 ? (unsigned char)buffer[1] : 0, length > 2 ? (unsigned char)buffer[2] : 0, length > 3 ? (unsigned char)buffer[3] : 0);
             result = -EIO;
             break;
         }
 
         result = coverWriteAll(fd, buffer, length);
-        if (result < 0)
+        if (result < 0) {
+            coverDebugLog("COVERSAVE write failed result=%d offset=%lu len=%u", result, offset, length);
             break;
+        }
 
         offset += length;
         if (length < COVER_IMAGE_IOBUF_SIZE)
@@ -1812,10 +1848,12 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     close(fd);
     free(buffer);
 
-    if (result == 0 && offset > 1024)
+    if (result == 0 && offset > 1024) {
+        coverDebugLog("COVERSAVE success bytes=%lu path='%s'", offset, path);
         oplMarkGameCoverStatsDirty();
-    else {
-        remove(path);
+    } else {
+        int removeResult = remove(path);
+        coverDebugLog("COVERSAVE failed result=%d bytes=%lu remove=%d path='%s'", result, offset, removeResult, path);
         if (result == 0)
             result = -EIO;
     }

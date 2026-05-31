@@ -2726,16 +2726,24 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             int btnY = dlgY + dlgH - 32;
             if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
                 GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
-                int hintW = (int)((float)fntCalcDimensions(gPS5RegFont, "Cancel") * 0.65f) + 6;
-                if (circleTex && circleTex->Mem && circleTex->Height > 0)
-                    hintW += rmWideScale((circleTex->Width * 14) / circleTex->Height);
-                drawPS5IconAndText(CIRCLE_ICON, "Cancel", gPS5RegFont, dlgX + dlgW - 24 - hintW, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                int textRight = dlgX + dlgW - 24;
+                int textW = (int)((float)fntCalcDimensions(gPS5RegFont, "Cancel") * 0.65f);
+                fntRenderString(gPS5RegFont, textRight, btnY, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                if (circleTex && circleTex->Mem && circleTex->Height > 0) {
+                    int iconH = 14;
+                    int iconW = (circleTex->Width * iconH) / circleTex->Height;
+                    rmDrawPixmap(circleTex, textRight - textW - 8 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                }
             } else {
                 GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
-                int hintW = (int)((float)fntCalcDimensions(gPS5RegFont, "Close") * 0.65f) + 6;
-                if (circleTex && circleTex->Mem && circleTex->Height > 0)
-                    hintW += rmWideScale((circleTex->Width * 14) / circleTex->Height);
-                drawPS5IconAndText(CIRCLE_ICON, "Close", gPS5RegFont, dlgX + dlgW - 24 - hintW, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                int textRight = dlgX + dlgW - 24;
+                int textW = (int)((float)fntCalcDimensions(gPS5RegFont, "Close") * 0.65f);
+                fntRenderString(gPS5RegFont, textRight, btnY, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                if (circleTex && circleTex->Mem && circleTex->Height > 0) {
+                    int iconH = 14;
+                    int iconW = (circleTex->Width * iconH) / circleTex->Height;
+                    rmDrawPixmap(circleTex, textRight - textW - 8 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                }
             }
         }
     }
