@@ -2732,7 +2732,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 if (circleTex && circleTex->Mem && circleTex->Height > 0) {
                     int iconH = 14;
                     int iconW = (circleTex->Width * iconH) / circleTex->Height;
-                    rmDrawPixmap(circleTex, textRight - textW - 8 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                    rmDrawPixmap(circleTex, textRight - textW - 3 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 }
             } else {
                 GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
@@ -2742,7 +2742,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 if (circleTex && circleTex->Mem && circleTex->Height > 0) {
                     int iconH = 14;
                     int iconW = (circleTex->Width * iconH) / circleTex->Height;
-                    rmDrawPixmap(circleTex, textRight - textW - 8 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                    rmDrawPixmap(circleTex, textRight - textW - 3 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 }
             }
         }

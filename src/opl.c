@@ -80,7 +80,8 @@ static unsigned char shouldAppsUpdate;
 
 // Network support stuff.
 #define HTTP_IOBUF_SIZE 512
-#define COVER_IMAGE_IOBUF_SIZE 512
+#define COVER_IMAGE_IOBUF_SIZE 4096
+#define COVER_IMAGE_MAX_SIZE (4 * 1024 * 1024)
 #define COVER_HTTP_HOST "ps2api.appdadz.com"
 #define COVER_HTTP_CONNECT_HOST "88.222.215.247"
 #define COVER_HTTP_PORT 80
@@ -1799,7 +1800,7 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
 
     result = 0;
     offset = 0;
-    while (!gPS5CoverDownloadCancel) {
+    while (!gPS5CoverDownloadCancel && offset < COVER_IMAGE_MAX_SIZE) {
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), offset == 0 ? "Downloading image..." : "Saving image...");
 
         socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
@@ -1820,7 +1821,8 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
             break;
         }
 
-        if ((result != 206 && result != 200) || length == 0) {
+        if (result != 206 || length == 0) {
+            coverDebugLog("COVERSAVE bad chunk status offset=%lu http=%d len=%u", offset, result, length);
             result = result < 0 ? result : -EIO;
             break;
         }
@@ -1844,6 +1846,10 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
 
     if (gPS5CoverDownloadCancel)
         result = -ECANCELED;
+    else if (offset >= COVER_IMAGE_MAX_SIZE) {
+        coverDebugLog("COVERSAVE max size reached bytes=%lu", offset);
+        result = -EFBIG;
+    }
 
     close(fd);
     free(buffer);
