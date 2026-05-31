@@ -80,7 +80,7 @@ static unsigned char shouldAppsUpdate;
 
 // Network support stuff.
 #define HTTP_IOBUF_SIZE 512
-#define COVER_IMAGE_IOBUF_SIZE 4096
+#define COVER_IMAGE_IOBUF_SIZE 32768
 #define COVER_IMAGE_MAX_SIZE (4 * 1024 * 1024)
 #define COVER_HTTP_HOST "ps2api.appdadz.com"
 #define COVER_HTTP_CONNECT_HOST "88.222.215.247"
@@ -1814,7 +1814,8 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
         length = COVER_IMAGE_IOBUF_SIZE;
         result = HttpSendGetRequestRange(socket, OPL_USER_AGENT, host, &connMode, uri, offset, offset + COVER_IMAGE_IOBUF_SIZE - 1, buffer, &length);
         HttpCloseConnection(socket);
-        coverDebugLog("COVERSAVE chunk offset=%lu http=%d len=%u mode=%d", offset, result, length, connMode);
+        if (offset == 0)
+            coverDebugLog("COVERSAVE first chunk http=%d len=%u mode=%d", result, length, connMode);
 
         if (result == 416 && offset > 0) {
             result = 0;
