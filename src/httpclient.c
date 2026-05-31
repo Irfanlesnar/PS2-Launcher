@@ -81,6 +81,35 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
     return result;
 }
 
+int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len)
+{
+    int result;
+
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->socket = HttpSocket;
+    strncpy(((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->UserAgent, UserAgent, HTTP_CLIENT_USER_AGENT_MAX - 1);
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->UserAgent[HTTP_CLIENT_USER_AGENT_MAX - 1] = '\0';
+    strncpy(((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->host, host, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->host[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->mode = *mode;
+    strncpy(((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->uri, uri, HTTP_CLIENT_URI_MAX - 1);
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->uri[HTTP_CLIENT_URI_MAX - 1] = '\0';
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->rangeStart = rangeStart;
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->rangeEnd = rangeEnd;
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->output = output;
+    ((struct HttpClientSendGetRangeArgs *)RpcTxBuffer)->out_len = *out_len;
+
+    if (!IS_UNCACHED_SEG(output))
+        SifWriteBackDCache(output, *out_len);
+
+    if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendGetRangeArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
+        result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
+        *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
+        *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;
+    }
+
+    return result;
+}
+
 int HttpStartCoverApiRequest(char *server, u16 port, const char *UserAgent, const char *host, const char *uri)
 {
     int result;

@@ -32,6 +32,7 @@ int HttpPollCoverApiStatusResult(int *rpcDone, int *requestDone, int *phase, int
 */
 
 int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const u8 *mtime, const char *uri, char *output, u16 *out_len);
+int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len);
 
 #define HTTP_CLIENT_SERVER_NAME_MAX 30
 #define HTTP_CLIENT_USER_AGENT_MAX  16
@@ -43,6 +44,7 @@ enum HTTP_CLIENT_CMD {
     HTTP_CLIENT_CMD_SEND_GET_REQ,
     HTTP_CLIENT_CMD_COVER_API_START_REQ,
     HTTP_CLIENT_CMD_COVER_API_STATUS_REQ,
+    HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ,
 };
 
 struct HttpClientConnEstabArgs
@@ -65,6 +67,19 @@ struct HttpClientSendGetArgs
     u8 hasMtime;
     u8 mtime[6];
     char uri[HTTP_CLIENT_URI_MAX];
+    u16 out_len;
+    void *output;
+};
+
+struct HttpClientSendGetRangeArgs
+{
+    s32 socket;
+    char UserAgent[HTTP_CLIENT_USER_AGENT_MAX];
+    char host[HTTP_CLIENT_SERVER_NAME_MAX];
+    s8 mode;
+    char uri[HTTP_CLIENT_URI_MAX];
+    u32 rangeStart;
+    u32 rangeEnd;
     u16 out_len;
     void *output;
 };

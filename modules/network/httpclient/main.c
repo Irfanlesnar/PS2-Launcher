@@ -165,6 +165,25 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
                 CpuResumeIntr(OldState);
             }
             break;
+        case HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ:
+            if (((struct HttpClientSendGetRangeArgs *)buffer)->out_len > sizeof(DmaBuffer)) {
+                ((struct HttpClientSendGetRangeArgs *)buffer)->out_len = sizeof(DmaBuffer);
+            }
+
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->result = HttpSendGetRequestRange(((struct HttpClientSendGetRangeArgs *)buffer)->socket, ((struct HttpClientSendGetRangeArgs *)buffer)->UserAgent, ((struct HttpClientSendGetRangeArgs *)buffer)->host, &((struct HttpClientSendGetRangeArgs *)buffer)->mode, ((struct HttpClientSendGetRangeArgs *)buffer)->uri, ((struct HttpClientSendGetRangeArgs *)buffer)->rangeStart, ((struct HttpClientSendGetRangeArgs *)buffer)->rangeEnd, (char *)DmaBuffer, &((struct HttpClientSendGetRangeArgs *)buffer)->out_len);
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->mode = ((struct HttpClientSendGetRangeArgs *)buffer)->mode;
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len = ((struct HttpClientSendGetRangeArgs *)buffer)->out_len;
+
+            dmat.src = DmaBuffer;
+            dmat.dest = ((struct HttpClientSendGetRangeArgs *)buffer)->output;
+            dmat.size = (((struct HttpClientSendGetRangeArgs *)buffer)->out_len + 0xF) & ~0xF;
+            dmat.attr = 0;
+
+            CpuSuspendIntr(&OldState);
+            while (sceSifSetDma(&dmat, 1) == 0)
+                ;
+            CpuResumeIntr(OldState);
+            break;
         default:
             *(int *)SifServerTxBuffer = -ENXIO;
     }

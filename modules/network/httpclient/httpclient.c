@@ -355,3 +355,32 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
 
     return result;
 }
+
+int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
+                    "Accept: image/png, image/jpeg, */*\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Range: bytes=%lu-%lu\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, rangeStart, rangeEnd);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else {
+        result = -1;
+    }
+
+    return result;
+}

@@ -80,7 +80,7 @@ static unsigned char shouldAppsUpdate;
 
 // Network support stuff.
 #define HTTP_IOBUF_SIZE 512
-#define COVER_IMAGE_IOBUF_SIZE 60000
+#define COVER_IMAGE_IOBUF_SIZE 512
 #define COVER_HTTP_HOST "ps2api.appdadz.com"
 #define COVER_HTTP_CONNECT_HOST "88.222.215.247"
 #define COVER_HTTP_PORT 80
@@ -1628,11 +1628,27 @@ static void coverNormalizePrefix(const char *prefix, char *out, int outSize)
 
 static int coverFileExists(const char *path)
 {
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
     int fd = open(path, O_RDONLY);
+    unsigned char sig[8];
+    const char *ext;
+    int size;
+    int valid = 0;
 
     if (fd >= 0) {
+        size = lseek(fd, 0, SEEK_END);
+        lseek(fd, 0, SEEK_SET);
+        memset(sig, 0, sizeof(sig));
+        read(fd, sig, sizeof(sig));
         close(fd);
-        return 1;
+
+        ext = strrchr(path, '.');
+        if (ext != NULL && !strcasecmp(ext, ".png"))
+            valid = size > 1024 && memcmp(sig, pngSig, sizeof(pngSig)) == 0;
+        else if (ext != NULL && !strcasecmp(ext, ".jpg"))
+            valid = size > 1024 && sig[0] == 0xFF && sig[1] == 0xD8;
+
+        return valid;
     }
 
     return 0;
@@ -1715,12 +1731,14 @@ static int coverWriteAll(int fd, const char *buffer, int size)
 
 static int coverDownloadImageToDisk(const char *url, const char *prefix, const char *folder, const char *startup, const char *suffix)
 {
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
     char host[HTTP_CLIENT_SERVER_NAME_MAX];
     char uri[HTTP_CLIENT_URI_MAX];
     char connectHost[HTTP_CLIENT_SERVER_NAME_MAX];
     char cleanPrefix[64];
     char path[256];
     char *buffer;
+    u32 offset;
     u16 length;
     s8 connMode;
     int result, socket, fd;
@@ -1739,37 +1757,8 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     if (buffer == NULL)
         return -ENOMEM;
 
-    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading image...");
-
     strncpy(connectHost, (!strcmp(host, COVER_HTTP_HOST)) ? COVER_HTTP_CONNECT_HOST : host, sizeof(connectHost) - 1);
     connectHost[sizeof(connectHost) - 1] = '\0';
-
-    socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
-    if (socket < 0) {
-        free(buffer);
-        return socket;
-    }
-
-    if (gPS5CoverDownloadCancel) {
-        HttpCloseConnection(socket);
-        free(buffer);
-        return -ECANCELED;
-    }
-
-    connMode = HTTP_CMODE_CLOSED;
-    length = COVER_IMAGE_IOBUF_SIZE;
-    result = HttpSendGetRequest(socket, OPL_USER_AGENT, host, &connMode, NULL, uri, buffer, &length);
-    HttpCloseConnection(socket);
-
-    if (gPS5CoverDownloadCancel) {
-        free(buffer);
-        return -ECANCELED;
-    }
-
-    if (result != 200 || length == 0) {
-        free(buffer);
-        return result < 0 ? result : -EIO;
-    }
 
     fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) {
@@ -1777,12 +1766,59 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
         return fd;
     }
 
-    result = coverWriteAll(fd, buffer, length);
+    result = 0;
+    offset = 0;
+    while (!gPS5CoverDownloadCancel) {
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), offset == 0 ? "Downloading image..." : "Saving image...");
+
+        socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
+        if (socket < 0) {
+            result = socket;
+            break;
+        }
+
+        connMode = HTTP_CMODE_CLOSED;
+        length = COVER_IMAGE_IOBUF_SIZE;
+        result = HttpSendGetRequestRange(socket, OPL_USER_AGENT, host, &connMode, uri, offset, offset + COVER_IMAGE_IOBUF_SIZE - 1, buffer, &length);
+        HttpCloseConnection(socket);
+
+        if (result == 416 && offset > 0) {
+            result = 0;
+            break;
+        }
+
+        if ((result != 206 && result != 200) || length == 0) {
+            result = result < 0 ? result : -EIO;
+            break;
+        }
+
+        if (offset == 0 && (length < sizeof(pngSig) || memcmp(buffer, pngSig, sizeof(pngSig)) != 0)) {
+            result = -EIO;
+            break;
+        }
+
+        result = coverWriteAll(fd, buffer, length);
+        if (result < 0)
+            break;
+
+        offset += length;
+        if (length < COVER_IMAGE_IOBUF_SIZE)
+            break;
+    }
+
+    if (gPS5CoverDownloadCancel)
+        result = -ECANCELED;
+
     close(fd);
     free(buffer);
 
-    if (result == 0)
+    if (result == 0 && offset > 1024)
         oplMarkGameCoverStatsDirty();
+    else {
+        remove(path);
+        if (result == 0)
+            result = -EIO;
+    }
 
     return result;
 }
