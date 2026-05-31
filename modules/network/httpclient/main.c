@@ -19,7 +19,7 @@ static int RpcThreadID;
 static int CoverApiWorkerThreadID;
 static unsigned char SifServerRxBuffer[256] __attribute__((aligned(64)));
 static unsigned char SifServerTxBuffer[16] __attribute__((aligned(64)));
-static unsigned char DmaBuffer[32768] __attribute__((aligned(64)));
+static unsigned char DmaBuffer[60000] __attribute__((aligned(64)));
 static char CoverApiServer[HTTP_CLIENT_SERVER_NAME_MAX];
 static char CoverApiUserAgent[HTTP_CLIENT_USER_AGENT_MAX];
 static char CoverApiHost[HTTP_CLIENT_SERVER_NAME_MAX];

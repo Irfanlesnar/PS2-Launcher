@@ -2727,22 +2727,22 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
                 GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
                 int textRight = dlgX + dlgW - 24;
-                int textW = 42;
+                int textW = 36;
                 fntRenderString(gPS5RegFont, textRight, btnY, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 if (circleTex && circleTex->Mem && circleTex->Height > 0) {
-                    int iconH = 14;
+                    int iconH = 12;
                     int iconW = (circleTex->Width * iconH) / circleTex->Height;
-                    rmDrawPixmap(circleTex, textRight - textW - 1 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                    rmDrawPixmap(circleTex, textRight - textW - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 }
             } else {
                 GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
                 int textRight = dlgX + dlgW - 24;
-                int textW = 32;
+                int textW = 28;
                 fntRenderString(gPS5RegFont, textRight, btnY, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 if (circleTex && circleTex->Mem && circleTex->Height > 0) {
-                    int iconH = 14;
+                    int iconH = 12;
                     int iconW = (circleTex->Width * iconH) / circleTex->Height;
-                    rmDrawPixmap(circleTex, textRight - textW - 1 - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+                    rmDrawPixmap(circleTex, textRight - textW - iconW, btnY, ALIGN_VCENTER | ALIGN_LEFT, iconW, iconH, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
                 }
             }
         }

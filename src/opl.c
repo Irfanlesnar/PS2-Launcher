@@ -80,7 +80,7 @@ static unsigned char shouldAppsUpdate;
 
 // Network support stuff.
 #define HTTP_IOBUF_SIZE 512
-#define COVER_IMAGE_IOBUF_SIZE 32768
+#define COVER_IMAGE_IOBUF_SIZE 60000
 #define COVER_IMAGE_MAX_SIZE (4 * 1024 * 1024)
 #define COVER_HTTP_HOST "ps2api.appdadz.com"
 #define COVER_HTTP_CONNECT_HOST "88.222.215.247"
@@ -1791,6 +1791,7 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     strncpy(connectHost, (!strcmp(host, COVER_HTTP_HOST)) ? COVER_HTTP_CONNECT_HOST : host, sizeof(connectHost) - 1);
     connectHost[sizeof(connectHost) - 1] = '\0';
 
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Saving image...");
     fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) {
         coverDebugLog("COVERSAVE open failed fd=%d path='%s'", fd, path);
@@ -1801,8 +1802,6 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     result = 0;
     offset = 0;
     while (!gPS5CoverDownloadCancel && offset < COVER_IMAGE_MAX_SIZE) {
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), offset == 0 ? "Downloading image..." : "Saving image...");
-
         socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
         if (socket < 0) {
             coverDebugLog("COVERSAVE connect failed socket=%d connectHost='%s'", socket, connectHost);
@@ -1821,13 +1820,11 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
             result = 0;
             break;
         }
-
         if (result != 206 || length == 0) {
-            coverDebugLog("COVERSAVE bad chunk status offset=%lu http=%d len=%u", offset, result, length);
+            coverDebugLog("COVERSAVE bad chunk offset=%lu http=%d len=%u", offset, result, length);
             result = result < 0 ? result : -EIO;
             break;
         }
-
         if (offset == 0 && (length < sizeof(pngSig) || memcmp(buffer, pngSig, sizeof(pngSig)) != 0)) {
             coverDebugLog("COVERSAVE invalid png sig len=%u first=%02x%02x%02x%02x", length, length > 0 ? (unsigned char)buffer[0] : 0, length > 1 ? (unsigned char)buffer[1] : 0, length > 2 ? (unsigned char)buffer[2] : 0, length > 3 ? (unsigned char)buffer[3] : 0);
             result = -EIO;
@@ -2167,7 +2164,8 @@ static void oplDownloadMissingGameCovers(void)
 
         if (metaResult < 0) {
             gPS5CoverDownloadFailures++;
-            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Cover not found, moving to next game");
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Metadata failed: %d", metaResult);
+            coverDebugLog("COVERERR metadata startup='%s' result=%d", startup, metaResult);
             continue;
         }
 
@@ -2195,7 +2193,8 @@ static void oplDownloadMissingGameCovers(void)
 
         if (artResult < 0 || logoResult < 0) {
             gPS5CoverDownloadFailures++;
-            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not save cover files");
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Save failed: ART %d LOGO %d", artResult, logoResult);
+            coverDebugLog("COVERERR save startup='%s' art=%d logo=%d", startup, artResult, logoResult);
             continue;
         }
 
