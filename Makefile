@@ -90,7 +90,7 @@ EECORE_OBJS = ee_core.o ioprp.o util.o \
 		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o \
 		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o
 
-PNG_ASSETS = loader Instagram_icon logo square cross
+PNG_ASSETS = loader Instagram_icon logo square cross circle
 	# unused icons - up down l1 l2 l3 r1 r2 r3
 
 COVER_ASSETS = $(basename $(notdir $(wildcard covers/*.png)))
@@ -811,13 +811,13 @@ LANG_COMPILER = lang_compiler.py
 languages: $(ENGLISH_TEMPLATE_YML) $(TRANSLATIONS_YML) $(ENGLISH_LNG) $(TRANSLATIONS_LNG) $(INTERNAL_LANGUAGE_C) $(INTERNAL_LANGUAGE_H)
 
 download_lng:
-	./download_lng.sh
+	-[ -f ./download_lng.sh ] && ./download_lng.sh || true
 
 download_lwNBD:
-	./download_lwNBD.sh
+	-[ -f ./download_lwNBD.sh ] && ./download_lwNBD.sh || true
 
 download_cfla:
-	./download_cfla.sh
+	-[ -f ./download_cfla.sh ] && ./download_cfla.sh || true
 
 $(TRANSLATIONS_LNG): $(LNG_DIR)lang_%.lng: $(LNG_SRC_DIR)%.yml $(BASE_LANGUAGE) $(LANG_COMPILER)
 	python3 $(LANG_COMPILER) --make_lng --base $(BASE_LANGUAGE) --translation $< $@

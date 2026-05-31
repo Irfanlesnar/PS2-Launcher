@@ -840,28 +840,6 @@ int gPS5SavedShowTime = -1;
 int gPS5TempShowTime = 1;
 int gPS5SavedUISound = -1;
 int gPS5TempUISound = 1;
-int gPS5InternetStatus = 0;
-static int gPS5InternetCheckPending = 0;
-
-static void menuCheckInternet(void)
-{
-    gPS5InternetStatus = (ethCheckInternet() == 0) ? 2 : 3;
-    gPS5InternetCheckPending = 0;
-}
-
-static void menuStartInternetCheck(void)
-{
-    if (gPS5InternetCheckPending)
-        return;
-
-    gPS5InternetStatus = 1;
-    gPS5InternetCheckPending = 1;
-
-    if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &menuCheckInternet) != IO_OK) {
-        gPS5InternetStatus = 3;
-        gPS5InternetCheckPending = 0;
-    }
-}
 
 void menuHandleInputMenu()
 {
@@ -883,6 +861,24 @@ void menuHandleInputMenu()
             gPS5TempShowTime = gPS5ShowTime;
             gPS5SavedUISound = gPS5UISound;
             gPS5TempUISound = gPS5UISound;
+            oplRefreshGameCoverStatsIfNeeded(selected_item != NULL ? selected_item->item->userdata : NULL);
+        }
+        if (gPS5SubSel > 4)
+            gPS5SubSel = 4;
+
+        if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
+            if (getKeyOn(KEY_CIRCLE)) {
+                sfxPlay(SFX_CANCEL);
+                oplAbortGameCoverDownload();
+            }
+            return;
+        }
+        if (gPS5CoverDownloadStatus != PS5_COVER_DOWNLOAD_IDLE) {
+            if (getKeyOn(KEY_CIRCLE)) {
+                sfxPlay(SFX_CONFIRM);
+                gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_IDLE;
+            }
+            return;
         }
 
         // Triangle key: Back to Games tab, revert changes if not saved
@@ -968,9 +964,9 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_DOWN)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 3; // Move down to Check Internet
+                gPS5SubSel = 3; // Move down to Game Covers
             }
-        } else if (gPS5SubSel == 3) { // Focus is on Check Internet
+        } else if (gPS5SubSel == 3) { // Focus is on Game Covers
             if (getKeyOn(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5SubSel = 2; // Move up to UI Sound
@@ -981,12 +977,12 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
-                menuStartInternetCheck();
+                oplStartGameCoverDownload();
             }
         } else if (gPS5SubSel == 4) { // Focus is on the Save text
             if (getKeyOn(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 3; // Move up to Check Internet
+                gPS5SubSel = 3; // Move up to Game Covers
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
@@ -1156,6 +1152,7 @@ void menuHandleInputMain()
                 gPS5TempUISound = gPS5UISound;
             }
             gPS5ActiveTab = 1;
+            oplRefreshGameCoverStatsIfNeeded(selected_item != NULL ? selected_item->item->userdata : NULL);
             // Initialize mainMenuCurrent if needed
             if (!menuGetMainMenuCurrent()) {
                 menuSetMainMenuCurrent(menuGetMainMenu());
@@ -1172,6 +1169,22 @@ void menuHandleInputMain()
             menuPrevV();
         } else if (getKey(KEY_RIGHT)) {
             menuNextV();
+        } else if (getKey(KEY_UP)) {
+            extern int gPS5AlphaIdx;
+            extern void ps5JumpToAlphabetGame(int targetIdx);
+            if (gPS5AlphaIdx > 0) {
+                sfxPlay(SFX_CURSOR);
+                gPS5AlphaIdx--;
+                ps5JumpToAlphabetGame(gPS5AlphaIdx);
+            }
+        } else if (getKey(KEY_DOWN)) {
+            extern int gPS5AlphaIdx;
+            extern void ps5JumpToAlphabetGame(int targetIdx);
+            if (gPS5AlphaIdx < 26) {
+                sfxPlay(SFX_CURSOR);
+                gPS5AlphaIdx++;
+                ps5JumpToAlphabetGame(gPS5AlphaIdx);
+            }
         }
     } else {
         if (getKey(KEY_LEFT)) {
@@ -1496,4 +1509,9 @@ submenu_list_t *menuGetMainMenuCurrent(void)
 void menuSetMainMenuCurrent(submenu_list_t *item)
 {
     mainMenuCurrent = item;
+}
+
+menu_list_t *menuGetSelectedItem(void)
+{
+    return selected_item;
 }

@@ -520,6 +520,8 @@ int startPads()
         delaycnt[n] = DEFAULT_PAD_DELAY;
         paddelay[n] = DEFAULT_PAD_DELAY;
     }
+    paddelay[KEY_UP - 1] = 80;
+    paddelay[KEY_DOWN - 1] = 80;
 
     return pad_count;
 }

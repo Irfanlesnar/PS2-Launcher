@@ -194,6 +194,30 @@ extern int gDefaultDevice;
 
 extern int gEnableWrite;
 
+#define PS5_COVER_DOWNLOAD_IDLE 0
+#define PS5_COVER_DOWNLOAD_WIP  1
+#define PS5_COVER_DOWNLOAD_DONE 2
+#define PS5_COVER_DOWNLOAD_FAIL 3
+#define PS5_COVER_DOWNLOAD_CANCELLED 4
+
+extern int gPS5CoverTotalGames;
+extern int gPS5CoverMissingGames;
+extern int gPS5CoverDownloadStatus;
+extern int gPS5CoverDownloadCancel;
+extern int gPS5CoverDownloadCurrent;
+extern int gPS5CoverDownloadTotal;
+extern int gPS5CoverDownloadFailures;
+extern int gPS5CoverDownloadPercent;
+extern char gPS5CoverDownloadTitle[96];
+extern char gPS5CoverDownloadUrl[256];
+
+void oplRefreshGameCoverStats(void);
+void oplRefreshGameCoverStatsForSupport(item_list_t *support);
+void oplRefreshGameCoverStatsIfNeeded(item_list_t *support);
+void oplMarkGameCoverStatsDirty(void);
+void oplStartGameCoverDownload(void);
+void oplAbortGameCoverDownload(void);
+
 // These prefixes are relative to the device's name (meaning that they do not include the device name).
 extern char gBDMPrefix[32];
 extern char gETHPrefix[32];

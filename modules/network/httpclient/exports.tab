@@ -1,6 +1,6 @@
 void _funcret(void);
 
-DECLARE_EXPORT_TABLE(httpc, 1, 1)
+DECLARE_EXPORT_TABLE(ps2h10, 1, 1)
 	DECLARE_EXPORT(_start)
 	DECLARE_EXPORT(_exit)
 	DECLARE_EXPORT(_funcret)

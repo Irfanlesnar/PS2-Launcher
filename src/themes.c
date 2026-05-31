@@ -852,9 +852,11 @@ static int gPS5RegFont = -1;
 static int gPS5BoldFont = -1;
 static int gPS5HeaderFont = -1;
 static int gPS5TitleFont = -1;
+static int gPS5SmallFont = -1;
 static float gPS5AnimPos = -1.0f;
 
 int gPS5ActiveTab = 0; // 0 = Games, 1 = Settings
+static int gPS5UserHasNavigated = 0;
 GSTEXTURE gPS5InstagramTex;
 int gPS5InstagramTexLoaded = 0;
 
@@ -889,6 +891,7 @@ static void initPS5MaskTextures(void)
     // 2. Load embedded roboto_bold.ttf into Header and Title fonts
     gPS5HeaderFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 20);
     gPS5TitleFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 34);
+    gPS5SmallFont = fntLoadFileMem(&roboto_regular_raw, size_roboto_regular_raw, 13);
     gPS5BoldFont = gPS5HeaderFont; // Compatibility fallback
     if (gPS5HeaderFont != -1 && gPS5TitleFont != -1) {
         LOG("THEMES Loaded PS5 bold header (20) and title (34) fonts from embedded roboto_bold\n");
@@ -897,6 +900,9 @@ static void initPS5MaskTextures(void)
         if (gPS5HeaderFont == -1) gPS5HeaderFont = 0;
         if (gPS5TitleFont == -1) gPS5TitleFont = 0;
         gPS5BoldFont = 0;
+    }
+    if (gPS5SmallFont == -1) {
+        gPS5SmallFont = 0;
     }
 
     int width = 128;
@@ -2003,7 +2009,56 @@ static void clearNetCache(void)
         }
     }
     gNetCacheCount = 0;
+    gPS5UserHasNavigated = 0;
 }
+
+int gPS5AlphaIdx = 0; // Global alphabet index (starts at '#')
+
+static int ps5TitleMatchesAlpha(const char *title, int alphaIdx)
+{
+    char firstChar;
+
+    if (alphaIdx <= 0)
+        return 1;
+    if (title == NULL || title[0] == '\0')
+        return 0;
+
+    firstChar = title[0];
+    if (firstChar >= 'a' && firstChar <= 'z')
+        firstChar -= 32;
+
+    return firstChar >= 'A' && firstChar <= 'Z' && (firstChar - 'A' + 1) == alphaIdx;
+}
+
+void ps5JumpToAlphabetGame(int targetIdx)
+{
+    extern menu_list_t *menuGetSelectedItem(void);
+    menu_list_t *selectedItem = menuGetSelectedItem();
+    if (!selectedItem || !selectedItem->item || !selectedItem->item->submenu)
+        return;
+        
+    submenu_list_t *curr = selectedItem->item->submenu;
+    submenu_list_t *match = NULL;
+
+    if (targetIdx <= 0) {
+        selectedItem->item->current = curr;
+        return;
+    }
+
+    while (curr) {
+        const char *title = submenuItemGetText(&curr->item);
+        if (ps5TitleMatchesAlpha(title, targetIdx)) {
+            match = curr;
+            break;
+        }
+        curr = curr->next;
+    }
+
+    if (match) {
+        selectedItem->item->current = match;
+    }
+}
+
 
 static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, struct theme_element *elem)
 {
@@ -2074,8 +2129,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         fntRenderString(gPS5RegFont, 140, 32, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     }
     // Small L1/R1 indicators (smaller font size, offset adjusted for alignment)
-    fntRenderString(gPS5RegFont, 30, 33, ALIGN_LEFT, 0.40f, 0.40f, "L1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
-    fntRenderString(gPS5RegFont, 212, 33, ALIGN_LEFT, 0.40f, 0.40f, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+    fntRenderString(gPS5SmallFont, 30, 39, ALIGN_LEFT, 0, 0, "L1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+    fntRenderString(gPS5SmallFont, 212, 39, ALIGN_LEFT, 0, 0, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
     extern int gPS5ShowTime;
     if (gPS5ShowTime) {
         fntRenderString(gPS5RegFont, screenWidth - 50, 32, ALIGN_RIGHT, 0, 0, timeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -2167,16 +2222,36 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 first_item = first_item->prev;
             }
 
+            static submenu_list_t *visibleItems[512];
+            submenu_list_t *count_curr = first_item;
             int selected_index = 0;
-            submenu_list_t *curr = item;
-            while (curr->prev) {
-                selected_index++;
-                curr = curr->prev;
+            int total_count = 0;
+            submenu_list_t *selectedVisibleItem = NULL;
+
+            while (count_curr && total_count < 512) {
+                const char *title = submenuItemGetText(&count_curr->item);
+                if (ps5TitleMatchesAlpha(title, gPS5AlphaIdx)) {
+                    if (count_curr == item) {
+                        selected_index = total_count;
+                        selectedVisibleItem = count_curr;
+                    }
+                    visibleItems[total_count++] = count_curr;
+                }
+                count_curr = count_curr->next;
+            }
+
+            if (selectedVisibleItem == NULL && total_count > 0) {
+                selectedVisibleItem = visibleItems[0];
+                selected_index = 0;
             }
 
             if (gPS5AnimPos < 0.0f) {
                 gPS5AnimPos = selected_index;
             } else {
+                if (total_count > 0 && gPS5AnimPos > (float)(total_count - 1))
+                    gPS5AnimPos = (float)(total_count - 1);
+                if (gPS5AnimPos < 0.0f)
+                    gPS5AnimPos = 0.0f;
                 gPS5AnimPos += (selected_index - gPS5AnimPos) * 0.36f;
                 float diff = selected_index - gPS5AnimPos;
                 if (diff < 0.0f) diff = -diff;
@@ -2185,15 +2260,6 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 }
             }
 
-            // Calculate card center positions and sizes dynamically to ensure zero overlap
-            int total_items = 0;
-            submenu_list_t *count_curr = first_item;
-            while (count_curr) {
-                total_items++;
-                count_curr = count_curr->next;
-            }
-
-            int total_count = total_items > 512 ? 512 : total_items;
             static float x_centers[512];
             static float card_sizes[512];
 
@@ -2232,9 +2298,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             // Shift so that the focus point is anchored horizontally at 120.0f
             float shift = 120.0f - x_focus;
 
-            submenu_list_t *curr_item = first_item;
             int idx = 0;
-            while (curr_item && idx < total_count) {
+            while (idx < total_count) {
+                submenu_list_t *curr_item = visibleItems[idx];
                 float cx = x_centers[idx] + shift;
                 if (cx > -80.0f && cx < 720.0f) {
                     int height = (int)card_sizes[idx];
@@ -2338,13 +2404,12 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         fntRenderString(gPS5BoldFont, cx, y1 + height / 2, ALIGN_CENTER | ALIGN_VCENTER, fontScale, fontScale, initials, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, cardAlpha * 2 / 3));
                     }
                 }
-                curr_item = curr_item->next;
                 idx++;
             }
 
             // 3. Dynamic Background Color Smooth Transition
             u8 cardR, cardG, cardB, bgR, bgG, bgB;
-            getGameColors(submenuItemGetText(&item->item), &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
+            getGameColors(selectedVisibleItem ? submenuItemGetText(&selectedVisibleItem->item) : "", &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
 
             // Avoid white/grey/bright background colors for the gradient to prevent noise artifacts in 1080p
             // Cap background color channels at a maximum of 120 to guarantee dark, premium colors but allow rich vibrancy at the bottom
@@ -2374,16 +2439,20 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             gPS5BgColorG = (u8)currentBgG;
             gPS5BgColorB = (u8)currentBgB;
 
-            const char *fullTitle = submenuItemGetText(&item->item);
-            fntRenderString(gPS5TitleFont, 50, 316, ALIGN_LEFT, 0, 0, fullTitle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            if (selectedVisibleItem) {
+                const char *fullTitle = submenuItemGetText(&selectedVisibleItem->item);
+                fntRenderString(gPS5TitleFont, 50, 316, ALIGN_LEFT, 0, 0, fullTitle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
-            // Developer name (using Game ID lookup)
-            item_list_t *support = (item_list_t *)menu->item->userdata;
-            const char *startup = NULL;
-            if (support && support->itemGetStartup && !isUnplugged) {
-                startup = support->itemGetStartup(support, item->item.id);
+                // Developer name (using Game ID lookup)
+                item_list_t *support = (item_list_t *)menu->item->userdata;
+                const char *startup = NULL;
+                if (support && support->itemGetStartup && !isUnplugged) {
+                    startup = support->itemGetStartup(support, selectedVisibleItem->item.id);
+                }
+                fntRenderString(gPS5RegFont, 50, 354, ALIGN_LEFT, 0, 0, getGameDeveloper(startup, fullTitle), GS_SETREG_RGBA(0xF0, 0xF0, 0xF0, 0x56));
+            } else {
+                fntRenderString(gPS5BoldFont, 320, 245, ALIGN_CENTER, 0, 0, "NO GAMES FOUND", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x2C));
             }
-            fntRenderString(gPS5RegFont, 50, 354, ALIGN_LEFT, 0, 0, getGameDeveloper(startup, fullTitle), GS_SETREG_RGBA(0xF0, 0xF0, 0xF0, 0x56));
 
         } else {
             // No games placeholder card/text
@@ -2395,6 +2464,74 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         int helperY = 428;
         int nextX = drawPS5IconAndText(SQUARE_ICON, "Refresh", gPS5RegFont, 50, helperY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x40));
         drawPS5IconAndText(CROSS_ICON, "Play", gPS5RegFont, nextX + 20, helperY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x40));
+
+        // 5. Draw Vertical Alphabet Carousel at the right end of the screen
+        if (item) {
+            static const char *gPS5AlphaChars = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            extern int gPS5AlphaIdx;
+            static float gPS5AlphaAnimPos = 0.0f;
+            
+            // Track if user has pressed any navigation keys to set the gPS5UserHasNavigated flag
+            if (!gPS5UserHasNavigated) {
+                if (getKeyPressed(KEY_UP) || getKeyPressed(KEY_DOWN) ||
+                    getKeyPressed(KEY_LEFT) || getKeyPressed(KEY_RIGHT) ||
+                    getKeyPressed(KEY_L1) || getKeyPressed(KEY_R1) ||
+                    getKeyPressed(KEY_L2) || getKeyPressed(KEY_R2)) {
+                    gPS5UserHasNavigated = 1;
+                }
+            }
+
+            // Sync active letter to selected game when game selection changes via Left/Right
+            static submenu_list_t *lastItem = NULL;
+            static int gPS5FirstStart = 1;
+            if (item != lastItem) {
+                lastItem = item;
+                
+                if (gPS5FirstStart) {
+                    gPS5FirstStart = 0;
+                } else if (gPS5UserHasNavigated) {
+                    if (!getKeyPressed(KEY_UP) && !getKeyPressed(KEY_DOWN)) {
+                        const char *selTitle = submenuItemGetText(&item->item);
+                        char firstChar = '\0';
+                        if (selTitle && selTitle[0] != '\0') {
+                            firstChar = selTitle[0];
+                            if (firstChar >= 'a' && firstChar <= 'z') firstChar -= 32;
+                        }
+                        int gameAlphaIdx = 0; // default to '#'
+                        if (firstChar >= 'A' && firstChar <= 'Z') {
+                            gameAlphaIdx = firstChar - 'A' + 1;
+                        }
+                        gPS5AlphaIdx = gameAlphaIdx;
+                    }
+                }
+            }
+            
+            gPS5AlphaAnimPos += ((float)gPS5AlphaIdx - gPS5AlphaAnimPos) * 0.20f;
+            
+            int alphabetX = 612;
+            int i;
+            for (i = 0; i < 27; i++) {
+                float diff = (float)i - gPS5AlphaAnimPos;
+                float absDiff = fabsf(diff);
+                
+                if (absDiff < 3.5f) {
+                    float charY = 240.0f + diff * 28.0f;
+                    int alphaVal = (int)((1.0f - (absDiff / 3.5f)) * 128.0f);
+                    if (alphaVal < 0) alphaVal = 0;
+                    if (alphaVal > 128) alphaVal = 128;
+                    
+                    char letterStr[2] = { gPS5AlphaChars[i], '\0' };
+                    
+                    if (i == gPS5AlphaIdx) {
+                        // Active letter: white, larger scale, bold
+                        fntRenderString(gPS5HeaderFont, alphabetX, (int)charY, ALIGN_CENTER | ALIGN_VCENTER, 0.70f, 0.70f, letterStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, alphaVal));
+                    } else {
+                        // Unfocused letters: grey, smaller scale
+                        fntRenderString(gPS5RegFont, alphabetX, (int)charY, ALIGN_CENTER | ALIGN_VCENTER, 0.50f, 0.50f, letterStr, GS_SETREG_RGBA(0x80, 0x80, 0x80, alphaVal));
+                    }
+                }
+            }
+        }
     } else {
         extern int gPS5SubSel;
         extern int gPS5TempVMode;
@@ -2406,7 +2543,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int guiFrameId;
 
         int rowX = 64;
-        int rowY = 160;
+        int rowY = 100;
 
         // 1. Draw Resolution label and bracketed value
         const char *resText = "Standard";
@@ -2451,18 +2588,46 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             fntRenderString(gPS5RegFont, rightX, rowY + 72, ALIGN_RIGHT, 0, 0, uiSoundStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
         }
 
-        // 4. Draw Internet check action/status
-        const char *internetText = "Check Internet";
-        u64 internetColor = (gPS5SubSel == 3) ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30);
+        // 4. Draw game cover downloader with rounded highlight card and white border stroke
+        char coverSummary[96];
+        char coverButton[32];
+        int coverFocused = gPS5SubSel == 3;
+        u64 strokeColor = coverFocused ? GS_SETREG_RGBA(0x2E, 0x5A, 0x84, 0x50) : GS_SETREG_RGBA(0x14, 0x28, 0x40, 0x30);
+        u64 cardColor = coverFocused ? GS_SETREG_RGBA(0x07, 0x13, 0x26, 0x80) : GS_SETREG_RGBA(0x05, 0x0C, 0x18, 0x78);
+        u64 coverColor = coverFocused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30);
+        u64 coverSubColor = coverFocused ? GS_SETREG_RGBA(0xB0, 0xB0, 0xB0, 0x60) : GS_SETREG_RGBA(0xB0, 0xB0, 0xB0, 0x24);
 
-        if (gPS5InternetStatus == 1)
-            internetText = "Checking...";
-        else if (gPS5InternetStatus == 2)
-            internetText = "Internet available";
-        else if (gPS5InternetStatus == 3)
-            internetText = "No access";
+        snprintf(coverSummary, sizeof(coverSummary), "%d game covers missing", gPS5CoverMissingGames);
+        if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP)
+            snprintf(coverButton, sizeof(coverButton), "Downloading");
+        else
+            snprintf(coverButton, sizeof(coverButton), "Download");
 
-        fntRenderString(gPS5RegFont, rowX, rowY + 108, ALIGN_LEFT, 0, 0, internetText, internetColor);
+        int cardX = rowX - 16;
+        int cardY = rowY + 116;
+        int cardW = screenWidth - 2 * cardX;
+        int cardH = 68;
+        
+        // Draw 60% white border stroke
+        rmDrawRoundedRect(cardX - 1, cardY - 1, cardW + 2, cardH + 2, 7, strokeColor);
+        // Draw card background
+        rmDrawRoundedRect(cardX, cardY, cardW, cardH, 6, cardColor);
+
+        fntRenderString(gPS5RegFont, rowX, cardY + 15, ALIGN_LEFT, 0, 0, "Game Covers", coverColor);
+        fntRenderString(gPS5SmallFont, rowX, cardY + 36, ALIGN_LEFT, 0, 0, coverSummary, coverSubColor);
+
+        int btnW = (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) ? 120 : 100;
+        int btnH = 28;
+        int btnX = (screenWidth - cardX) - btnW - 16;
+        int btnY = cardY + (cardH - btnH) / 2;
+
+        if (coverFocused) {
+            rmDrawRoundedRect(btnX, btnY, btnW, btnH, 4, GS_SETREG_RGBA(0x0B, 0x2A, 0x4A, 0x80));
+            fntRenderString(gPS5RegFont, btnX + (btnW / 2), btnY + 5, ALIGN_HCENTER, 0, 0, coverButton, GS_SETREG_RGBA(0xF0, 0xF7, 0xFF, 0x80));
+        } else {
+            rmDrawRoundedRect(btnX, btnY, btnW, btnH, 4, GS_SETREG_RGBA(0x08, 0x18, 0x2A, 0x70));
+            fntRenderString(gPS5RegFont, btnX + (btnW / 2), btnY + 5, ALIGN_HCENTER, 0, 0, coverButton, GS_SETREG_RGBA(0x70, 0x86, 0x9E, 0x80));
+        }
 
         // 4. Draw irfanmatheena in lowercase with Instagram icon at bottom-left (aligned vertically to Save center)
         extern GSTEXTURE gPS5InstagramTex;
@@ -2480,12 +2645,12 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
         int textStartX = 50;
         if (gPS5InstagramTexLoaded) {
-            // Draw Instagram icon (16x16, vertically aligned to Y=428) with full opacity
-            rmDrawPixmap(&gPS5InstagramTex, 50, 428, ALIGN_LEFT | ALIGN_VCENTER, 16, 16, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            // Draw Instagram icon (16x16, vertically aligned to Y=446) with full opacity
+            rmDrawPixmap(&gPS5InstagramTex, 50, 446, ALIGN_LEFT | ALIGN_VCENTER, 16, 16, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             textStartX = 50 + 22;
         }
 
-        fntRenderString(gPS5RegFont, textStartX, 428, ALIGN_LEFT | ALIGN_VCENTER, 0.65f, 0.65f, "irfanmatheena", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
+        fntRenderString(gPS5RegFont, textStartX, 446, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "irfanmatheena", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30));
 
         // 5. Draw Save text at bottom-right (aligned perfectly with version text on the left)
         u64 saveTextColor;
@@ -2498,39 +2663,81 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             saveTextColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x28);
         }
 
-        fntRenderString(gPS5RegFont, 590, 428, ALIGN_RIGHT | ALIGN_VCENTER, 0.65f, 0.65f, "Save", saveTextColor);
+        fntRenderString(gPS5RegFont, 590, 446, ALIGN_RIGHT | ALIGN_VCENTER, 0, 0, "Save", saveTextColor);
 
         if (gPS5SubSel == 0) { // Resolution focused
             u64 applyColor = (gVMode != gPS5TempVMode) ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
-            drawPS5IconAndText(CROSS_ICON, "Apply", gPS5RegFont, 480, 428, applyColor);
+            drawPS5IconAndText(CROSS_ICON, "Apply", gPS5RegFont, 480, 446, applyColor);
         }
 
+        // Draw cover download progress dialog if active
+        extern int gPS5CoverDownloadStatus;
+        if (gPS5CoverDownloadStatus != PS5_COVER_DOWNLOAD_IDLE) {
+            extern int gPS5CoverDownloadPercent;
+            extern int gPS5CoverDownloadCurrent;
+            extern int gPS5CoverDownloadTotal;
+            extern char gPS5CoverDownloadTitle[96];
+            extern char gPS5CoverDownloadUrl[256];
 
+            int dlgW = 380;
+            int dlgH = 184;
+            int dlgX = (screenWidth - dlgW) / 2;
+            int dlgY = (screenHeight - dlgH) / 2;
 
+            // 1. Dark semi-transparent full screen overlay to dim background
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
 
+            // 2. Glassmorphic rounded modal container
+            // Outer light border stroke for depth
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 13, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            // Container background
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 12, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
+            // 3. Header title based on download status
+            const char *headerTitleText = "Download Covers";
+            fntRenderString(gPS5TitleFont, dlgX + 24, dlgY + 24, ALIGN_LEFT, 0, 0, headerTitleText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
+            // 4. Active title & status/URL
+            if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
+                fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 62, ALIGN_LEFT, 0, 0, gPS5CoverDownloadTitle, GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
+                fntRenderString(gPS5SmallFont, dlgX + 24, dlgY + 86, ALIGN_LEFT, 0, 0, gPS5CoverDownloadUrl, GS_SETREG_RGBA(0x98, 0xAA, 0xBD, 0x80));
+            } else {
+                fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 62, ALIGN_LEFT, 0, 0, gPS5CoverDownloadUrl, GS_SETREG_RGBA(0xDD, 0xDD, 0xDD, 0x80));
+            }
 
+            // 5. Progress bar track and fill
+            rmDrawRect(dlgX + 24, dlgY + 114, dlgW - 48, 6, GS_SETREG_RGBA(0x1C, 0x26, 0x32, 0x80));
+            int barW = ((dlgW - 48) * gPS5CoverDownloadPercent) / 100;
+            if (barW > (dlgW - 48)) barW = dlgW - 48;
+            if (barW > 0) {
+                rmDrawRect(dlgX + 24, dlgY + 114, barW, 6, GS_SETREG_RGBA(0x64, 0x8E, 0xC8, 0x80));
+            }
 
+            // Percentage / current count label
+            char progressText[64];
+            if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
+                snprintf(progressText, sizeof(progressText), "%d/%d Games  %d%%", gPS5CoverDownloadCurrent, gPS5CoverDownloadTotal, gPS5CoverDownloadPercent);
+            } else {
+                snprintf(progressText, sizeof(progressText), "%d%%", gPS5CoverDownloadPercent);
+            }
+            fntRenderString(gPS5SmallFont, dlgX + dlgW - 24, dlgY + 100, ALIGN_RIGHT, 0, 0, progressText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x40));
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            // 6. Action helper button hints at the bottom
+            int btnY = dlgY + dlgH - 32;
+            if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
+                GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
+                int hintW = (int)((float)fntCalcDimensions(gPS5RegFont, "Cancel") * 0.65f) + 6;
+                if (circleTex && circleTex->Mem && circleTex->Height > 0)
+                    hintW += rmWideScale((circleTex->Width * 14) / circleTex->Height);
+                drawPS5IconAndText(CIRCLE_ICON, "Cancel", gPS5RegFont, dlgX + dlgW - 24 - hintW, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+            } else {
+                GSTEXTURE *circleTex = thmGetTexture(CIRCLE_ICON);
+                int hintW = (int)((float)fntCalcDimensions(gPS5RegFont, "Close") * 0.65f) + 6;
+                if (circleTex && circleTex->Mem && circleTex->Height > 0)
+                    hintW += rmWideScale((circleTex->Width * 14) / circleTex->Height);
+                drawPS5IconAndText(CIRCLE_ICON, "Close", gPS5RegFont, dlgX + dlgW - 24 - hintW, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x68));
+            }
+        }
     }
 }
 

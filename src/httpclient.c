@@ -1,7 +1,6 @@
 #include <string.h>
 #include <kernel.h>
 #include <sifrpc.h>
-
 #include "httpclient.h"
 #include "ioman.h"
 
@@ -9,9 +8,14 @@ static SifRpcClientData_t SifRpcClient;
 static unsigned char RpcTxBuffer[256] ALIGNED(64);
 static unsigned char RpcRxBuffer[64] ALIGNED(64);
 
+static void HttpAsyncRpcEnd(void *arg)
+{
+    (void)arg;
+}
+
 int HttpInit(void)
 {
-    while (SifBindRpc(&SifRpcClient, 0x00001B14, 0) < 0 || SifRpcClient.server == NULL) {
+    while (SifBindRpc(&SifRpcClient, HTTP_CLIENT_RPC_ID, 0) < 0 || SifRpcClient.server == NULL) {
         nopdelay();
     }
 
@@ -75,4 +79,100 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
     }
 
     return result;
+}
+
+int HttpStartCoverApiRequest(char *server, u16 port, const char *UserAgent, const char *host, const char *uri)
+{
+    int result;
+
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->server, server, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->server[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->port = port;
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->UserAgent, UserAgent, HTTP_CLIENT_USER_AGENT_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->UserAgent[HTTP_CLIENT_USER_AGENT_MAX - 1] = '\0';
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->host, host, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->host[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->uri, uri, HTTP_CLIENT_URI_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->uri[HTTP_CLIENT_URI_MAX - 1] = '\0';
+
+    if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_COVER_API_START_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientCoverApiStartArgs), RpcRxBuffer, sizeof(s32), NULL, NULL)) >= 0)
+        result = *(s32 *)RpcRxBuffer;
+
+    return result;
+}
+
+int HttpStartCoverApiRequestAsync(char *server, u16 port, const char *UserAgent, const char *host, const char *uri)
+{
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->server, server, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->server[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->port = port;
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->UserAgent, UserAgent, HTTP_CLIENT_USER_AGENT_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->UserAgent[HTTP_CLIENT_USER_AGENT_MAX - 1] = '\0';
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->host, host, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->host[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    strncpy(((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->uri, uri, HTTP_CLIENT_URI_MAX - 1);
+    ((struct HttpClientCoverApiStartArgs *)RpcTxBuffer)->uri[HTTP_CLIENT_URI_MAX - 1] = '\0';
+
+    return SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_COVER_API_START_REQ, SIF_RPC_M_NOWAIT, RpcTxBuffer, sizeof(struct HttpClientCoverApiStartArgs), RpcRxBuffer, sizeof(s32), &HttpAsyncRpcEnd, NULL);
+}
+
+int HttpPollCoverApiStartResult(int *done, int *startResult)
+{
+    if (SifCheckStatRpc(&SifRpcClient)) {
+        *done = 0;
+        return 0;
+    }
+
+    *done = 1;
+    *startResult = *(s32 *)RpcRxBuffer;
+    return 0;
+}
+
+int HttpGetCoverApiStatus(char *output, u16 *out_len, int *done, int *phase)
+{
+    int result;
+
+    ((struct HttpClientCoverApiStatusArgs *)RpcTxBuffer)->output = output;
+    ((struct HttpClientCoverApiStatusArgs *)RpcTxBuffer)->out_len = *out_len;
+
+    if (!IS_UNCACHED_SEG(output))
+        SifWriteBackDCache(output, *out_len);
+
+    if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_COVER_API_STATUS_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientCoverApiStatusArgs), RpcRxBuffer, sizeof(struct HttpClientCoverApiResult), NULL, NULL)) >= 0) {
+        result = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->result;
+        *out_len = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->out_len;
+        *done = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->done;
+        if (phase != NULL)
+            *phase = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->phase;
+    }
+
+    return result;
+}
+
+int HttpGetCoverApiStatusAsync(char *output, u16 out_len)
+{
+    ((struct HttpClientCoverApiStatusArgs *)RpcTxBuffer)->output = output;
+    ((struct HttpClientCoverApiStatusArgs *)RpcTxBuffer)->out_len = out_len;
+
+    if (!IS_UNCACHED_SEG(output))
+        SifWriteBackDCache(output, out_len);
+
+    return SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_COVER_API_STATUS_REQ, SIF_RPC_M_NOWAIT, RpcTxBuffer, sizeof(struct HttpClientCoverApiStatusArgs), RpcRxBuffer, sizeof(struct HttpClientCoverApiResult), &HttpAsyncRpcEnd, NULL);
+}
+
+int HttpPollCoverApiStatusResult(int *rpcDone, int *requestDone, int *phase, int *httpResult, u16 *out_len)
+{
+    if (SifCheckStatRpc(&SifRpcClient)) {
+        *rpcDone = 0;
+        return 0;
+    }
+
+    *rpcDone = 1;
+    *httpResult = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->result;
+    *out_len = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->out_len;
+    *requestDone = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->done;
+    if (phase != NULL)
+        *phase = ((struct HttpClientCoverApiResult *)RpcRxBuffer)->phase;
+
+    return 0;
 }

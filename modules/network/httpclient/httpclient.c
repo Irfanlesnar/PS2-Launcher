@@ -5,8 +5,11 @@
 #include <errno.h>
 #include <sysclib.h>
 #include <ps2ip.h>
+#include <thbase.h>
 
 #include "httpclient.h"
+
+#define HTTP_CONNECT_TIMEOUT_SEC 5
 
 void HttpCloseConnection(s32 HttpSocket)
 {
@@ -18,13 +21,43 @@ static int EstablishConnection(struct in_addr *server, unsigned short int port)
 {
     struct sockaddr_in SockAddr;
     int HostSocket;
+    int result;
+    int error;
+    int elapsed;
+    socklen_t errorLength;
+    unsigned long nonBlocking;
 
     HostSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (HostSocket < 0)
+        return -1;
 
+    memset(&SockAddr, 0, sizeof(SockAddr));
     SockAddr.sin_family = AF_INET;
     SockAddr.sin_addr.s_addr = server->s_addr;
     SockAddr.sin_port = htons(port);
-    if (connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr)) != 0) {
+
+    nonBlocking = 1;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    result = connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr));
+    if (result != 0) {
+        result = -1;
+        for (elapsed = 0; elapsed < HTTP_CONNECT_TIMEOUT_SEC * 10; elapsed++) {
+            DelayThread(100000);
+
+            error = -1;
+            errorLength = sizeof(error);
+            if (getsockopt(HostSocket, SOL_SOCKET, SO_ERROR, &error, &errorLength) == 0 && error == 0) {
+                result = 0;
+                break;
+            }
+        }
+    }
+
+    nonBlocking = 0;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    if (result != 0) {
         HttpCloseConnection(HostSocket);
         HostSocket = -1;
     }
@@ -101,7 +134,7 @@ static void HttpParseEntityLine(const char *line)
 
     // printf("%u\t%s\n", HeaderLineNumber, line);
 
-    if (HeaderLineNumber == 0 && strncmp(line, "HTTP/1.1 ", 9) == 0)
+    if (HeaderLineNumber == 0 && (strncmp(line, "HTTP/1.1 ", 9) == 0 || strncmp(line, "HTTP/1.0 ", 9) == 0))
         StatusCode = strtoul(line + 9, NULL, 10);
 
     if (strncmp(line, "Content-Length: ", 16) == 0)
@@ -178,7 +211,10 @@ static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
         PayloadAmount = DataAvailable;
     }
 
-    if (ContentLength < 0 || PayloadAmount < ContentLength) {
+    if (ContentLength < 0)
+        ContentLength = *length;
+
+    if (PayloadAmount < ContentLength) {
         if (ContentLength > *length)
             ContentLength = *length;
         if ((result = GetData(socket, PayloadPtr, ContentLength - PayloadAmount)) > 0)
@@ -199,10 +235,37 @@ static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
     return result;
 }
 
+static int ParseIPv4Address(char *hostname, struct in_addr *ip)
+{
+    const char *p = hostname;
+    char *end;
+    unsigned int octets[4];
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        octets[i] = strtoul(p, &end, 10);
+        if (end == p || octets[i] > 255)
+            return 0;
+        if (i < 3) {
+            if (*end != '.')
+                return 0;
+            p = end + 1;
+        } else if (*end != '\0') {
+            return 0;
+        }
+    }
+
+    ip->s_addr = htonl((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]);
+    return 1;
+}
+
 static int ResolveHostname(char *hostname, struct in_addr *ip)
 {
     struct hostent *HostEntry;
     struct in_addr **addr_list;
+
+    if (ParseIPv4Address(hostname, ip))
+        return 0;
 
     if ((HostEntry = gethostbyname(hostname)) == NULL)
         return 1;
@@ -268,14 +331,16 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
     char buffer[512];
     int result, length;
 
-    sprintf(buffer, "GET %s HTTP/1.1\r\n"
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
                     "Accept: text/html, */*\r\n"
                     "User-Agent: %s\r\n"
                     "Host: %s\r\n",
-            uri, UserAgent, host);
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host);
 
     if (*mode == HTTP_CMODE_PERSISTENT)
         strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
     if (mtime != NULL)
         sprintf(&buffer[strlen(buffer)], "If-Modified-Since: %s, %02u %s %04u %02u:%02u:%02u GMT\r\n", GetDayInWeek(mtime), mtime[2] + 1, months[mtime[1]], 2000 + mtime[0], mtime[3], mtime[4], mtime[5]);
     strcat(buffer, "\r\n");
