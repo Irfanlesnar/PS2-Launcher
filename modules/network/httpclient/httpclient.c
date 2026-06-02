@@ -101,8 +101,6 @@ static int GetData(int socket, char *buffer, int length)
             break;
         remaining -= result;
         pointer += result;
-        if (result != ToRead) // No further data at the moment.
-            break;
     }
 
     return length - remaining;
