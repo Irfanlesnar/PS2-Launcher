@@ -2093,6 +2093,7 @@ static void oplDownloadMissingGameCovers(void)
     int id, count, queued, current, metaResult, artResult, logoResult;
     char *startup, *title, *prefix;
     char artUrl[256] = {0}, logoUrl[256] = {0}, gameName[96] = {0};
+    char lastError[96] = {0};
 
     if (!coverIsLocalGameSupport(support)) {
         gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
@@ -2165,6 +2166,7 @@ static void oplDownloadMissingGameCovers(void)
         if (metaResult < 0) {
             gPS5CoverDownloadFailures++;
             snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Metadata failed: %d", metaResult);
+            snprintf(lastError, sizeof(lastError), "Metadata failed: %d", metaResult);
             coverDebugLog("COVERERR metadata startup='%s' result=%d", startup, metaResult);
             continue;
         }
@@ -2194,6 +2196,7 @@ static void oplDownloadMissingGameCovers(void)
         if (artResult < 0 || logoResult < 0) {
             gPS5CoverDownloadFailures++;
             snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Save failed: ART %d LOGO %d", artResult, logoResult);
+            snprintf(lastError, sizeof(lastError), "Save failed: ART %d LOGO %d", artResult, logoResult);
             coverDebugLog("COVERERR save startup='%s' art=%d logo=%d", startup, artResult, logoResult);
             continue;
         }
@@ -2205,8 +2208,11 @@ static void oplDownloadMissingGameCovers(void)
     gPS5CoverDownloadPercent = 100;
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download complete");
-    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers found, %d missing",
-        queued - gPS5CoverDownloadFailures, queued, gPS5CoverDownloadFailures);
+    if (gPS5CoverDownloadFailures > 0 && lastError[0] != '\0')
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%s", lastError);
+    else
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers found, %d missing",
+            queued - gPS5CoverDownloadFailures, queued, gPS5CoverDownloadFailures);
     coverDebugLog("COVERDBG dynamic api done queued=%d failures=%d", queued, gPS5CoverDownloadFailures);
 }
 
