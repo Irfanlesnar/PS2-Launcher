@@ -2168,6 +2168,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             static float logoAlpha = 0.0f;
             static char lastSelectedTitle[64] = "";
             const char *selTitle = submenuItemGetText(&item->item);
+            int selectedVisibleInAlpha = ps5TitleMatchesAlpha(selTitle, gPS5AlphaIdx);
             
             if (strcmp(lastSelectedTitle, selTitle) != 0) {
                 logoAlpha = 0.0f;
@@ -2184,7 +2185,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 }
             }
 
-            if (selCache && selCache->logoPath[0] != '\0') {
+            if (!selectedVisibleInAlpha) {
+                logoAlpha = 0.0f;
+            } else if (selCache && selCache->logoPath[0] != '\0') {
                 if (selCache->hasLogoTex == 0 && !isUnplugged) {
                     if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
                         selCache->hasLogoTex = 1;
@@ -2417,33 +2420,29 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             u8 cardR, cardG, cardB, bgR, bgG, bgB;
             getGameColors(selectedVisibleItem ? submenuItemGetText(&selectedVisibleItem->item) : "", &cardR, &cardG, &cardB, &bgR, &bgG, &bgB);
 
-            // Avoid white/grey/bright background colors for the gradient to prevent noise artifacts in 1080p
-            // Cap background color channels at a maximum of 120 to guarantee dark, premium colors but allow rich vibrancy at the bottom
-            if (bgR > 120) bgR = 120;
-            if (bgG > 120) bgG = 120;
-            if (bgB > 120) bgB = 120;
+            // Use a deterministic medium-dark solid color from the focused game.
+            if (selectedVisibleItem) {
+                bgR = 24 + (bgR % 56);
+                bgG = 24 + (bgG % 56);
+                bgB = 24 + (bgB % 56);
+            } else {
+                bgR = 0;
+                bgG = 0;
+                bgB = 0;
+            }
 
             // If the color is grey/desaturated, shift it to a deep premium PS5 midnight blue
             int maxVal = bgR > bgG ? (bgR > bgB ? bgR : bgB) : (bgG > bgB ? bgG : bgB);
             int minVal = bgR < bgG ? (bgR < bgB ? bgR : bgB) : (bgG < bgB ? bgG : bgB);
             if (maxVal - minVal < 10) {
-                // It's grey/neutral. Replace with a beautiful cinematic deep dark blue/violet
-                bgR = 10;
-                bgG = 14;
-                bgB = 28;
+                bgR = 18;
+                bgG = 30;
+                bgB = 48;
             }
 
-            static float currentBgR = 16.0f;
-            static float currentBgG = 16.0f;
-            static float currentBgB = 16.0f;
-
-            currentBgR += ((float)bgR - currentBgR) * 0.10f;
-            currentBgG += ((float)bgG - currentBgG) * 0.10f;
-            currentBgB += ((float)bgB - currentBgB) * 0.10f;
-
-            gPS5BgColorR = (u8)currentBgR;
-            gPS5BgColorG = (u8)currentBgG;
-            gPS5BgColorB = (u8)currentBgB;
+            gPS5BgColorR = bgR;
+            gPS5BgColorG = bgG;
+            gPS5BgColorB = bgB;
 
             if (selectedVisibleItem) {
                 const char *fullTitle = submenuItemGetText(&selectedVisibleItem->item);
