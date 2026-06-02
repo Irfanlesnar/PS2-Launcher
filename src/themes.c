@@ -2064,6 +2064,51 @@ void ps5JumpToAlphabetGame(int targetIdx)
     }
 }
 
+void ps5MoveAlphabetGame(int direction)
+{
+    extern menu_list_t *menuGetSelectedItem(void);
+    menu_list_t *selectedItem = menuGetSelectedItem();
+    int idx;
+
+    if (!selectedItem || !selectedItem->item || !selectedItem->item->submenu)
+        return;
+
+    if (direction > 0) {
+        for (idx = gPS5AlphaIdx + 1; idx <= 26; idx++) {
+            submenu_list_t *curr = selectedItem->item->submenu;
+            while (curr) {
+                if (ps5TitleMatchesAlpha(submenuItemGetText(&curr->item), idx)) {
+                    gPS5AlphaIdx = idx;
+                    ps5JumpToAlphabetGame(idx);
+                    return;
+                }
+                curr = curr->next;
+            }
+        }
+    } else if (direction < 0) {
+        if (gPS5AlphaIdx <= 1) {
+            gPS5AlphaIdx = 0;
+            ps5JumpToAlphabetGame(0);
+            return;
+        }
+
+        for (idx = gPS5AlphaIdx - 1; idx >= 1; idx--) {
+            submenu_list_t *curr = selectedItem->item->submenu;
+            while (curr) {
+                if (ps5TitleMatchesAlpha(submenuItemGetText(&curr->item), idx)) {
+                    gPS5AlphaIdx = idx;
+                    ps5JumpToAlphabetGame(idx);
+                    return;
+                }
+                curr = curr->next;
+            }
+        }
+
+        gPS5AlphaIdx = 0;
+        ps5JumpToAlphabetGame(0);
+    }
+}
+
 
 static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, struct theme_element *elem)
 {
@@ -2486,31 +2531,6 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 }
             }
 
-            // Sync active letter to selected game when game selection changes via Left/Right
-            static submenu_list_t *lastItem = NULL;
-            static int gPS5FirstStart = 1;
-            if (item != lastItem) {
-                lastItem = item;
-                
-                if (gPS5FirstStart) {
-                    gPS5FirstStart = 0;
-                } else if (gPS5UserHasNavigated) {
-                    if (!getKeyPressed(KEY_UP) && !getKeyPressed(KEY_DOWN)) {
-                        const char *selTitle = submenuItemGetText(&item->item);
-                        char firstChar = '\0';
-                        if (selTitle && selTitle[0] != '\0') {
-                            firstChar = selTitle[0];
-                            if (firstChar >= 'a' && firstChar <= 'z') firstChar -= 32;
-                        }
-                        int gameAlphaIdx = 0; // default to '#'
-                        if (firstChar >= 'A' && firstChar <= 'Z') {
-                            gameAlphaIdx = firstChar - 'A' + 1;
-                        }
-                        gPS5AlphaIdx = gameAlphaIdx;
-                    }
-                }
-            }
-            
             gPS5AlphaAnimPos += ((float)gPS5AlphaIdx - gPS5AlphaAnimPos) * 0.20f;
             
             int alphabetX = 612;

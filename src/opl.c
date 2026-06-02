@@ -1989,7 +1989,6 @@ static int coverFetchMetadata(const char *startup, const char *fallbackName, cha
 
     snprintf(uri, sizeof(uri), COVER_API_URI, startup);
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Preparing download...");
-    DelayThread(500000);
     coverDebugLog("COVERDBG api begin startup='%s' uri='%s'", startup, uri);
 
     if (gPS5CoverDownloadCancel) {
@@ -2005,22 +2004,20 @@ static int coverFetchMetadata(const char *startup, const char *fallbackName, cha
     }
 
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Preparing network...");
-    DelayThread(500000);
     result = ethLoadInitModules();
     if (result != 0) {
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Network is not ready");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
         free(buffer);
         return result;
     }
 
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading cover data...");
-    DelayThread(500000);
     coverDebugLog("COVERDBG api direct connect begin host='%s' via='%s'", COVER_HTTP_HOST, COVER_HTTP_CONNECT_HOST);
     socket = HttpEstabConnection(COVER_HTTP_CONNECT_HOST, COVER_HTTP_PORT);
     coverDebugLog("COVERDBG api direct connect result=%d", socket);
 
     if (socket < 0) {
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not connect to cover server");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
         free(buffer);
         return socket;
     }
@@ -2032,7 +2029,6 @@ static int coverFetchMetadata(const char *startup, const char *fallbackName, cha
     }
 
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading cover data...");
-    DelayThread(500000);
     connMode = HTTP_CMODE_CLOSED;
     length = HTTP_IOBUF_SIZE;
     result = HttpSendGetRequest(socket, OPL_USER_AGENT, COVER_HTTP_HOST, &connMode, NULL, uri, buffer, &length);
@@ -2040,7 +2036,7 @@ static int coverFetchMetadata(const char *startup, const char *fallbackName, cha
     coverDebugLog("COVERDBG api get result=%d length=%u mode=%d", result, length, connMode);
 
     if (length == 0) {
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Cover server did not respond");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), result < 0 ? "Connect Ethernet to download" : "Cover server did not respond");
         free(buffer);
         return result < 0 ? result : -ENOENT;
     }
@@ -2165,8 +2161,8 @@ static void oplDownloadMissingGameCovers(void)
                 snprintf(lastError, sizeof(lastError), "Cover not available");
             } else {
                 networkFailed++;
-                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Need internet access to download");
-                snprintf(lastError, sizeof(lastError), "Need internet access to download");
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
+                snprintf(lastError, sizeof(lastError), "Connect Ethernet to download");
                 break;
             }
             continue;
@@ -2214,7 +2210,7 @@ static void oplDownloadMissingGameCovers(void)
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download complete");
     if (networkFailed > 0 && downloaded == 0 && unavailable == 0)
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Need internet access to download");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
     else if (saveFailed > 0 && downloaded == 0)
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not save cover files");
     else if (unavailable > 0)

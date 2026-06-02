@@ -1170,21 +1170,13 @@ void menuHandleInputMain()
         } else if (getKey(KEY_RIGHT)) {
             menuNextV();
         } else if (getKey(KEY_UP)) {
-            extern int gPS5AlphaIdx;
-            extern void ps5JumpToAlphabetGame(int targetIdx);
-            if (gPS5AlphaIdx > 0) {
-                sfxPlay(SFX_CURSOR);
-                gPS5AlphaIdx--;
-                ps5JumpToAlphabetGame(gPS5AlphaIdx);
-            }
+            extern void ps5MoveAlphabetGame(int direction);
+            sfxPlay(SFX_CURSOR);
+            ps5MoveAlphabetGame(-1);
         } else if (getKey(KEY_DOWN)) {
-            extern int gPS5AlphaIdx;
-            extern void ps5JumpToAlphabetGame(int targetIdx);
-            if (gPS5AlphaIdx < 26) {
-                sfxPlay(SFX_CURSOR);
-                gPS5AlphaIdx++;
-                ps5JumpToAlphabetGame(gPS5AlphaIdx);
-            }
+            extern void ps5MoveAlphabetGame(int direction);
+            sfxPlay(SFX_CURSOR);
+            ps5MoveAlphabetGame(1);
         }
     } else {
         if (getKey(KEY_LEFT)) {
