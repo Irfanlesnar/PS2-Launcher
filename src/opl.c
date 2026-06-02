@@ -2003,7 +2003,7 @@ static int coverFetchMetadata(const char *startup, const char *fallbackName, cha
         return -ENOMEM;
     }
 
-    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Preparing network...");
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading cover data...");
     result = ethLoadInitModules();
     if (result != 0) {
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
@@ -2104,16 +2104,24 @@ static void oplDownloadMissingGameCovers(void)
     gPS5CoverDownloadCurrent = 0;
     gPS5CoverDownloadTotal = queued;
     gPS5CoverDownloadPercent = 0;
-    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Preparing covers");
-    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Checking missing covers...");
+    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d games need covers", queued);
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
-    DelayThread(500000);
 
     if (queued <= 0) {
         gPS5CoverDownloadPercent = 100;
         gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
         snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Game covers");
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "All game covers are up to date");
+        return;
+    }
+
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Preparing network...");
+    if (ethCheckInternet() != 0) {
+        gPS5CoverDownloadPercent = 100;
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
         return;
     }
 
@@ -2235,13 +2243,14 @@ static void oplCoverDownloadThread(void *arg)
 void oplStartGameCoverDownload(void)
 {
     item_list_t *support = gPS5CoverActiveSupport;
-    int result, id, count, queued;
+    int result;
 
     if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP || gCoverTestThreadRunning)
         return;
 
     gPS5CoverDownloadCancel = 0;
     gPS5CoverDownloadCurrent = 0;
+    gPS5CoverDownloadTotal = 0;
     gPS5CoverDownloadPercent = 0;
     gPS5CoverDownloadFailures = 0;
 
@@ -2253,36 +2262,9 @@ void oplStartGameCoverDownload(void)
         return;
     }
 
-    count = support->itemGetCount(support);
-    queued = 0;
-    for (id = 0; id < count; id++) {
-        if (coverGameNeedsDownload(support, id))
-            queued++;
-    }
-
-    gPS5CoverTotalGames = count;
-    gPS5CoverMissingGames = queued;
-    gPS5CoverDownloadTotal = queued;
-
-    if (queued <= 0) {
-        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
-        gPS5CoverDownloadPercent = 100;
-        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "All game covers are up to date");
-        return;
-    }
-
-    if (ethCheckInternet() != 0) {
-        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
-        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
-        return;
-    }
-
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
-    gPS5CoverDownloadTitle[0] = '\0';
-    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Preparing covers");
-    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Checking missing covers...");
+    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Scanning games...");
 
     gCoverTestThread.attr = 0;
     gCoverTestThread.stack_size = COVER_TEST_THREAD_STACK_SIZE;

@@ -1157,23 +1157,10 @@ void rmDrawRoundedCover(GSTEXTURE *cover, int x, int y, int w, int h, int r)
     int Y1 = rmScaleY((int)(y_draw + R));
     int Y2 = rmScaleY((int)(y_draw + h_draw - R));
 
-    float factorTop = (float)y_draw / 480.0f;
-    if (factorTop < 0.0f) factorTop = 0.0f;
-    if (factorTop > 1.0f) factorTop = 1.0f;
-    u8 rTop = (u8)(gPS5BgColorR * factorTop);
-    u8 gTop = (u8)(gPS5BgColorG * factorTop);
-    u8 bTop = (u8)(gPS5BgColorB * factorTop);
-    u64 colorTL = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
-    u64 colorTR = GS_SETREG_RGBA(rTop, gTop, bTop, 0x80);
-    
-    float factorBottom = (float)(y_draw + h_draw) / 480.0f;
-    if (factorBottom < 0.0f) factorBottom = 0.0f;
-    if (factorBottom > 1.0f) factorBottom = 1.0f;
-    u8 rBottom = (u8)(gPS5BgColorR * factorBottom);
-    u8 gBottom = (u8)(gPS5BgColorG * factorBottom);
-    u8 bBottom = (u8)(gPS5BgColorB * factorBottom);
-    u64 colorBL = GS_SETREG_RGBA(rBottom, gBottom, bBottom, 0x80);
-    u64 colorBR = GS_SETREG_RGBA(rBottom, gBottom, bBottom, 0x80);
+    u64 colorTL = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
+    u64 colorTR = colorTL;
+    u64 colorBL = colorTL;
+    u64 colorBR = colorTL;
 
     rmDrawRawQuad(&gPS5InvMaskTex, X0, Y0, X1, Y1, 0, 0, tr, tr, colorTL);                     // Top-Left
     rmDrawRawQuad(&gPS5InvMaskTex, X2, Y0, X3, Y1, tw - tr, 0, tw, tr, colorTR);         // Top-Right
@@ -2417,7 +2404,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                     }
 
                     if (hasCover && cacheEntry) {
-                        rmDrawRoundedRectWide(x1, y1, width, height, 12, GS_SETREG_RGBA(0x00, 0x00, 0x00, cardAlpha));
+                        rmDrawRoundedRectWide(x1, y1, width, height, 12, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
                         rmDrawRoundedCover(&cacheEntry->coverTex, x1, y1, width, height, 12);
                     } else {
                         // 1. Draw beautifully colored rounded card
