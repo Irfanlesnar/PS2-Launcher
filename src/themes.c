@@ -2012,6 +2012,11 @@ static void clearNetCache(void)
     gPS5UserHasNavigated = 0;
 }
 
+void ps5ClearCoverCache(void)
+{
+    clearNetCache();
+}
+
 int gPS5AlphaIdx = 0; // Global alphabet index (starts at '#')
 
 static int ps5TitleMatchesAlpha(const char *title, int alphaIdx)
@@ -2130,7 +2135,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
     }
     // Small L1/R1 indicators (smaller font size, offset adjusted for alignment)
     fntRenderString(gPS5SmallFont, 30, 39, ALIGN_LEFT, 0, 0, "L1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
-    fntRenderString(gPS5SmallFont, 212, 39, ALIGN_LEFT, 0, 0, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+    fntRenderString(gPS5SmallFont, 198, 39, ALIGN_LEFT, 0, 0, "R1", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20));
     extern int gPS5ShowTime;
     if (gPS5ShowTime) {
         fntRenderString(gPS5RegFont, screenWidth - 50, 32, ALIGN_RIGHT, 0, 0, timeStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -2364,6 +2369,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                     }
 
                     if (hasCover && cacheEntry) {
+                        rmDrawRoundedRectWide(x1, y1, width, height, 12, GS_SETREG_RGBA(0x00, 0x00, 0x00, cardAlpha));
                         rmDrawRoundedCover(&cacheEntry->coverTex, x1, y1, width, height, 12);
                     } else {
                         // 1. Draw beautifully colored rounded card
@@ -2597,7 +2603,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         u64 coverColor = coverFocused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x30);
         u64 coverSubColor = coverFocused ? GS_SETREG_RGBA(0xB0, 0xB0, 0xB0, 0x60) : GS_SETREG_RGBA(0xB0, 0xB0, 0xB0, 0x24);
 
-        snprintf(coverSummary, sizeof(coverSummary), "%d game covers missing", gPS5CoverMissingGames);
+        snprintf(coverSummary, sizeof(coverSummary), "Any cover art missing? Download it now.");
         if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP)
             snprintf(coverButton, sizeof(coverButton), "Downloading");
         else
@@ -2702,7 +2708,11 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 62, ALIGN_LEFT, 0, 0, gPS5CoverDownloadTitle, GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
                 fntRenderString(gPS5SmallFont, dlgX + 24, dlgY + 86, ALIGN_LEFT, 0, 0, gPS5CoverDownloadUrl, GS_SETREG_RGBA(0x98, 0xAA, 0xBD, 0x80));
             } else {
-                fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 62, ALIGN_LEFT, 0, 0, gPS5CoverDownloadUrl, GS_SETREG_RGBA(0xDD, 0xDD, 0xDD, 0x80));
+                char statusText[256];
+                strncpy(statusText, gPS5CoverDownloadUrl, sizeof(statusText) - 1);
+                statusText[sizeof(statusText) - 1] = '\0';
+                fntFitString(gPS5RegFont, statusText, dlgW - 48);
+                fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 62, ALIGN_LEFT, dlgW - 48, 48, statusText, GS_SETREG_RGBA(0xDD, 0xDD, 0xDD, 0x80));
             }
 
             // 5. Progress bar track and fill

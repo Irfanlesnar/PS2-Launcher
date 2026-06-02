@@ -861,7 +861,7 @@ void menuHandleInputMenu()
             gPS5TempShowTime = gPS5ShowTime;
             gPS5SavedUISound = gPS5UISound;
             gPS5TempUISound = gPS5UISound;
-            oplRefreshGameCoverStatsIfNeeded(selected_item != NULL ? selected_item->item->userdata : NULL);
+            oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
         }
         if (gPS5SubSel > 4)
             gPS5SubSel = 4;
@@ -1152,7 +1152,7 @@ void menuHandleInputMain()
                 gPS5TempUISound = gPS5UISound;
             }
             gPS5ActiveTab = 1;
-            oplRefreshGameCoverStatsIfNeeded(selected_item != NULL ? selected_item->item->userdata : NULL);
+            oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
             // Initialize mainMenuCurrent if needed
             if (!menuGetMainMenuCurrent()) {
                 menuSetMainMenuCurrent(menuGetMainMenu());

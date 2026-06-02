@@ -1609,24 +1609,7 @@ static int coverIsLocalGameSupport(item_list_t *support)
 
 static void coverDebugLog(const char *format, ...)
 {
-    char line[256];
-    int fd;
-    va_list args;
-
-    va_start(args, format);
-    vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-
-    LOG("%s\n", line);
-
-    mkdir("mc0:/PS2L", 0777);
-    fd = open("mc0:/PS2L/debug.log", O_WRONLY | O_CREAT, 0666);
-    if (fd >= 0) {
-        lseek(fd, 0, SEEK_END);
-        write(fd, line, strlen(line));
-        write(fd, "\n", 1);
-        close(fd);
-    }
+    (void)format;
 }
 
 static void coverNormalizePrefix(const char *prefix, char *out, int outSize)
@@ -1946,6 +1929,14 @@ void oplRefreshGameCoverStatsIfNeeded(item_list_t *support)
         oplRefreshGameCoverStatsForSupport(support);
 }
 
+void oplSetGameCoverActiveSupport(item_list_t *support)
+{
+    gPS5CoverActiveSupport = support;
+    gPS5CoverTotalGames = 0;
+    gPS5CoverMissingGames = 0;
+    gPS5CoverStatsDirty = 1;
+}
+
 static int coverExtractJsonString(const char *json, const char *key, char *out, int outSize)
 {
     char pattern[32];
@@ -2091,6 +2082,7 @@ static void oplDownloadMissingGameCovers(void)
 {
     item_list_t *support = gPS5CoverActiveSupport;
     int id, count, queued, current, metaResult, artResult, logoResult;
+    int downloaded = 0, unavailable = 0, networkFailed = 0, saveFailed = 0;
     char *startup, *title, *prefix;
     char artUrl[256] = {0}, logoUrl[256] = {0}, gameName[96] = {0};
     char lastError[96] = {0};
@@ -2109,6 +2101,8 @@ static void oplDownloadMissingGameCovers(void)
         if (coverGameNeedsDownload(support, id))
             queued++;
     }
+    gPS5CoverTotalGames = count;
+    gPS5CoverMissingGames = queued;
 
     gPS5CoverDownloadFailures = 0;
     gPS5CoverDownloadCurrent = 0;
@@ -2165,9 +2159,16 @@ static void oplDownloadMissingGameCovers(void)
 
         if (metaResult < 0) {
             gPS5CoverDownloadFailures++;
-            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Metadata failed: %d", metaResult);
-            snprintf(lastError, sizeof(lastError), "Metadata failed: %d", metaResult);
-            coverDebugLog("COVERERR metadata startup='%s' result=%d", startup, metaResult);
+            if (metaResult == -ENOENT) {
+                unavailable++;
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Cover not available");
+                snprintf(lastError, sizeof(lastError), "Cover not available");
+            } else {
+                networkFailed++;
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Need internet access to download");
+                snprintf(lastError, sizeof(lastError), "Need internet access to download");
+                break;
+            }
             continue;
         }
 
@@ -2195,25 +2196,34 @@ static void oplDownloadMissingGameCovers(void)
 
         if (artResult < 0 || logoResult < 0) {
             gPS5CoverDownloadFailures++;
-            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Save failed: ART %d LOGO %d", artResult, logoResult);
-            snprintf(lastError, sizeof(lastError), "Save failed: ART %d LOGO %d", artResult, logoResult);
-            coverDebugLog("COVERERR save startup='%s' art=%d logo=%d", startup, artResult, logoResult);
+            saveFailed++;
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not save cover files");
+            snprintf(lastError, sizeof(lastError), "Could not save cover files");
             continue;
         }
 
+        downloaded++;
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Cover saved");
         DelayThread(300000);
     }
 
+    if (downloaded > 0)
+        ps5ClearCoverCache();
+
     gPS5CoverDownloadPercent = 100;
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download complete");
-    if (gPS5CoverDownloadFailures > 0 && lastError[0] != '\0')
+    if (networkFailed > 0 && downloaded == 0 && unavailable == 0)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Need internet access to download");
+    else if (saveFailed > 0 && downloaded == 0)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not save cover files");
+    else if (unavailable > 0)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded. %d not available. Request @irfanmatheena on Instagram.",
+            downloaded, queued, unavailable);
+    else if (lastError[0] != '\0' && downloaded == 0)
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%s", lastError);
     else
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers found, %d missing",
-            queued - gPS5CoverDownloadFailures, queued, gPS5CoverDownloadFailures);
-    coverDebugLog("COVERDBG dynamic api done queued=%d failures=%d", queued, gPS5CoverDownloadFailures);
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded", downloaded, queued);
 }
 
 static void oplCoverDownloadThread(void *arg)
@@ -2233,18 +2243,15 @@ void oplStartGameCoverDownload(void)
     if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP || gCoverTestThreadRunning)
         return;
 
-    coverDebugLog("COVERDBG build=%s rpc=0x%X endpoint=http://%s%s", COVER_DEBUG_BUILD, HTTP_CLIENT_RPC_ID, COVER_HTTP_HOST, "/api.php");
-    coverDebugLog("COVERDBG dynamic start requested active=%p total=%d queued=%d", gPS5CoverActiveSupport, gPS5CoverTotalGames, gPS5CoverMissingGames);
     gPS5CoverDownloadCancel = 0;
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
     gPS5CoverDownloadCurrent = 0;
-    gPS5CoverDownloadTotal = gPS5CoverMissingGames;
+    gPS5CoverDownloadTotal = 0;
     gPS5CoverDownloadPercent = 0;
     gPS5CoverDownloadFailures = 0;
     gPS5CoverDownloadTitle[0] = '\0';
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Preparing covers");
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Checking missing covers...");
-    coverDebugLog("COVERDBG start dynamic thread");
 
     gCoverTestThread.attr = 0;
     gCoverTestThread.stack_size = COVER_TEST_THREAD_STACK_SIZE;
@@ -2261,7 +2268,6 @@ void oplStartGameCoverDownload(void)
         gPS5CoverDownloadFailures = 1;
         gCoverTestThreadRunning = 0;
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not start download");
-        coverDebugLog("COVERDBG thread create failed result=%d", result);
         return;
     }
 
@@ -2274,7 +2280,6 @@ void oplStartGameCoverDownload(void)
         gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
         gPS5CoverDownloadFailures = 1;
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not start download");
-        coverDebugLog("COVERDBG thread start failed result=%d", result);
     }
 }
 
@@ -2290,7 +2295,6 @@ void oplAbortGameCoverDownload(void)
             gCoverTestThreadId = 0;
             gCoverTestThreadRunning = 0;
         }
-        coverDebugLog("COVERDBG cancel requested");
     }
 }
 

@@ -165,6 +165,7 @@ const char **thmGetGuiList(void);
 char *thmGetFilePath(int themeID);
 
 extern int gPS5ActiveTab;
+void ps5ClearCoverCache(void);
 void playPS5LaunchTransition(const char *gameTitle);
 void rmDrawRoundedRect(int x, int y, int w, int h, int r, u64 color);
 void rmDrawRoundedRectWide(int x, int y, int w, int h, int r, u64 color);
