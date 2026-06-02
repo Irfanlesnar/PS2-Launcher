@@ -2234,17 +2234,52 @@ static void oplCoverDownloadThread(void *arg)
 
 void oplStartGameCoverDownload(void)
 {
-    int result;
+    item_list_t *support = gPS5CoverActiveSupport;
+    int result, id, count, queued;
 
     if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP || gCoverTestThreadRunning)
         return;
 
     gPS5CoverDownloadCancel = 0;
-    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
     gPS5CoverDownloadCurrent = 0;
-    gPS5CoverDownloadTotal = 0;
     gPS5CoverDownloadPercent = 0;
     gPS5CoverDownloadFailures = 0;
+
+    if (!coverIsLocalGameSupport(support)) {
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        gPS5CoverDownloadTotal = 0;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Open a local game list first");
+        return;
+    }
+
+    count = support->itemGetCount(support);
+    queued = 0;
+    for (id = 0; id < count; id++) {
+        if (coverGameNeedsDownload(support, id))
+            queued++;
+    }
+
+    gPS5CoverTotalGames = count;
+    gPS5CoverMissingGames = queued;
+    gPS5CoverDownloadTotal = queued;
+
+    if (queued <= 0) {
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
+        gPS5CoverDownloadPercent = 100;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "All game covers are up to date");
+        return;
+    }
+
+    if (ethCheckInternet() != 0) {
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Connect Ethernet to download");
+        return;
+    }
+
+    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
     gPS5CoverDownloadTitle[0] = '\0';
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Preparing covers");
     snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Checking missing covers...");

@@ -1300,7 +1300,7 @@ u8 gPS5BgColorB = 16;
 void guiDrawBGPlasma()
 {
     if (gPS5Mode) {
-        rmDrawRectPrecise(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+        rmDrawRectPrecise(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(gPS5BgColorR, gPS5BgColorG, gPS5BgColorB, 0x80));
         return;
     }
 
