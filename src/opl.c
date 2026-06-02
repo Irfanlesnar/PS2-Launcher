@@ -180,6 +180,9 @@ int gEnableArt;
 int gPS5Mode = 1;
 int gPS5ShowTime = 1;
 int gPS5UISound = 1;
+int gPS5ShowCoverImages = 1;
+int gPS5ShowGamesLogo = 1;
+int gPS5SortMode = 1;
 int gWideScreen;
 int gVMode; // 0 - Auto, 1 - PAL, 2 - NTSC
 int gXOff;
@@ -991,6 +994,9 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_WIDESCREEN, &gWideScreen);
             configGetInt(configOPL, "ps5_show_time", &gPS5ShowTime);
             configGetInt(configOPL, "ps5_ui_sound", &gPS5UISound);
+            configGetInt(configOPL, "ps5_show_cover_images", &gPS5ShowCoverImages);
+            configGetInt(configOPL, "ps5_show_games_logo", &gPS5ShowGamesLogo);
+            configGetInt(configOPL, "ps5_sort_mode", &gPS5SortMode);
 
             if (!(getKeyPressed(KEY_TRIANGLE) && getKeyPressed(KEY_CROSS))) {
                 configGetInt(configOPL, CONFIG_OPL_VMODE, &gVMode);
@@ -1185,6 +1191,9 @@ static void _saveConfig()
         configSetInt(configOPL, CONFIG_OPL_WIDESCREEN, gWideScreen);
         configSetInt(configOPL, "ps5_show_time", gPS5ShowTime);
         configSetInt(configOPL, "ps5_ui_sound", gPS5UISound);
+        configSetInt(configOPL, "ps5_show_cover_images", gPS5ShowCoverImages);
+        configSetInt(configOPL, "ps5_show_games_logo", gPS5ShowGamesLogo);
+        configSetInt(configOPL, "ps5_sort_mode", gPS5SortMode);
         configSetInt(configOPL, CONFIG_OPL_VMODE, gVMode);
         configSetInt(configOPL, CONFIG_OPL_XOFF, gXOff);
         configSetInt(configOPL, CONFIG_OPL_YOFF, gYOff);

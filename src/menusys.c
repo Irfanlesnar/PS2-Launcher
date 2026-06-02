@@ -840,6 +840,12 @@ int gPS5SavedShowTime = -1;
 int gPS5TempShowTime = 1;
 int gPS5SavedUISound = -1;
 int gPS5TempUISound = 1;
+int gPS5SavedShowCoverImages = -1;
+int gPS5TempShowCoverImages = 1;
+int gPS5SavedShowGamesLogo = -1;
+int gPS5TempShowGamesLogo = 1;
+int gPS5SavedSortMode = -1;
+int gPS5TempSortMode = 1;
 
 void menuHandleInputMenu()
 {
@@ -853,6 +859,9 @@ void menuHandleInputMenu()
         extern int gPS5ActiveTab;
         extern int gPS5ShowTime;
         extern int gPS5UISound;
+        extern int gPS5ShowCoverImages;
+        extern int gPS5ShowGamesLogo;
+        extern int gPS5SortMode;
 
         if (gPS5SavedVMode == -1) {
             gPS5SavedVMode = gVMode;
@@ -861,10 +870,16 @@ void menuHandleInputMenu()
             gPS5TempShowTime = gPS5ShowTime;
             gPS5SavedUISound = gPS5UISound;
             gPS5TempUISound = gPS5UISound;
+            gPS5SavedShowCoverImages = gPS5ShowCoverImages;
+            gPS5TempShowCoverImages = gPS5ShowCoverImages;
+            gPS5SavedShowGamesLogo = gPS5ShowGamesLogo;
+            gPS5TempShowGamesLogo = gPS5ShowGamesLogo;
+            gPS5SavedSortMode = gPS5SortMode;
+            gPS5TempSortMode = gPS5SortMode;
             oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
         }
-        if (gPS5SubSel > 4)
-            gPS5SubSel = 4;
+        if (gPS5SubSel > 7)
+            gPS5SubSel = 7;
 
         if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
             if (getKeyOn(KEY_CIRCLE)) {
@@ -890,9 +905,15 @@ void menuHandleInputMenu()
             }
             gPS5ShowTime = gPS5SavedShowTime;
             gPS5UISound = gPS5SavedUISound;
+            gPS5ShowCoverImages = gPS5SavedShowCoverImages;
+            gPS5ShowGamesLogo = gPS5SavedShowGamesLogo;
+            gPS5SortMode = gPS5SavedSortMode;
             gPS5TempVMode = gPS5SavedVMode;
             gPS5TempShowTime = gPS5SavedShowTime;
             gPS5TempUISound = gPS5SavedUISound;
+            gPS5TempShowCoverImages = gPS5SavedShowCoverImages;
+            gPS5TempShowGamesLogo = gPS5SavedShowGamesLogo;
+            gPS5TempSortMode = gPS5SavedSortMode;
             gPS5ActiveTab = 0;
             return;
         }
@@ -964,33 +985,81 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_DOWN)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 3; // Move down to Game Covers
+                gPS5SubSel = 3; // Move down to Show Cover Images
             }
-        } else if (gPS5SubSel == 3) { // Focus is on Game Covers
+        } else if (gPS5SubSel == 3) { // Focus is on Show Cover Images
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempShowCoverImages = !gPS5TempShowCoverImages;
+                gPS5ShowCoverImages = gPS5TempShowCoverImages;
+            }
             if (getKeyOn(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5SubSel = 2; // Move up to UI Sound
             }
             if (getKeyOn(KEY_DOWN)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 4; // Move down to Save text
+                gPS5SubSel = 4; // Move down to Show Games Logo
+            }
+        } else if (gPS5SubSel == 4) { // Focus is on Show Games Logo
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempShowGamesLogo = !gPS5TempShowGamesLogo;
+                gPS5ShowGamesLogo = gPS5TempShowGamesLogo;
+            }
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 3;
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 5;
+            }
+        } else if (gPS5SubSel == 5) { // Focus is on Sorting Games
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempSortMode = !gPS5TempSortMode;
+                gPS5SortMode = gPS5TempSortMode;
+            }
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 4;
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 6;
+            }
+        } else if (gPS5SubSel == 6) { // Focus is on Game Covers
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 5;
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 7; // Move down to Save text
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
                 oplStartGameCoverDownload();
             }
-        } else if (gPS5SubSel == 4) { // Focus is on the Save text
+        } else if (gPS5SubSel == 7) { // Focus is on the Save text
             if (getKeyOn(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 3; // Move up to Game Covers
+                gPS5SubSel = 6; // Move up to Game Covers
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
                 // Commit settings to baseline before persistent save
                 gPS5ShowTime = gPS5TempShowTime;
                 gPS5UISound = gPS5TempUISound;
+                gPS5ShowCoverImages = gPS5TempShowCoverImages;
+                gPS5ShowGamesLogo = gPS5TempShowGamesLogo;
+                gPS5SortMode = gPS5TempSortMode;
                 gPS5SavedShowTime = gPS5ShowTime;
                 gPS5SavedUISound = gPS5UISound;
+                gPS5SavedShowCoverImages = gPS5ShowCoverImages;
+                gPS5SavedShowGamesLogo = gPS5ShowGamesLogo;
+                gPS5SavedSortMode = gPS5SortMode;
                 gPS5SavedVMode = gVMode; // Update baseline to the new saved setting!
 
                 // Save settings permanently to Memory Card
@@ -1126,6 +1195,9 @@ void menuHandleInputMain()
         extern int gPS5TempVMode;
         extern int gPS5ShowTime;
         extern int gPS5UISound;
+        extern int gPS5ShowCoverImages;
+        extern int gPS5ShowGamesLogo;
+        extern int gPS5SortMode;
         if (getKeyOn(KEY_L1)) {
             sfxPlay(SFX_CURSOR);
             if (gPS5ActiveTab == 1) {
@@ -1135,10 +1207,16 @@ void menuHandleInputMain()
                 }
                 gPS5ShowTime = gPS5SavedShowTime;
                 gPS5UISound = gPS5SavedUISound;
+                gPS5ShowCoverImages = gPS5SavedShowCoverImages;
+                gPS5ShowGamesLogo = gPS5SavedShowGamesLogo;
+                gPS5SortMode = gPS5SavedSortMode;
             }
             gPS5TempVMode = gPS5SavedVMode;
             gPS5TempShowTime = gPS5SavedShowTime;
             gPS5TempUISound = gPS5SavedUISound;
+            gPS5TempShowCoverImages = gPS5SavedShowCoverImages;
+            gPS5TempShowGamesLogo = gPS5SavedShowGamesLogo;
+            gPS5TempSortMode = gPS5SavedSortMode;
             gPS5ActiveTab = 0;
             return;
         } else if (getKeyOn(KEY_R1)) {
@@ -1150,6 +1228,12 @@ void menuHandleInputMain()
                 gPS5TempShowTime = gPS5ShowTime;
                 gPS5SavedUISound = gPS5UISound;
                 gPS5TempUISound = gPS5UISound;
+                gPS5SavedShowCoverImages = gPS5ShowCoverImages;
+                gPS5TempShowCoverImages = gPS5ShowCoverImages;
+                gPS5SavedShowGamesLogo = gPS5ShowGamesLogo;
+                gPS5TempShowGamesLogo = gPS5ShowGamesLogo;
+                gPS5SavedSortMode = gPS5SortMode;
+                gPS5TempSortMode = gPS5SortMode;
             }
             gPS5ActiveTab = 1;
             oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
