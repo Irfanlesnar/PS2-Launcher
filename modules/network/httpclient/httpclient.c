@@ -119,9 +119,22 @@ static unsigned short int HeaderLineNumber;
 // static char TransferEncoding;
 static char ConnectionMode;
 
+static int HttpHeaderEquals(const char *line, const char *name)
+{
+    unsigned int i;
+
+    for (i = 0; name[i] != '\0'; i++) {
+        if (tolower(line[i]) != name[i])
+            return 0;
+    }
+
+    return line[i] == ':';
+}
+
 static void HttpParseEntityLine(const char *line)
 {
     char *pColon;
+    char *value;
 
     if ((pColon = strchr(line, ':')) != NULL) {
         for (pColon++; *pColon != '\0'; pColon++) {
@@ -135,8 +148,12 @@ static void HttpParseEntityLine(const char *line)
     if (HeaderLineNumber == 0 && (strncmp(line, "HTTP/1.1 ", 9) == 0 || strncmp(line, "HTTP/1.0 ", 9) == 0))
         StatusCode = strtoul(line + 9, NULL, 10);
 
-    if (strncmp(line, "Content-Length: ", 16) == 0)
-        ContentLength = strtoul(line + 15, NULL, 10);
+    if (HttpHeaderEquals(line, "content-length")) {
+        value = (char *)line + 15;
+        while (*value == ' ' || *value == '\t')
+            value++;
+        ContentLength = strtoul(value, NULL, 10);
+    }
     /*
     if (strncmp(line, "Transfer-Encoding: ", 19) == 0) {
         ContentLength = -1;
@@ -144,7 +161,7 @@ static void HttpParseEntityLine(const char *line)
             TransferEncoding = TRANFER_ENCODING_CHUNKED;
     }
     */
-    if (strcmp(line, "Connection: close") == 0)
+    if (HttpHeaderEquals(line, "connection") && strstr(line, "close") != NULL)
         ConnectionMode = HTTP_CMODE_CLOSED;
 
     HeaderLineNumber++;
@@ -375,6 +392,36 @@ int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *h
     length = strlen(buffer);
 
     if (SendData(HttpSocket, buffer, length) == length) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else {
+        result = -1;
+    }
+
+    return result;
+}
+
+int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, const char *body, u16 body_len, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "POST %s HTTP/1.%d\r\n"
+                    "Accept: application/json, */*\r\n"
+                    "Content-Type: application/json\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Content-Length: %u\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, body_len);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length && SendData(HttpSocket, (char *)body, body_len) == body_len) {
         result = HttpGetResponse(HttpSocket, mode, output, out_len);
     } else {
         result = -1;

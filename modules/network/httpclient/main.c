@@ -17,7 +17,7 @@ static SifRpcDataQueue_t SifQueueData;
 static SifRpcServerData_t SifServerData;
 static int RpcThreadID;
 static int CoverApiWorkerThreadID;
-static unsigned char SifServerRxBuffer[256] __attribute__((aligned(64)));
+static unsigned char SifServerRxBuffer[sizeof(struct HttpClientSendPostJsonArgs)] __attribute__((aligned(64)));
 static unsigned char SifServerTxBuffer[16] __attribute__((aligned(64)));
 static unsigned char DmaBuffer[60000] __attribute__((aligned(64)));
 static char CoverApiServer[HTTP_CLIENT_SERVER_NAME_MAX];
@@ -177,6 +177,28 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
             dmat.src = DmaBuffer;
             dmat.dest = ((struct HttpClientSendGetRangeArgs *)buffer)->output;
             dmat.size = (((struct HttpClientSendGetRangeArgs *)buffer)->out_len + 0xF) & ~0xF;
+            dmat.attr = 0;
+
+            CpuSuspendIntr(&OldState);
+            while (sceSifSetDma(&dmat, 1) == 0)
+                ;
+            CpuResumeIntr(OldState);
+            break;
+        case HTTP_CLIENT_CMD_SEND_POST_JSON_REQ:
+            if (((struct HttpClientSendPostJsonArgs *)buffer)->out_len > sizeof(DmaBuffer)) {
+                ((struct HttpClientSendPostJsonArgs *)buffer)->out_len = sizeof(DmaBuffer);
+            }
+            if (((struct HttpClientSendPostJsonArgs *)buffer)->body_len > HTTP_CLIENT_POST_BODY_MAX) {
+                ((struct HttpClientSendPostJsonArgs *)buffer)->body_len = HTTP_CLIENT_POST_BODY_MAX;
+            }
+
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->result = HttpSendPostJsonRequest(((struct HttpClientSendPostJsonArgs *)buffer)->socket, ((struct HttpClientSendPostJsonArgs *)buffer)->UserAgent, ((struct HttpClientSendPostJsonArgs *)buffer)->host, &((struct HttpClientSendPostJsonArgs *)buffer)->mode, ((struct HttpClientSendPostJsonArgs *)buffer)->uri, ((struct HttpClientSendPostJsonArgs *)buffer)->body, ((struct HttpClientSendPostJsonArgs *)buffer)->body_len, (char *)DmaBuffer, &((struct HttpClientSendPostJsonArgs *)buffer)->out_len);
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->mode = ((struct HttpClientSendPostJsonArgs *)buffer)->mode;
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len = ((struct HttpClientSendPostJsonArgs *)buffer)->out_len;
+
+            dmat.src = DmaBuffer;
+            dmat.dest = ((struct HttpClientSendPostJsonArgs *)buffer)->output;
+            dmat.size = (((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len + 0xF) & ~0xF;
             dmat.attr = 0;
 
             CpuSuspendIntr(&OldState);

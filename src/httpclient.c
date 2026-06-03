@@ -1,11 +1,12 @@
 #include <string.h>
+#include <errno.h>
 #include <kernel.h>
 #include <sifrpc.h>
 #include "httpclient.h"
 #include "ioman.h"
 
 static SifRpcClientData_t SifRpcClient;
-static unsigned char RpcTxBuffer[256] ALIGNED(64);
+static unsigned char RpcTxBuffer[sizeof(struct HttpClientSendPostJsonArgs)] ALIGNED(64);
 static unsigned char RpcRxBuffer[64] ALIGNED(64);
 
 static void HttpAsyncRpcEnd(void *arg)
@@ -102,6 +103,38 @@ int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *h
         SifWriteBackDCache(output, *out_len);
 
     if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendGetRangeArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
+        result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
+        *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
+        *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;
+    }
+
+    return result;
+}
+
+int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, const char *body, u16 body_len, char *output, u16 *out_len)
+{
+    int result;
+
+    if (body_len > HTTP_CLIENT_POST_BODY_MAX)
+        return -EINVAL;
+
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->socket = HttpSocket;
+    strncpy(((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->UserAgent, UserAgent, HTTP_CLIENT_USER_AGENT_MAX - 1);
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->UserAgent[HTTP_CLIENT_USER_AGENT_MAX - 1] = '\0';
+    strncpy(((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->host, host, HTTP_CLIENT_SERVER_NAME_MAX - 1);
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->host[HTTP_CLIENT_SERVER_NAME_MAX - 1] = '\0';
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->mode = *mode;
+    strncpy(((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->uri, uri, HTTP_CLIENT_URI_MAX - 1);
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->uri[HTTP_CLIENT_URI_MAX - 1] = '\0';
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->body_len = body_len;
+    memcpy(((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->body, body, body_len);
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->output = output;
+    ((struct HttpClientSendPostJsonArgs *)RpcTxBuffer)->out_len = *out_len;
+
+    if (!IS_UNCACHED_SEG(output))
+        SifWriteBackDCache(output, *out_len);
+
+    if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_POST_JSON_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendPostJsonArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
         result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
         *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
         *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;

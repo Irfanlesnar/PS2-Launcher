@@ -9,6 +9,7 @@ DECLARE_EXPORT_TABLE(ps2h10, 1, 1)
 	DECLARE_EXPORT(HttpCloseConnection)
 	DECLARE_EXPORT(HttpSendGetRequest)
 	DECLARE_EXPORT(HttpSendGetRequestRange)
+	DECLARE_EXPORT(HttpSendPostJsonRequest)
 END_EXPORT_TABLE
 
 void _funcret(void) {}

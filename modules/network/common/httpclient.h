@@ -33,10 +33,12 @@ int HttpPollCoverApiStatusResult(int *rpcDone, int *requestDone, int *phase, int
 
 int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const u8 *mtime, const char *uri, char *output, u16 *out_len);
 int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len);
+int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, const char *body, u16 body_len, char *output, u16 *out_len);
 
 #define HTTP_CLIENT_SERVER_NAME_MAX 30
 #define HTTP_CLIENT_USER_AGENT_MAX  16
 #define HTTP_CLIENT_URI_MAX         128
+#define HTTP_CLIENT_POST_BODY_MAX   8192
 
 enum HTTP_CLIENT_CMD {
     HTTP_CLIENT_CMD_CONN_ESTAB,
@@ -45,6 +47,7 @@ enum HTTP_CLIENT_CMD {
     HTTP_CLIENT_CMD_COVER_API_START_REQ,
     HTTP_CLIENT_CMD_COVER_API_STATUS_REQ,
     HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ,
+    HTTP_CLIENT_CMD_SEND_POST_JSON_REQ,
 };
 
 struct HttpClientConnEstabArgs
@@ -81,6 +84,19 @@ struct HttpClientSendGetRangeArgs
     u32 rangeStart;
     u32 rangeEnd;
     u16 out_len;
+    void *output;
+};
+
+struct HttpClientSendPostJsonArgs
+{
+    s32 socket;
+    char UserAgent[HTTP_CLIENT_USER_AGENT_MAX];
+    char host[HTTP_CLIENT_SERVER_NAME_MAX];
+    s8 mode;
+    char uri[HTTP_CLIENT_URI_MAX];
+    u16 body_len;
+    u16 out_len;
+    char body[HTTP_CLIENT_POST_BODY_MAX];
     void *output;
 };
 
@@ -122,4 +138,5 @@ struct HttpClientCoverApiResult
 #define I_HttpEstabConnection DECLARE_IMPORT(4, HttpEstabConnection)
 #define I_HttpCloseConnection DECLARE_IMPORT(5, HttpCloseConnection)
 #define I_HttpSendGetRequest  DECLARE_IMPORT(6, HttpSendGetRequest)
+#define I_HttpSendPostJsonRequest DECLARE_IMPORT(8, HttpSendPostJsonRequest)
 #endif
