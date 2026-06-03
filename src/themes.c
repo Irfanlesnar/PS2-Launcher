@@ -2115,9 +2115,21 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
     initPS5MaskTextures();
 
     static unsigned int lastBdmEventGeneration = 0;
-    if (lastBdmEventGeneration != gBdmEventGeneration) {
-        lastBdmEventGeneration = gBdmEventGeneration;
-        clearNetCache();
+    static unsigned int pendingBdmEventGeneration = 0;
+    static int bdmEventQuietFrames = 0;
+    int bdmEventStable = 1;
+    if (pendingBdmEventGeneration != gBdmEventGeneration) {
+        pendingBdmEventGeneration = gBdmEventGeneration;
+        bdmEventQuietFrames = 0;
+        bdmEventStable = 0;
+    } else if (lastBdmEventGeneration != pendingBdmEventGeneration) {
+        if (bdmEventQuietFrames < 12) {
+            bdmEventQuietFrames++;
+            bdmEventStable = 0;
+        } else {
+            lastBdmEventGeneration = pendingBdmEventGeneration;
+            clearNetCache();
+        }
     }
 
     char *prefix = "";
@@ -2144,7 +2156,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             lastIsUnplugged = isUnplugged;
         }
 
-        if (list && list->itemGetCount(list) > 0 && !isUnplugged) {
+        if (list && bdmEventStable && list->itemGetCount(list) > 0 && !isUnplugged) {
             triggerNetFetch(submenuItemGetText(&item->item), startup, prefix, allowDeviceProbe);
         }
     }
@@ -2579,6 +2591,35 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
         int rowX = 64;
         int rowY = 100;
+        int settingsFocusY = rowY;
+        int settingsScrollOffset = 0;
+
+        switch (gPS5SubSel) {
+            case 1:
+                settingsFocusY = rowY + 36;
+                break;
+            case 2:
+                settingsFocusY = rowY + 72;
+                break;
+            case 3:
+                settingsFocusY = rowY + 108;
+                break;
+            case 4:
+                settingsFocusY = rowY + 140;
+                break;
+            case 5:
+                settingsFocusY = rowY + 172;
+                break;
+            case 6:
+                settingsFocusY = rowY + 250;
+                break;
+            default:
+                settingsFocusY = rowY;
+                break;
+        }
+        if (gPS5SubSel < 7 && settingsFocusY > 352)
+            settingsScrollOffset = settingsFocusY - 352;
+        rowY -= settingsScrollOffset;
 
         // 1. Draw Resolution label and bracketed value
         const char *resText = "Standard";

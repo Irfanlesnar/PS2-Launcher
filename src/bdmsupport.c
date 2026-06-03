@@ -72,6 +72,11 @@ int bdmFindPartition(char *target, const char *name, int write)
 }
 
 static unsigned int BdmGeneration = 0;
+static unsigned int BdmStableGeneration = 0;
+static unsigned int BdmPendingGeneration = 0;
+static clock_t BdmPendingSince = 0;
+
+#define BDM_EVENT_QUIET_MS 600
 
 static void bdmEventHandler(void *packet, void *opt)
 {
@@ -177,8 +182,6 @@ static int bdmNeedsUpdate(item_list_t *itemList)
 
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
 
-    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
-
     // Check for forced refresh from deleting, renaming, or the manual refresh button.
     if (pDeviceData->ForceRefresh != 0) {
         pDeviceData->ForceRefresh = 0;
@@ -188,6 +191,21 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         pDeviceData->bdmULSizePrev = -2;
         result = 1;
     }
+
+    if (result == 0 && BdmStableGeneration != BdmGeneration) {
+        if (BdmPendingGeneration != BdmGeneration) {
+            BdmPendingGeneration = BdmGeneration;
+            BdmPendingSince = clock();
+            return 0;
+        }
+
+        if ((clock() - BdmPendingSince) < (BDM_EVENT_QUIET_MS * (CLOCKS_PER_SEC / 1000)))
+            return 0;
+
+        BdmStableGeneration = BdmGeneration;
+    }
+
+    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
 
     // If the device menu is visible double check the device type and if support for this device type is enabled. If the user switches device support
     // to off for a bdm device we want to hide the menu even though the drivers are still loaded and the device is being detected by bdm.
@@ -217,9 +235,9 @@ static int bdmNeedsUpdate(item_list_t *itemList)
             pOwner->menuItem.visible = 0;
     }
 
-    if (pDeviceData->bdmULSizePrev != -2 && pDeviceData->bdmDeviceTick == BdmGeneration)
+    if (pDeviceData->bdmULSizePrev != -2 && pDeviceData->bdmDeviceTick == BdmStableGeneration)
         return 0;
-    pDeviceData->bdmDeviceTick = BdmGeneration;
+    pDeviceData->bdmDeviceTick = BdmStableGeneration;
 
     // Check if the device has been connected or removed.
     int deviceResult = bdmUpdateDeviceData(itemList);

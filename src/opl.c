@@ -88,6 +88,8 @@ static unsigned char shouldAppsUpdate;
 #define COVER_API_URI "/api.php?action=getcovers&gameid=%s"
 #define COVER_DEBUG_BUILD "cover-api-v25-accept-json-body"
 #define COVER_TEST_THREAD_STACK_SIZE (32 * 1024)
+#define COVER_DOWNLOAD_RETRIES 3
+#define COVER_RETRY_DELAY_US 250000
 
 static unsigned int CompatUpdateComplete, CompatUpdateTotal;
 static unsigned char CompatUpdateStopFlag, CompatUpdateFlags;
@@ -178,6 +180,7 @@ int gAutoRefresh;
 int gEnableNotifications;
 int gEnableArt;
 int gPS5Mode = 1;
+extern int gPS5ActiveTab;
 int gPS5ShowTime = 1;
 int gPS5UISound = 1;
 int gPS5ShowCoverImages = 1;
@@ -786,6 +789,9 @@ void menuDeferredUpdate(void *data)
     if (!mod->support)
         return;
 
+    if (gPS5Mode && gPS5ActiveTab == 1 && mod->support->mode >= BDM_MODE && mod->support->mode < ETH_MODE)
+        return;
+
     // see if we have to update
     if (mod->support->itemNeedsUpdate(mod->support)) {
         updateMenuFromGameList(mod);
@@ -808,6 +814,8 @@ static void menuUpdateHook()
     // schedule updates of all the list handlers
     if (gAutoRefresh) {
         for (i = 0; i < MODE_COUNT; i++) {
+            if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
+                continue;
             if ((list_support[i].support && list_support[i].support->enabled) && ((list_support[i].support->updateDelay > 0) && (frameCounter % list_support[i].support->updateDelay == 0)))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
@@ -816,6 +824,8 @@ static void menuUpdateHook()
     // Schedule updates of all list handlers that are to run every frame, regardless of whether auto refresh is active or not.
     if (frameCounter % MENU_GENERAL_UPDATE_DELAY == 0) {
         for (i = 0; i < MODE_COUNT; i++) {
+            if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
+                continue;
             if ((list_support[i].support && list_support[i].support->enabled) && (list_support[i].support->updateDelay == 0))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
@@ -1857,6 +1867,26 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     return result;
 }
 
+static int coverHasAsset(const char *prefix, const char *folder, const char *startup, const char *suffix);
+
+static int coverDownloadImageToDiskRetry(const char *url, const char *prefix, const char *folder, const char *startup, const char *suffix)
+{
+    int attempt, result = -EIO;
+
+    for (attempt = 0; attempt < COVER_DOWNLOAD_RETRIES && !gPS5CoverDownloadCancel; attempt++) {
+        result = coverDownloadImageToDisk(url, prefix, folder, startup, suffix);
+        if (result >= 0 && coverHasAsset(prefix, folder, startup, suffix))
+            return 0;
+        if (result == -ECANCELED)
+            return result;
+
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Retrying image download...");
+        DelayThread(COVER_RETRY_DELAY_US);
+    }
+
+    return result < 0 ? result : -EIO;
+}
+
 static int coverGameNeedsDownload(item_list_t *support, int id)
 {
     char *prefix = support->itemGetPrefix != NULL ? support->itemGetPrefix(support) : NULL;
@@ -2190,7 +2220,7 @@ static void oplDownloadMissingGameCovers(void)
         prefix = support->itemGetPrefix != NULL ? support->itemGetPrefix(support) : NULL;
 
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Saving cover art...");
-        artResult = coverDownloadImageToDisk(artUrl, prefix, "ART", startup, "COV");
+        artResult = coverDownloadImageToDiskRetry(artUrl, prefix, "ART", startup, "COV");
         if (artResult == -ECANCELED || gPS5CoverDownloadCancel) {
             gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
             snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
@@ -2199,7 +2229,7 @@ static void oplDownloadMissingGameCovers(void)
         }
 
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Saving logo...");
-        logoResult = coverDownloadImageToDisk(logoUrl, prefix, "LOGO", startup, "LOGO");
+        logoResult = coverDownloadImageToDiskRetry(logoUrl, prefix, "LOGO", startup, "LOGO");
         if (logoResult == -ECANCELED || gPS5CoverDownloadCancel) {
             gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
             snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
@@ -2207,7 +2237,7 @@ static void oplDownloadMissingGameCovers(void)
             return;
         }
 
-        if (artResult < 0 || logoResult < 0) {
+        if (artResult < 0 || logoResult < 0 || coverGameNeedsDownload(support, id)) {
             gPS5CoverDownloadFailures++;
             saveFailed++;
             snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not save cover files");

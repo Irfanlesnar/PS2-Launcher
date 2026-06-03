@@ -1049,6 +1049,23 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
+                if (gVMode != gPS5TempVMode) {
+                    if (!guiConfirmVideoModeChange())
+                        return;
+
+                    int oldMode = gVMode;
+                    gVMode = gPS5TempVMode;
+                    applyConfig(-1, -1, 0);
+
+                    extern int guiConfirmVideoMode(void);
+                    if (guiConfirmVideoMode() == 0) {
+                        gVMode = oldMode;
+                        gPS5TempVMode = oldMode;
+                        applyConfig(-1, -1, 0);
+                        return;
+                    }
+                }
+
                 // Commit settings to baseline before persistent save
                 gPS5ShowTime = gPS5TempShowTime;
                 gPS5UISound = gPS5TempUISound;
@@ -1063,7 +1080,7 @@ void menuHandleInputMenu()
                 gPS5SavedVMode = gVMode; // Update baseline to the new saved setting!
 
                 // Save settings permanently to Memory Card
-                saveConfig(CONFIG_OPL | CONFIG_NETWORK | CONFIG_GAME, 1);
+                saveConfig(CONFIG_OPL | CONFIG_NETWORK | CONFIG_GAME, 0);
                 gPS5SaveNotifyFrame = guiFrameId; // Trigger Save Successful Dialog!
                 gPS5SubSel = 0; // Reset focus to Resolution line
             }
