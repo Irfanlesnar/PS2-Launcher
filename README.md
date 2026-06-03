@@ -43,7 +43,7 @@ These improvements help provide a cleaner and more modern visual experience whil
 
 ## Download
 
-- **Latest Release:** https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v1.0.0/PS2-Launcher.ELF
+- **Latest Release:** https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v2.0.0/PS2-Launcher-v2.0.0.ELF
 - **All Releases:** https://github.com/Irfanlesnar/PS2-Launcher/releases
 
 ## Credits
