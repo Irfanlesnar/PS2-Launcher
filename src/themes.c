@@ -539,12 +539,22 @@ static void initStaticImage(const char *themePath, config_set_t *themeConfig, th
 
 // GameImage ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+static item_list_t *resolveThemeGameItem(void *fallbackSupport, int itemId, int *sourceId)
+{
+    item_list_t *support = (item_list_t *)fallbackSupport;
+    oplResolveGameItem(itemId, support, &support, sourceId);
+    return support;
+}
+
 static GSTEXTURE *getGameImageTexture(image_cache_t *cache, void *support, struct submenu_item *item)
 {
     if (gEnableArt) {
-        item_list_t *list = (item_list_t *)support;
-        char *startup = list->itemGetStartup(list, item->id);
-        return cacheGetTexture(cache, list, &item->cache_id[cache->userId], &item->cache_uid[cache->userId], startup);
+        int sourceId;
+        item_list_t *list = resolveThemeGameItem(support, item->id, &sourceId);
+        if (list != NULL) {
+            char *startup = list->itemGetStartup(list, sourceId);
+            return cacheGetTexture(cache, list, &item->cache_id[cache->userId], &item->cache_uid[cache->userId], startup);
+        }
     }
 
     return NULL;
@@ -1190,11 +1200,18 @@ typedef struct {
     GSTEXTURE logoTex;
     int hasLogoTex; // 0 = not loaded, 1 = loaded, -1 = load failed
     char devicePrefix[32];
+    unsigned int lastCoverFrame;
+    unsigned int lastLogoFrame;
 } net_req_t;
 
-#define MAX_NET_CACHED_GAMES 64
-static net_req_t gNetCache[MAX_NET_CACHED_GAMES];
+#define NET_CACHE_INITIAL_CAPACITY 64
+#define PS5_TEXTURE_KEEP_FRAMES 2
+#define PS5_MAX_TEXTURE_LOADS_PER_FRAME 1
+static net_req_t *gNetCache = NULL;
 static int gNetCacheCount = 0;
+static int gNetCacheCapacity = 0;
+static unsigned int gPS5TextureFrame = 0;
+static int gPS5TextureLoadsThisFrame = 0;
 static char gNetDebugMsg[256] = "Net Status: System ready.";
 
 extern void *_gp;
@@ -1222,6 +1239,74 @@ static int loadPS5CoverTexture(GSTEXTURE *texture, const char *path)
         *pDot = '\0';
 
     return texDiscoverLoad(texture, pathNoExt, -1);
+}
+
+static void unloadPS5CoverTexture(net_req_t *entry)
+{
+    if (entry && entry->hasTex == 1) {
+        rmUnloadTexture(&entry->coverTex);
+        texFree(&entry->coverTex);
+        entry->hasTex = 0;
+    }
+}
+
+static void unloadPS5LogoTexture(net_req_t *entry)
+{
+    if (entry && entry->hasLogoTex == 1) {
+        rmUnloadTexture(&entry->logoTex);
+        texFree(&entry->logoTex);
+        entry->hasLogoTex = 0;
+    }
+}
+
+static int ensureNetCacheCapacity(void)
+{
+    net_req_t *newCache;
+    int newCapacity;
+
+    if (gNetCacheCount < gNetCacheCapacity)
+        return 1;
+
+    newCapacity = gNetCacheCapacity ? gNetCacheCapacity * 2 : NET_CACHE_INITIAL_CAPACITY;
+    newCache = (net_req_t *)realloc(gNetCache, sizeof(net_req_t) * newCapacity);
+    if (!newCache)
+        return 0;
+
+    gNetCache = newCache;
+    memset(&gNetCache[gNetCacheCapacity], 0, sizeof(net_req_t) * (newCapacity - gNetCacheCapacity));
+    gNetCacheCapacity = newCapacity;
+    return 1;
+}
+
+static net_req_t *findNetCacheEntry(const char *title)
+{
+    int i;
+
+    if (!title)
+        return NULL;
+
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (strcmp(gNetCache[i].gameTitle, title) == 0)
+            return &gNetCache[i];
+    }
+
+    return NULL;
+}
+
+static void sweepPS5TextureCache(void)
+{
+    int i;
+
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (gNetCache[i].hasTex == 1 &&
+            gNetCache[i].lastCoverFrame + PS5_TEXTURE_KEEP_FRAMES < gPS5TextureFrame) {
+            unloadPS5CoverTexture(&gNetCache[i]);
+        }
+        if (gNetCache[i].hasLogoTex == 1 &&
+            gNetCache[i].lastLogoFrame + PS5_TEXTURE_KEEP_FRAMES < gPS5TextureFrame) {
+            unloadPS5LogoTexture(&gNetCache[i]);
+        }
+    }
 }
 
 static void getCleanGameName(const char *src, char *dst, int max_len) {
@@ -1422,39 +1507,8 @@ static void findCoverInCoversFolder(const char *gameTitle, const char *startup, 
             strcpy(prefix, "mass0:");
         }
 
-        // Try [prefix]/ART/[startup]_COV.png
         snprintf(matchedPath, maxLen, "%s/ART/%s_COV.png", prefix, startup);
         int fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        // Try [prefix]/ART/[startup]_COV.jpg
-        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.jpg", prefix, startup);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        // Try lowercase
-        char startupLower[32];
-        int i;
-        for (i = 0; startup[i]; i++) {
-            startupLower[i] = (startup[i] >= 'A' && startup[i] <= 'Z') ? (startup[i] - 'A' + 'a') : startup[i];
-        }
-        startupLower[i] = '\0';
-
-        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.png", prefix, startupLower);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.jpg", prefix, startupLower);
-        fd = debugOpenProbe(matchedPath);
         if (fd >= 0) {
             close(fd);
             return;
@@ -1480,71 +1534,29 @@ static void findLogoInLogosFolder(const char *startup, const char *devicePrefix,
         strcpy(prefix, "mass0:");
     }
 
-    char logoName[256];
-    snprintf(logoName, sizeof(logoName), "%s_LOGO", startup);
-
-    // Only try LOGO, logo, ART, art folders under the active prefix (maximum 16 extremely fast open() probes)
-    const char *folders[] = {"LOGO", "logo", "ART", "art"};
-    int fIdx;
-    int fd;
-    for (fIdx = 0; fIdx < 4; fIdx++) {
-        // Try png
-        snprintf(matchedPath, maxLen, "%s/%s/%s.png", prefix, folders[fIdx], logoName);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        // Try jpg
-        snprintf(matchedPath, maxLen, "%s/%s/%s.jpg", prefix, folders[fIdx], logoName);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        // Try lowercase
-        char logoNameLower[256];
-        int i;
-        for (i = 0; logoName[i]; i++) {
-            logoNameLower[i] = (logoName[i] >= 'A' && logoName[i] <= 'Z') ? (logoName[i] - 'A' + 'a') : logoName[i];
-        }
-        logoNameLower[i] = '\0';
-
-        snprintf(matchedPath, maxLen, "%s/%s/%s.png", prefix, folders[fIdx], logoNameLower);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-
-        snprintf(matchedPath, maxLen, "%s/%s/%s.jpg", prefix, folders[fIdx], logoNameLower);
-        fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
+    snprintf(matchedPath, maxLen, "%s/LOGO/%s_LOGO.png", prefix, startup);
+    int fd = debugOpenProbe(matchedPath);
+    if (fd >= 0) {
+        close(fd);
+        return;
     }
 
     matchedPath[0] = '\0';
 }
 
 static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix, int allowDeviceProbe) {
-    int i;
     char matchedPath[256];
     u8 cardR = 100, cardG = 100, cardB = 100;
     u8 bgR = 24, bgG = 24, bgB = 24;
 
-    for (i = 0; i < gNetCacheCount; i++) {
-        if (strcmp(gNetCache[i].gameTitle, title) == 0) {
-            return;
-        }
-    }
+    if (findNetCacheEntry(title))
+        return;
 
-    if (gNetCacheCount >= MAX_NET_CACHED_GAMES) return;
+    if (!ensureNetCacheCapacity())
+        return;
 
     int idx = gNetCacheCount++;
+    memset(&gNetCache[idx], 0, sizeof(gNetCache[idx]));
     strncpy(gNetCache[idx].gameTitle, title, 63);
     gNetCache[idx].gameTitle[63] = '\0';
     getCleanGameName(title, gNetCache[idx].cleanName, 64); if (startup) { strncpy(gNetCache[idx].startup, startup, sizeof(gNetCache[idx].startup) - 1); gNetCache[idx].startup[sizeof(gNetCache[idx].startup) - 1] = '\0'; } else { gNetCache[idx].startup[0] = '\0'; }
@@ -1984,16 +1996,8 @@ static void clearNetCache(void)
 {
     int i;
     for (i = 0; i < gNetCacheCount; i++) {
-        if (gNetCache[i].hasTex == 1) {
-            rmUnloadTexture(&gNetCache[i].coverTex);
-            texFree(&gNetCache[i].coverTex);
-            gNetCache[i].hasTex = 0;
-        }
-        if (gNetCache[i].hasLogoTex == 1) {
-            rmUnloadTexture(&gNetCache[i].logoTex);
-            texFree(&gNetCache[i].logoTex);
-            gNetCache[i].hasLogoTex = 0;
-        }
+        unloadPS5CoverTexture(&gNetCache[i]);
+        unloadPS5LogoTexture(&gNetCache[i]);
     }
     gNetCacheCount = 0;
     gPS5UserHasNavigated = 0;
@@ -2113,6 +2117,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 {
     // Initialize Fonts and Mask Textures if not loaded
     initPS5MaskTextures();
+    gPS5TextureFrame++;
+    gPS5TextureLoadsThisFrame = 0;
 
     static unsigned int lastBdmEventGeneration = 0;
     static unsigned int pendingBdmEventGeneration = 0;
@@ -2137,7 +2143,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
     int allowDeviceProbe = 1;
     if (item && gPS5ActiveTab == 0) {
         const char *startup = NULL;
-        item_list_t *list = (item_list_t *)menu->item->userdata;
+        int sourceId;
+        item_list_t *list = resolveThemeGameItem(menu->item->userdata, item->item.id, &sourceId);
         if (list) {
             int isBdmMode = list->mode >= BDM_MODE && list->mode < ETH_MODE;
             if (list->itemGetPrefix) {
@@ -2147,7 +2154,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 isUnplugged = 1;
             }
             if (!isUnplugged && list->itemGetStartup) {
-                startup = list->itemGetStartup(list, item->item.id);
+                startup = list->itemGetStartup(list, sourceId);
             }
         }
 
@@ -2238,53 +2245,48 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 logoStableFrames++;
             }
 
-            net_req_t *selCache = NULL;
-            int cIdx;
             if (gPS5ShowCoverImages) {
-                for (cIdx = 0; cIdx < gNetCacheCount; cIdx++) {
-                    if (strcmp(gNetCache[cIdx].gameTitle, selTitle) == 0) {
-                        selCache = &gNetCache[cIdx];
-                        break;
-                    }
-                }
-            }
+                net_req_t *selCache = findNetCacheEntry(selTitle);
 
-            if (!gPS5ShowCoverImages || !selectedVisibleInAlpha) {
-                logoAlpha = 0.0f;
-            } else if (selCache && selCache->logoPath[0] != '\0') {
-                if (selCache->hasLogoTex == 0 && !isUnplugged && logoStableFrames >= 6) {
-                    if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
-                        selCache->hasLogoTex = 1;
-                        logoAlpha = 0.0f; // Reset to 0 to ensure clean fade-in after load completes
-                    } else {
-                        selCache->hasLogoTex = -1;
-                    }
-                }
-                
-                if (selCache->hasLogoTex == 1) {
-                    // Smooth asymptotic ease-in-out transition over roughly 12 frames
-                    logoAlpha += (1.0f - logoAlpha) * 0.08f;
-                    
-                    float logoAspect = 1.0f;
-                    if (selCache->logoTex.Width > 0 && selCache->logoTex.Height > 0) {
-                        logoAspect = (float)selCache->logoTex.Width / (float)selCache->logoTex.Height;
+                if (!gPS5ShowCoverImages || !selectedVisibleInAlpha) {
+                    logoAlpha = 0.0f;
+                } else if (selCache && selCache->logoPath[0] != '\0') {
+                    selCache->lastLogoFrame = gPS5TextureFrame;
+                    if (selCache->hasLogoTex == 0 && !isUnplugged && logoStableFrames >= 6 && gPS5TextureLoadsThisFrame < PS5_MAX_TEXTURE_LOADS_PER_FRAME) {
+                        gPS5TextureLoadsThisFrame++;
+                        if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
+                            selCache->hasLogoTex = 1;
+                            logoAlpha = 0.0f; // Reset to 0 to ensure clean fade-in after load completes
+                        } else {
+                            selCache->hasLogoTex = -1;
+                        }
                     }
                     
-                    int lw = 500;
-                    int lh = 250;
-                    if (logoAspect < 2.0f) {
-                        lw = (int)((float)lh * logoAspect);
-                    } else {
-                        lh = (int)((float)lw / logoAspect);
+                    if (selCache->hasLogoTex == 1) {
+                        // Smooth asymptotic ease-in-out transition over roughly 12 frames
+                        logoAlpha += (1.0f - logoAlpha) * 0.08f;
+                        
+                        float logoAspect = 1.0f;
+                        if (selCache->logoTex.Width > 0 && selCache->logoTex.Height > 0) {
+                            logoAspect = (float)selCache->logoTex.Width / (float)selCache->logoTex.Height;
+                        }
+                        
+                        int lw = 500;
+                        int lh = 250;
+                        if (logoAspect < 2.0f) {
+                            lw = (int)((float)lh * logoAspect);
+                        } else {
+                            lh = (int)((float)lw / logoAspect);
+                        }
+                        
+                        // Map logoAlpha float [0.0 - 1.0] to OPL Alpha channel byte [0 - 128 (solid)]
+                        int alphaVal = (int)(logoAlpha * 128.0f);
+                        if (alphaVal > 128) alphaVal = 128;
+                        if (alphaVal < 0) alphaVal = 0;
+                        
+                        // Render anchored at bottom-right (640, 480) with dynamic smooth fade-in
+                        rmDrawPixmap(&selCache->logoTex, 640, 480, ALIGN_BOTTOM | ALIGN_RIGHT, lw, lh, SCALING_RATIO, GS_SETREG_RGBA(0x80, 0x80, 0x80, alphaVal));
                     }
-                    
-                    // Map logoAlpha float [0.0 - 1.0] to OPL Alpha channel byte [0 - 128 (solid)]
-                    int alphaVal = (int)(logoAlpha * 128.0f);
-                    if (alphaVal > 128) alphaVal = 128;
-                    if (alphaVal < 0) alphaVal = 0;
-                    
-                    // Render anchored at bottom-right (640, 480) with dynamic smooth fade-in
-                    rmDrawPixmap(&selCache->logoTex, 640, 480, ALIGN_BOTTOM | ALIGN_RIGHT, lw, lh, SCALING_RATIO, GS_SETREG_RGBA(0x80, 0x80, 0x80, alphaVal));
                 }
             }
 
@@ -2394,21 +2396,17 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                     u8 cR, cG, cB, bR, bG, bB;
                     const char *gameTitleText = submenuItemGetText(&curr_item->item);
                     int hasCover = 0;
-                    int cacheIdx;
                     net_req_t *cacheEntry = NULL;
 
                     getGameColors(gameTitleText, &cR, &cG, &cB, &bR, &bG, &bB);
 
-                    for (cacheIdx = 0; cacheIdx < gNetCacheCount; cacheIdx++) {
-                        if (strcmp(gNetCache[cacheIdx].gameTitle, gameTitleText) == 0) {
-                            cacheEntry = &gNetCache[cacheIdx];
-                            break;
-                        }
-                    }
+                    cacheEntry = findNetCacheEntry(gameTitleText);
 
                     if (cacheEntry) {
                         if (gPS5ShowGamesLogo && cacheEntry->state == 2 && cacheEntry->coverPath[0] != '\0') {
-                            if (cacheEntry->hasTex == 0 && !isUnplugged) {
+                            cacheEntry->lastCoverFrame = gPS5TextureFrame;
+                            if (cacheEntry->hasTex == 0 && !isUnplugged && gPS5TextureLoadsThisFrame < PS5_MAX_TEXTURE_LOADS_PER_FRAME) {
+                                gPS5TextureLoadsThisFrame++;
                                 if (loadPS5CoverTexture(&cacheEntry->coverTex, cacheEntry->coverPath) >= 0)
                                     cacheEntry->hasTex = 1;
                                 else
@@ -2420,7 +2418,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         char *prefix = "";
                         const char *startup = NULL;
                         int allowCardDeviceProbe = allowDeviceProbe;
-                        item_list_t *list = (item_list_t *)menu->item->userdata;
+                        int sourceId;
+                        item_list_t *list = resolveThemeGameItem(menu->item->userdata, curr_item->item.id, &sourceId);
                         if (list) {
                             int isBdmMode = list->mode >= BDM_MODE && list->mode < ETH_MODE;
                             if (list->itemGetPrefix) {
@@ -2429,7 +2428,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                             if (isBdmMode && (prefix == NULL || prefix[0] == '\0' || (gBdmDisconnected && bdmIsUsbPath(prefix))))
                                 allowCardDeviceProbe = 0;
                             if (list->itemGetStartup) {
-                                startup = list->itemGetStartup(list, curr_item->item.id);
+                                startup = list->itemGetStartup(list, sourceId);
                             }
                         }
                         triggerNetFetch(gameTitleText, startup, prefix, allowCardDeviceProbe);
@@ -2513,10 +2512,11 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 fntRenderString(gPS5TitleFont, 50, 316, ALIGN_LEFT, 0, 0, fullTitle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
                 // Developer name (using Game ID lookup)
-                item_list_t *support = (item_list_t *)menu->item->userdata;
+                int sourceId;
+                item_list_t *support = resolveThemeGameItem(menu->item->userdata, selectedVisibleItem->item.id, &sourceId);
                 const char *startup = NULL;
                 if (support && support->itemGetStartup && !isUnplugged) {
-                    startup = support->itemGetStartup(support, selectedVisibleItem->item.id);
+                    startup = support->itemGetStartup(support, sourceId);
                 }
                 fntRenderString(gPS5RegFont, 50, 354, ALIGN_LEFT, 0, 0, getGameDeveloper(startup, fullTitle), GS_SETREG_RGBA(0xF0, 0xF0, 0xF0, 0x56));
             } else {
@@ -2576,6 +2576,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 }
             }
         }
+        sweepPS5TextureCache();
     } else {
         extern int gPS5SubSel;
         extern int gPS5TempVMode;
@@ -2625,7 +2626,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         const char *resText = "Standard";
         if (gPS5TempVMode == 3) resText = "Progressive 480p";
         else if (gPS5TempVMode == 10) resText = "720p";
-        else if (gPS5TempVMode == 11) resText = "1080p";
+        else if (gPS5TempVMode == 11) resText = "1080i";
 
         char valStr[64];
         snprintf(valStr, sizeof(valStr), "< %s >", resText);
@@ -2935,8 +2936,10 @@ static void initItemsList(const char *themePath, config_set_t *themeConfig, them
 static void drawItemText(struct menu_list *menu, struct submenu_list *item, config_set_t *config, struct theme_element *elem)
 {
     if (item) {
-        item_list_t *support = menu->item->userdata;
-        fntRenderString(elem->font, elem->posX, elem->posY, elem->aligned, 0, 0, support->itemGetStartup(support, item->item.id), elem->color);
+        int sourceId;
+        item_list_t *support = resolveThemeGameItem(menu->item->userdata, item->item.id, &sourceId);
+        if (support != NULL)
+            fntRenderString(elem->font, elem->posX, elem->posY, elem->aligned, 0, 0, support->itemGetStartup(support, sourceId), elem->color);
     }
 }
 
@@ -3177,16 +3180,8 @@ static void thmFree(theme_t *theme)
     if (theme) {
         int i;
         for (i = 0; i < gNetCacheCount; i++) {
-            if (gNetCache[i].hasTex == 1) {
-                rmUnloadTexture(&gNetCache[i].coverTex);
-                texFree(&gNetCache[i].coverTex);
-                gNetCache[i].hasTex = 0;
-            }
-            if (gNetCache[i].hasLogoTex == 1) {
-                rmUnloadTexture(&gNetCache[i].logoTex);
-                texFree(&gNetCache[i].logoTex);
-                gNetCache[i].hasLogoTex = 0;
-            }
+            unloadPS5CoverTexture(&gNetCache[i]);
+            unloadPS5LogoTexture(&gNetCache[i]);
         }
         gNetCacheCount = 0;
         // free elements
@@ -3584,7 +3579,6 @@ void thmEnd(void)
 void playPS5LaunchTransition(const char *gameTitle)
 {
     sfxPlay(SFX_GAME_LAUNCH);
-    int cacheIdx;
     net_req_t *cacheEntry = NULL;
     u8 cR = 16, cG = 16, cB = 16;
     u8 bR = 16, bG = 16, bB = 16;
@@ -3592,12 +3586,7 @@ void playPS5LaunchTransition(const char *gameTitle)
     extern int gPS5Mode;
     if (gPS5Mode) {
         getGameColors(gameTitle, &cR, &cG, &cB, &bR, &bG, &bB);
-        for (cacheIdx = 0; cacheIdx < gNetCacheCount; cacheIdx++) {
-            if (strcmp(gNetCache[cacheIdx].gameTitle, gameTitle) == 0) {
-                cacheEntry = &gNetCache[cacheIdx];
-                break;
-            }
-        }
+        cacheEntry = findNetCacheEntry(gameTitle);
     }
 
     int frame;

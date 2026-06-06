@@ -218,6 +218,8 @@ void oplSetGameCoverActiveSupport(item_list_t *support);
 void oplMarkGameCoverStatsDirty(void);
 void oplStartGameCoverDownload(void);
 void oplAbortGameCoverDownload(void);
+int oplMakeGameItemId(int mode, int id);
+int oplResolveGameItem(int itemId, item_list_t *fallback, item_list_t **support, int *sourceId);
 
 // These prefixes are relative to the device's name (meaning that they do not include the device name).
 extern char gBDMPrefix[32];

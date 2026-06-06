@@ -9,7 +9,7 @@
 
 #include "httpclient.h"
 
-#define HTTP_CONNECT_TIMEOUT_SEC 5
+#define HTTP_CONNECT_TIMEOUT_SEC 15
 
 void HttpCloseConnection(s32 HttpSocket)
 {
@@ -348,6 +348,7 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
 
     sprintf(buffer, "GET %s HTTP/1.%d\r\n"
                     "Accept: text/html, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
                     "User-Agent: %s\r\n"
                     "Host: %s\r\n",
             uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host);
@@ -378,6 +379,7 @@ int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *h
 
     sprintf(buffer, "GET %s HTTP/1.%d\r\n"
                     "Accept: image/png, image/jpeg, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
                     "User-Agent: %s\r\n"
                     "Host: %s\r\n"
                     "Range: bytes=%lu-%lu\r\n",
@@ -393,9 +395,8 @@ int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *h
 
     if (SendData(HttpSocket, buffer, length) == length) {
         result = HttpGetResponse(HttpSocket, mode, output, out_len);
-    } else {
-        result = -1;
-    }
+    } else
+        result = -EPIPE;
 
     return result;
 }
@@ -407,6 +408,7 @@ int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *h
 
     sprintf(buffer, "POST %s HTTP/1.%d\r\n"
                     "Accept: application/json, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
                     "Content-Type: application/json\r\n"
                     "User-Agent: %s\r\n"
                     "Host: %s\r\n"

@@ -256,21 +256,21 @@ int hddDetectNonSonyFileSystem()
         return -1;
     }
 
-    // Check for MBR signature.
-    if (pSectorData[0x1FE] == 0x55 && pSectorData[0x1FF] == 0xAA) {
-        // Found MBR partition type.
-        LOG("hddDetectNonSonyFileSystem: found MBR partition data\n");
-        result = 1;
-    } else if (strncmp((const char *)&pSectorData[0x200], "EFI PART", 8) == 0) {
-        // Found GPT partition type.
-        LOG("hddDetectNonSonyFileSystem: found GPT partition data\n");
-        result = 1;
-    } else if (strncmp((const char *)&pSectorData[4], "APA", 3) == 0) {
+    // APA magic is stronger than a generic MBR signature. Some HDL/WinHIIP-style disks can still carry 0x55AA.
+    if (strncmp((const char *)&pSectorData[4], "APA", 3) == 0) {
         // Found APA partition type.
         LOG("hddDetectNonSonyFileSystem: found APA partition data\n");
         APA_TRACE("APA_TRACE hddDetectNonSonyFileSystem: accepted APA signature bytes='%c%c%c'\n",
             pSectorData[4], pSectorData[5], pSectorData[6]);
         result = 0;
+    } else if (strncmp((const char *)&pSectorData[0x200], "EFI PART", 8) == 0) {
+        // Found GPT partition type.
+        LOG("hddDetectNonSonyFileSystem: found GPT partition data\n");
+        result = 1;
+    } else if (pSectorData[0x1FE] == 0x55 && pSectorData[0x1FF] == 0xAA) {
+        // Found MBR partition type.
+        LOG("hddDetectNonSonyFileSystem: found MBR partition data\n");
+        result = 1;
     } else {
         // Even though we didn't find evidence of non-APA partition data, if we load the APA irx module
         // it will write to the drive and potentially corrupt any data that might be there.
