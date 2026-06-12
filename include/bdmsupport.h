@@ -2,6 +2,7 @@
 #define __BDM_SUPPORT_H
 
 #include "include/iosupport.h"
+#include <time.h>
 
 #define BDM_MODE_UPDATE_DELAY MENU_UPD_DELAY_GENREFRESH
 
@@ -37,9 +38,11 @@ typedef struct
     int bdmDeviceTick;      // Used alongside BdmGeneration to tell if device data needs to be refreshed
     int bdmHddIsLBA48;      // 1 if the HDD supports LBA48, 0 if the HDD only supports LBA28
     int ataHighestUDMAMode; // Highest UDMA mode supported by the HDD
+    clock_t bdmScanReadyAt;
     unsigned char ThemesLoaded;
     unsigned char LanguagesLoaded;
     unsigned char ForceRefresh;
+    unsigned char DeferredScan;
 } bdm_device_data_t;
 
 void bdmInit(item_list_t *itemList);
@@ -52,5 +55,7 @@ void bdmEnumerateDevices();
 
 void bdmResolveLBA_UDMA(bdm_device_data_t *pDeviceData);
 int bdmIsUsbPath(const char *path);
+int bdmIsUsbPathDisconnected(const char *path);
+int bdmIsDeviceLoading(void);
 
 #endif

@@ -8,6 +8,13 @@
 static SifRpcClientData_t SifRpcClient;
 static unsigned char RpcTxBuffer[sizeof(struct HttpClientSendPostJsonArgs)] ALIGNED(64);
 static unsigned char RpcRxBuffer[64] ALIGNED(64);
+static int LastStatusCode;
+static int LastContentLength;
+static int LastRequestLength;
+static int LastSendLength;
+static int LastSelectResult;
+static int LastRecvResult;
+static int LastSocketError;
 
 static void HttpAsyncRpcEnd(void *arg)
 {
@@ -26,6 +33,41 @@ int HttpInit(void)
 void HttpDeinit(void)
 {
     memset(&SifRpcClient, 0, sizeof(SifRpcClientData_t));
+}
+
+int HttpGetLastStatusCode(void)
+{
+    return LastStatusCode;
+}
+
+int HttpGetLastContentLength(void)
+{
+    return LastContentLength;
+}
+
+int HttpGetLastRequestLength(void)
+{
+    return LastRequestLength;
+}
+
+int HttpGetLastSendLength(void)
+{
+    return LastSendLength;
+}
+
+int HttpGetLastSelectResult(void)
+{
+    return LastSelectResult;
+}
+
+int HttpGetLastRecvResult(void)
+{
+    return LastRecvResult;
+}
+
+int HttpGetLastSocketError(void)
+{
+    return LastSocketError;
 }
 
 int HttpEstabConnection(char *server, u16 port)
@@ -75,6 +117,13 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
 
     if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_GET_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendGetArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
         result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
+        LastStatusCode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->statusCode;
+        LastContentLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->contentLength;
+        LastRequestLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->requestLength;
+        LastSendLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->sendLength;
+        LastSelectResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->selectResult;
+        LastRecvResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->recvResult;
+        LastSocketError = ((struct HttpClientSendGetResult *)RpcRxBuffer)->socketError;
         *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
         *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;
     }
@@ -104,6 +153,13 @@ int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *h
 
     if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendGetRangeArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
         result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
+        LastStatusCode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->statusCode;
+        LastContentLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->contentLength;
+        LastRequestLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->requestLength;
+        LastSendLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->sendLength;
+        LastSelectResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->selectResult;
+        LastRecvResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->recvResult;
+        LastSocketError = ((struct HttpClientSendGetResult *)RpcRxBuffer)->socketError;
         *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
         *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;
     }
@@ -136,6 +192,13 @@ int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *h
 
     if ((result = SifCallRpc(&SifRpcClient, HTTP_CLIENT_CMD_SEND_POST_JSON_REQ, 0, RpcTxBuffer, sizeof(struct HttpClientSendPostJsonArgs), RpcRxBuffer, sizeof(struct HttpClientSendGetResult), NULL, NULL)) >= 0) {
         result = ((struct HttpClientSendGetResult *)RpcRxBuffer)->result;
+        LastStatusCode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->statusCode;
+        LastContentLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->contentLength;
+        LastRequestLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->requestLength;
+        LastSendLength = ((struct HttpClientSendGetResult *)RpcRxBuffer)->sendLength;
+        LastSelectResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->selectResult;
+        LastRecvResult = ((struct HttpClientSendGetResult *)RpcRxBuffer)->recvResult;
+        LastSocketError = ((struct HttpClientSendGetResult *)RpcRxBuffer)->socketError;
         *mode = ((struct HttpClientSendGetResult *)RpcRxBuffer)->mode;
         *out_len = ((struct HttpClientSendGetResult *)RpcRxBuffer)->out_len;
     }

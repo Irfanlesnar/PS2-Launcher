@@ -11,6 +11,8 @@ extern void *logo_png;
 extern void *cross_png;
 extern void *square_png;
 extern void *circle_png;
+extern void *triangle_png;
+extern void *focus_png;
 void *usb_png = &loader_png;
 void *usb_bd_png = &loader_png;
 void *ilk_bd_png = &loader_png;
@@ -27,7 +29,6 @@ void *Index_4_png = &loader_png;
 
 void *left_png = &loader_png;
 void *right_png = &loader_png;
-void *triangle_png = &loader_png;
 void *select_png = &loader_png;
 void *start_png = &loader_png;
 void *up_png = &loader_png;
@@ -191,6 +192,7 @@ static texture_t internalDefault[TEXTURES_COUNT] = {
     {VMODE_NTSC, "Vmode_ntsc", &Vmode_ntsc_png},
     {VMODE_PAL, "Vmode_pal", &Vmode_pal_png},
     {LOGO_PICTURE, "logo", &logo_png},
+    {FOCUS_ICON, "focus", &focus_png},
     {CASE_OVERLAY, "case", &case_png},
     {APPS_CASE_OVERLAY, "apps_case", &apps_case_png},
 };

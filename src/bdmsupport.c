@@ -21,8 +21,8 @@
 #include <fileXio_rpc.h> // fileXioIoctl, fileXioDevctl
 #include <sifcmd.h>
 
-volatile int gBdmDisconnected = 0;
 volatile unsigned int gBdmEventGeneration = 0;
+volatile int gBdmDeviceLoading = 0;
 
 static int iLinkModLoaded = 0;
 static int mx4sioModLoaded = 0;
@@ -76,7 +76,8 @@ static unsigned int BdmStableGeneration = 0;
 static unsigned int BdmPendingGeneration = 0;
 static clock_t BdmPendingSince = 0;
 
-#define BDM_EVENT_QUIET_MS 600
+#define BDM_EVENT_QUIET_MS      3000
+#define BDM_FIRST_SCAN_DELAY_MS 1500
 
 static void bdmEventHandler(void *packet, void *opt)
 {
@@ -85,11 +86,27 @@ static void bdmEventHandler(void *packet, void *opt)
     if (packet) {
         SifCmdHeader_t *header = (SifCmdHeader_t *)packet;
         if (header->opt == 0) { // BDM_EVENT_CB_UMOUNT
-            gBdmDisconnected = 1;
+            gBdmDeviceLoading = 0;
         } else if (header->opt == 1) { // BDM_EVENT_CB_MOUNT
-            gBdmDisconnected = 0;
+            gBdmDeviceLoading = 1;
         }
     }
+}
+
+int bdmIsDeviceLoading(void)
+{
+    int i;
+
+    if (gBdmDeviceLoading || BdmStableGeneration != BdmGeneration)
+        return 1;
+
+    for (i = 0; i < MAX_BDM_DEVICES; i++) {
+        bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[i].priv;
+        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0)
+            return 1;
+    }
+
+    return 0;
 }
 
 static void bdmLoadBlockDeviceModules(void)
@@ -163,6 +180,8 @@ void bdmInit(item_list_t *itemList)
     pDeviceData->bdmModifiedDVDPrev = 0;
     pDeviceData->bdmGameCount = 0;
     pDeviceData->bdmGames = NULL;
+    pDeviceData->bdmScanReadyAt = 0;
+    pDeviceData->DeferredScan = 0;
     configGetInt(configGetByType(CONFIG_OPL), "usb_frames_delay", &itemList->delay);
     itemList->enabled = 1;
 }
@@ -189,6 +208,8 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
+        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->DeferredScan = 0;
         result = 1;
     }
 
@@ -196,11 +217,14 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         if (BdmPendingGeneration != BdmGeneration) {
             BdmPendingGeneration = BdmGeneration;
             BdmPendingSince = clock();
+            gBdmDeviceLoading = 1;
             return 0;
         }
 
-        if ((clock() - BdmPendingSince) < (BDM_EVENT_QUIET_MS * (CLOCKS_PER_SEC / 1000)))
+        if ((clock() - BdmPendingSince) < (BDM_EVENT_QUIET_MS * (CLOCKS_PER_SEC / 1000))) {
+            gBdmDeviceLoading = 1;
             return 0;
+        }
 
         BdmStableGeneration = BdmGeneration;
     }
@@ -235,14 +259,39 @@ static int bdmNeedsUpdate(item_list_t *itemList)
             pOwner->menuItem.visible = 0;
     }
 
-    if (pDeviceData->bdmULSizePrev != -2 && pDeviceData->bdmDeviceTick == BdmStableGeneration)
+    if (pDeviceData->DeferredScan != 0) {
+        if (clock() < pDeviceData->bdmScanReadyAt) {
+            gBdmDeviceLoading = 1;
+            return 0;
+        }
+
+        pDeviceData->DeferredScan = 0;
+        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->bdmModifiedCDPrev = 0;
+        pDeviceData->bdmModifiedDVDPrev = 0;
+        pDeviceData->bdmULSizePrev = -2;
+        result = 1;
+    }
+
+    if (pDeviceData->bdmULSizePrev != -2 && pDeviceData->bdmDeviceTick == BdmStableGeneration) {
+        gBdmDeviceLoading = 0;
         return 0;
+    }
     pDeviceData->bdmDeviceTick = BdmStableGeneration;
 
     // Check if the device has been connected or removed.
     int deviceResult = bdmUpdateDeviceData(itemList);
-    if (deviceResult == 0 && result == 0)
+    if (deviceResult > 0 && result == 0) {
+        pDeviceData->DeferredScan = 1;
+        pDeviceData->bdmScanReadyAt = clock() + (BDM_FIRST_SCAN_DELAY_MS * (CLOCKS_PER_SEC / 1000));
+        gBdmDeviceLoading = 1;
+        sfxPlay(SFX_BD_CONNECT);
         return 0;
+    }
+    if (deviceResult == 0 && result == 0) {
+        gBdmDeviceLoading = 0;
+        return 0;
+    }
     if (deviceResult != 0)
         result = deviceResult;
 
@@ -303,10 +352,12 @@ static int bdmUpdateGameList(item_list_t *itemList)
         pDeviceData->bdmGames = NULL;
         pDeviceData->bdmGameCount = 0;
         pDeviceData->bdmULSizePrev = -2;
+        gBdmDeviceLoading = 0;
         return 0;
     }
 
     sbReadList(&pDeviceData->bdmGames, pDeviceData->bdmPrefix, &pDeviceData->bdmULSizePrev, &pDeviceData->bdmGameCount);
+    gBdmDeviceLoading = 0;
     return pDeviceData->bdmGameCount;
 }
 
@@ -658,7 +709,7 @@ static int bdmGetImage(item_list_t *itemList, char *folder, int isRelative, char
     if (isRelative && pDeviceData->bdmPrefix[0] == '\0')
         return -1;
 
-    if (isRelative && gBdmDisconnected && pDeviceData->bdmDeviceType == BDM_TYPE_USB)
+    if (isRelative && bdmIsUsbPathDisconnected(pDeviceData->bdmPrefix))
         return -1;
 
     if (isRelative)
@@ -885,6 +936,33 @@ int bdmIsUsbPath(const char *path)
     return pDeviceData != NULL && pDeviceData->bdmDeviceType == BDM_TYPE_USB;
 }
 
+int bdmIsUsbPathDisconnected(const char *path)
+{
+    int index = 0;
+    int hasIndex = 0;
+    const char *p;
+
+    if (path == NULL || strncmp(path, "mass", 4) != 0)
+        return 0;
+
+    p = path + 4;
+    while (*p >= '0' && *p <= '9') {
+        hasIndex = 1;
+        index = index * 10 + (*p - '0');
+        p++;
+    }
+
+    if (!hasIndex || *p != ':' || index < 0 || index >= MAX_BDM_DEVICES)
+        return 0;
+
+    bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[index].priv;
+    if (pDeviceData == NULL || pDeviceData->bdmDeviceType != BDM_TYPE_USB)
+        return 0;
+
+    opl_io_module_t *pOwner = (opl_io_module_t *)bdmDeviceList[index].owner;
+    return pDeviceData->bdmPrefix[0] == '\0' || (pOwner != NULL && pOwner->menuItem.visible == 0);
+}
+
 int bdmUpdateDeviceData(item_list_t *itemList)
 {
     char path[16] = {0};
@@ -902,11 +980,7 @@ int bdmUpdateDeviceData(item_list_t *itemList)
     // Format the device path and try to open the device.
     sprintf(path, "mass%d:/", itemList->mode);
     int dir;
-    if (gBdmDisconnected && pDeviceData->bdmDeviceType == BDM_TYPE_USB) {
-        dir = -1; // Physically disconnected! Bypassing fileXioDopen to prevent deadlock/lag!
-    } else {
-        dir = fileXioDopen(path);
-    }
+    dir = fileXioDopen(path);
     // LOG("opendir %s -> %d\n", path, dir);
 
     // If we opened the device and the menu isn't visible (OR is visible but hasn't been initialized ex: manual device start) initialize device info.
@@ -968,6 +1042,8 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
+        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->DeferredScan = 0;
         pDeviceData->ThemesLoaded = 0;
         pDeviceData->LanguagesLoaded = 0;
         return -1;

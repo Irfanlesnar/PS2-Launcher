@@ -167,6 +167,11 @@ char *thmGetFilePath(int themeID);
 extern int gPS5ActiveTab;
 void ps5ClearCoverCache(void);
 void playPS5LaunchTransition(const char *gameTitle);
+int thmGetPS5TitleFont(void);
+int thmGetPS5HeaderFont(void);
+int thmGetPS5SemiBoldFont(void);
+void drawPS5FocusPointer(int x, int y);
+void drawPS5GameHeaderArtwork(const char *title, int x, int y, int w, int h);
 void rmDrawRoundedRect(int x, int y, int w, int h, int r, u64 color);
 void rmDrawRoundedRectWide(int x, int y, int w, int h, int r, u64 color);
 

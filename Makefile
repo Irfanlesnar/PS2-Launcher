@@ -90,12 +90,12 @@ EECORE_OBJS = ee_core.o ioprp.o util.o \
 		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o \
 		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o
 
-PNG_ASSETS = loader Instagram_icon logo square cross circle
+PNG_ASSETS = loader Instagram_icon logo square cross circle triangle focus
 	# unused icons - up down l1 l2 l3 r1 r2 r3
 
 COVER_ASSETS = $(basename $(notdir $(wildcard covers/*.png)))
 
-GFX_OBJS = $(PNG_ASSETS:%=%_png.o) $(COVER_ASSETS:%=%_png.o) ps5_cover_assets.o poeveticanew.o roboto_regular.o roboto_bold.o icon_sys.o icon_icn.o
+GFX_OBJS = $(PNG_ASSETS:%=%_png.o) $(COVER_ASSETS:%=%_png.o) ps5_cover_assets.o roboto_regular.o roboto_bold.o roboto_semi_bold.o icon_sys.o icon_icn.o
 
 AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connect.o bd_disconnect.o game_launch.o
 
@@ -695,21 +695,13 @@ $(EE_ASM_DIR)mcman.c: $(PS2SDK)/iop/irx/mcman.irx | $(EE_ASM_DIR)
 $(EE_ASM_DIR)mcserv.c: $(PS2SDK)/iop/irx/mcserv.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
-thirdparty/roboto_regular.ttf: fonts/roboto_regular.ttf
-	@mkdir -p thirdparty
-	cp $< $@
-
-thirdparty/roboto_bold.ttf: fonts/roboto_bold.ttf
-	@mkdir -p thirdparty
-	cp $< $@
-
-$(EE_ASM_DIR)poeveticanew.c: thirdparty/PoeVeticaNew.ttf | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_raw
-
 $(EE_ASM_DIR)roboto_regular.c: thirdparty/roboto_regular.ttf | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_raw
 
 $(EE_ASM_DIR)roboto_bold.c: thirdparty/roboto_bold.ttf | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(*F)_raw
+
+$(EE_ASM_DIR)roboto_semi_bold.c: thirdparty/roboto_semi_bold.ttf | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_raw
 
 $(EE_ASM_DIR)icon_sys.c: gfx/icon.sys | $(EE_ASM_DIR)

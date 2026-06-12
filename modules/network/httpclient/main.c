@@ -18,7 +18,7 @@ static SifRpcServerData_t SifServerData;
 static int RpcThreadID;
 static int CoverApiWorkerThreadID;
 static unsigned char SifServerRxBuffer[sizeof(struct HttpClientSendPostJsonArgs)] __attribute__((aligned(64)));
-static unsigned char SifServerTxBuffer[16] __attribute__((aligned(64)));
+static unsigned char SifServerTxBuffer[sizeof(struct HttpClientSendGetResult)] __attribute__((aligned(64)));
 static unsigned char DmaBuffer[60000] __attribute__((aligned(64)));
 static char CoverApiServer[HTTP_CLIENT_SERVER_NAME_MAX];
 static char CoverApiUserAgent[HTTP_CLIENT_USER_AGENT_MAX];
@@ -115,17 +115,26 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
 
     switch (fno) {
         case HTTP_CLIENT_CMD_CONN_ESTAB:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             *(int *)SifServerTxBuffer = HttpEstabConnection(((struct HttpClientConnEstabArgs *)buffer)->server, ((struct HttpClientConnEstabArgs *)buffer)->port);
             break;
         case HTTP_CLIENT_CMD_CONN_CLOSE:
             HttpCloseConnection(((struct HttpClientConnCloseArgs *)buffer)->socket);
             break;
         case HTTP_CLIENT_CMD_SEND_GET_REQ:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             if (((struct HttpClientSendGetArgs *)buffer)->out_len > sizeof(DmaBuffer)) {
                 ((struct HttpClientSendGetArgs *)buffer)->out_len = sizeof(DmaBuffer);
             }
 
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->result = HttpSendGetRequest(((struct HttpClientSendGetArgs *)buffer)->socket, ((struct HttpClientSendGetArgs *)buffer)->UserAgent, ((struct HttpClientSendGetArgs *)buffer)->host, &((struct HttpClientSendGetArgs *)buffer)->mode, ((struct HttpClientSendGetArgs *)buffer)->hasMtime ? ((struct HttpClientSendGetArgs *)buffer)->mtime : NULL, ((struct HttpClientSendGetArgs *)buffer)->uri, (char *)DmaBuffer, &((struct HttpClientSendGetArgs *)buffer)->out_len);
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->statusCode = HttpGetLastStatusCode();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->contentLength = HttpGetLastContentLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->requestLength = HttpGetLastRequestLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->sendLength = HttpGetLastSendLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->selectResult = HttpGetLastSelectResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->recvResult = HttpGetLastRecvResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->socketError = HttpGetLastSocketError();
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->mode = ((struct HttpClientSendGetArgs *)buffer)->mode;
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len = ((struct HttpClientSendGetArgs *)buffer)->out_len;
 
@@ -140,9 +149,11 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
             CpuResumeIntr(OldState);
             break;
         case HTTP_CLIENT_CMD_COVER_API_START_REQ:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             *(int *)SifServerTxBuffer = StartCoverApiRequest((struct HttpClientCoverApiStartArgs *)buffer);
             break;
         case HTTP_CLIENT_CMD_COVER_API_STATUS_REQ:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             if (((struct HttpClientCoverApiStatusArgs *)buffer)->out_len > sizeof(CoverApiBuffer))
                 ((struct HttpClientCoverApiStatusArgs *)buffer)->out_len = sizeof(CoverApiBuffer);
 
@@ -166,11 +177,19 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
             }
             break;
         case HTTP_CLIENT_CMD_SEND_GET_RANGE_REQ:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             if (((struct HttpClientSendGetRangeArgs *)buffer)->out_len > sizeof(DmaBuffer)) {
                 ((struct HttpClientSendGetRangeArgs *)buffer)->out_len = sizeof(DmaBuffer);
             }
 
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->result = HttpSendGetRequestRange(((struct HttpClientSendGetRangeArgs *)buffer)->socket, ((struct HttpClientSendGetRangeArgs *)buffer)->UserAgent, ((struct HttpClientSendGetRangeArgs *)buffer)->host, &((struct HttpClientSendGetRangeArgs *)buffer)->mode, ((struct HttpClientSendGetRangeArgs *)buffer)->uri, ((struct HttpClientSendGetRangeArgs *)buffer)->rangeStart, ((struct HttpClientSendGetRangeArgs *)buffer)->rangeEnd, (char *)DmaBuffer, &((struct HttpClientSendGetRangeArgs *)buffer)->out_len);
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->statusCode = HttpGetLastStatusCode();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->contentLength = HttpGetLastContentLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->requestLength = HttpGetLastRequestLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->sendLength = HttpGetLastSendLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->selectResult = HttpGetLastSelectResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->recvResult = HttpGetLastRecvResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->socketError = HttpGetLastSocketError();
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->mode = ((struct HttpClientSendGetRangeArgs *)buffer)->mode;
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len = ((struct HttpClientSendGetRangeArgs *)buffer)->out_len;
 
@@ -185,6 +204,7 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
             CpuResumeIntr(OldState);
             break;
         case HTTP_CLIENT_CMD_SEND_POST_JSON_REQ:
+            memset(SifServerTxBuffer, 0, sizeof(SifServerTxBuffer));
             if (((struct HttpClientSendPostJsonArgs *)buffer)->out_len > sizeof(DmaBuffer)) {
                 ((struct HttpClientSendPostJsonArgs *)buffer)->out_len = sizeof(DmaBuffer);
             }
@@ -193,6 +213,13 @@ static void *SifRpc_handler(int fno, void *buffer, int nbytes)
             }
 
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->result = HttpSendPostJsonRequest(((struct HttpClientSendPostJsonArgs *)buffer)->socket, ((struct HttpClientSendPostJsonArgs *)buffer)->UserAgent, ((struct HttpClientSendPostJsonArgs *)buffer)->host, &((struct HttpClientSendPostJsonArgs *)buffer)->mode, ((struct HttpClientSendPostJsonArgs *)buffer)->uri, ((struct HttpClientSendPostJsonArgs *)buffer)->body, ((struct HttpClientSendPostJsonArgs *)buffer)->body_len, (char *)DmaBuffer, &((struct HttpClientSendPostJsonArgs *)buffer)->out_len);
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->statusCode = HttpGetLastStatusCode();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->contentLength = HttpGetLastContentLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->requestLength = HttpGetLastRequestLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->sendLength = HttpGetLastSendLength();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->selectResult = HttpGetLastSelectResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->recvResult = HttpGetLastRecvResult();
+            ((struct HttpClientSendGetResult *)SifServerTxBuffer)->socketError = HttpGetLastSocketError();
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->mode = ((struct HttpClientSendPostJsonArgs *)buffer)->mode;
             ((struct HttpClientSendGetResult *)SifServerTxBuffer)->out_len = ((struct HttpClientSendPostJsonArgs *)buffer)->out_len;
 

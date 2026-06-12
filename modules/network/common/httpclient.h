@@ -10,6 +10,8 @@
 #define HTTP_COVER_PHASE_CLOSE      4
 #define HTTP_COVER_PHASE_DONE       5
 
+#define HTTP_CLIENT_ERR_NO_RESPONSE -2048
+
 // EE-side only
 int HttpInit(void);
 void HttpDeinit(void);
@@ -22,6 +24,13 @@ int HttpPollCoverApiStartResult(int *done, int *startResult);
 int HttpGetCoverApiStatus(char *output, u16 *out_len, int *done, int *phase);
 int HttpGetCoverApiStatusAsync(char *output, u16 out_len);
 int HttpPollCoverApiStatusResult(int *rpcDone, int *requestDone, int *phase, int *httpResult, u16 *out_len);
+int HttpGetLastStatusCode(void);
+int HttpGetLastContentLength(void);
+int HttpGetLastRequestLength(void);
+int HttpGetLastSendLength(void);
+int HttpGetLastSelectResult(void);
+int HttpGetLastRecvResult(void);
+int HttpGetLastSocketError(void);
 
 /*  mtime[0] = Years since year 2000
     mtime[1] = Month, 0-11
@@ -118,6 +127,13 @@ struct HttpClientCoverApiStatusArgs
 struct HttpClientSendGetResult
 {
     s32 result;
+    s32 statusCode;
+    s32 contentLength;
+    s32 requestLength;
+    s32 sendLength;
+    s32 selectResult;
+    s32 recvResult;
+    s32 socketError;
     s8 mode;
     u8 padding;
     u16 out_len;

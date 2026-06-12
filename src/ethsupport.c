@@ -361,4 +361,24 @@ int ethCheckInternet(void)
     HttpCloseConnection(socket);
     return 0;
 }
+
+int ethHasUsableConfig(void)
+{
+    t_ip_info ip_info;
+    struct ip4_addr *ipaddr;
+
+    if (ps2ip_getconfig("sm0", &ip_info) < 0)
+        return 0;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+    ipaddr = (struct ip4_addr *)&ip_info.ipaddr;
+    lastIP = *(struct ip4_addr *)&ip_info.ipaddr;
+    lastNM = *(struct ip4_addr *)&ip_info.netmask;
+    lastGW = *(struct ip4_addr *)&ip_info.gw;
+#pragma GCC diagnostic pop
+
+    return !(ip4_addr1(ipaddr) == 0 && ip4_addr2(ipaddr) == 0 && ip4_addr3(ipaddr) == 0 && ip4_addr4(ipaddr) == 0);
+}
+
 item_list_t *ethGetObject(int initOnly) { return NULL; }

@@ -1109,12 +1109,12 @@ static void guiDrawBusy(int alpha)
             int w = gTheme->loadingIcon->width;
             int h = gTheme->loadingIcon->height;
             if (gPS5Mode) {
-                w = w * 0.65f;
-                h = h * 0.65f;
+                w = 14;
+                h = 14;
                 // Position loader spinner exactly at bottom-right with 20px margin using dynamic screen width and height
                 // Since rmDrawRotatedPixmap scales cx with iAspectWidth / 4, we multiply by 4 / rmGetAspectWidth() to keep it perfectly at the edge in widescreen!
                 cx = (screenWidth - 20 - (w / 2)) * 4 / rmGetAspectWidth();
-                cy = screenHeight - 20 - (h / 2);
+                cy = screenHeight - 20;
             }
             rmDrawRotatedPixmap(texture, cx, cy, w, h, angle, mycolor);
         }
@@ -1572,7 +1572,7 @@ void guiIntroLoop(void)
 
         // Initialize boot sound (Disabled to keep boot silent and fast)
         if (gInitComplete && !tFadeDelayEnd) {
-            tFadeDelayEnd = clock();
+            tFadeDelayEnd = clock() + (CLOCKS_PER_SEC * 2);
         }
 
         if (gInitComplete && clock() >= tFadeDelayEnd)
@@ -1740,8 +1740,8 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
             int bodyY = dlgY + topPad;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 13, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 12, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -1890,8 +1890,8 @@ int guiConfirmVideoModeChange(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 13, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 12, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + titleY, ALIGN_LEFT, 0, 0, "Change video output now?", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x60));
@@ -2006,8 +2006,8 @@ int guiConfirmVideoMode(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 13, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 12, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + timerY, ALIGN_LEFT, textW, MENU_ITEM_HEIGHT, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));

@@ -17,8 +17,8 @@
 
 #include FT_FREETYPE_H
 
-extern void *poeveticanew_raw;
-extern int size_poeveticanew_raw;
+extern void *roboto_regular_raw;
+extern int size_roboto_regular_raw;
 
 /// Maximal count of atlases per font
 #define ATLAS_MAX    4
@@ -245,8 +245,8 @@ static int fntLoadSlot(font_t *font, char *path, int fontSize)
         }
         font->dataPtr = buffer;
     } else {
-        buffer = &poeveticanew_raw;
-        bufferSize = size_poeveticanew_raw;
+        buffer = &roboto_regular_raw;
+        bufferSize = size_roboto_regular_raw;
     }
 
     // load the font via memory handle

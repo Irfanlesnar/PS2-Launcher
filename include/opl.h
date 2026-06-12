@@ -73,6 +73,7 @@ void setErrorMessage(int strId);
 void setErrorMessageWithCode(int strId, int error);
 int loadConfig(int types);
 int saveConfig(int types, int showUI);
+int saveConfigQuiet(int types);
 void applyConfig(int themeID, int langID, int skipDeviceRefresh);
 void menuDeferredUpdate(void *data);
 void moduleUpdateMenu(int mode, int themeChanged, int langChanged);
@@ -132,7 +133,6 @@ extern int gAutoRefresh;
 extern int gEnableNotifications;
 extern int gEnableArt;
 extern int gPS5Mode;
-extern int gPS5ShowTime;
 extern int gPS5UISound;
 extern int gWideScreen;
 extern int gVMode; // 0 - Auto, 1 - PAL, 2 - NTSC
@@ -199,6 +199,9 @@ extern int gEnableWrite;
 #define PS5_COVER_DOWNLOAD_DONE 2
 #define PS5_COVER_DOWNLOAD_FAIL 3
 #define PS5_COVER_DOWNLOAD_CANCELLED 4
+#define PS5_COVER_DOWNLOAD_PROMPT 5
+#define PS5_COVER_DOWNLOAD_MISSING 0
+#define PS5_COVER_DOWNLOAD_FULL 1
 
 extern int gPS5CoverTotalGames;
 extern int gPS5CoverMissingGames;
@@ -208,15 +211,16 @@ extern int gPS5CoverDownloadCurrent;
 extern int gPS5CoverDownloadTotal;
 extern int gPS5CoverDownloadFailures;
 extern int gPS5CoverDownloadPercent;
+extern int gPS5CoverDownloadMode;
 extern char gPS5CoverDownloadTitle[96];
-extern char gPS5CoverDownloadUrl[256];
+extern char gPS5CoverDownloadUrl[768];
 
 void oplRefreshGameCoverStats(void);
 void oplRefreshGameCoverStatsForSupport(item_list_t *support);
 void oplRefreshGameCoverStatsIfNeeded(item_list_t *support);
 void oplSetGameCoverActiveSupport(item_list_t *support);
 void oplMarkGameCoverStatsDirty(void);
-void oplStartGameCoverDownload(void);
+void oplStartGameCoverDownload(int downloadMode);
 void oplAbortGameCoverDownload(void);
 int oplMakeGameItemId(int mode, int id);
 int oplResolveGameItem(int itemId, item_list_t *fallback, item_list_t **support, int *sourceId);
