@@ -2234,6 +2234,14 @@ static int coverDownloadImageToDiskRetry(const char *url, const char *prefix, co
     return result < 0 ? result : -EIO;
 }
 
+static void coverSetDownloadErrorMessage(int errorCode)
+{
+    if (errorCode == -1)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "You need to allow write permission on your shared folder to download covers.");
+    else
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Error code: %d", errorCode);
+}
+
 static int coverGameNeedsDownload(item_list_t *support, int id)
 {
     char *prefix = support->itemGetPrefix != NULL ? support->itemGetPrefix(support) : NULL;
@@ -2357,7 +2365,7 @@ static void oplDownloadMissingGameCovers(void)
             gPS5CoverDownloadPercent = 100;
             gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
             snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
-            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Network init failed %d", netInitResult);
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "PS2 has no internet connection.");
             return;
         }
     }
@@ -2427,7 +2435,7 @@ static void oplDownloadMissingGameCovers(void)
                     gPS5CoverDownloadFailures++;
                     saveFailed++;
                     lastErrorCode = artResult;
-                    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Error code: %d", artResult);
+                    coverSetDownloadErrorMessage(artResult);
                     continue;
                 }
             }
@@ -2455,11 +2463,15 @@ static void oplDownloadMissingGameCovers(void)
     gPS5CoverDownloadPercent = 100;
     gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
     snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download complete");
-    if (saveFailed > 0 && downloaded == 0)
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "No covers downloaded\nError code: %d", lastErrorCode);
+    if (saveFailed > 0 && downloaded == 0) {
+        if (lastErrorCode == -1)
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "No covers downloaded\nYou need to allow write permission on your shared folder to download covers.");
+        else
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "No covers downloaded\nError code: %d", lastErrorCode);
+    }
     else if (saveFailed > 0)
-        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded\n%d covers are not available. Request them on Instagram @irfanmatheena\nError code: %d",
-            downloaded, queued, saveFailed, lastErrorCode);
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded\n%d covers are not available. Request them on Instagram @irfanmatheena",
+            downloaded, queued, saveFailed);
     else
         snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded", downloaded, queued);
 }
