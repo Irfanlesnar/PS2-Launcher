@@ -57,19 +57,67 @@ static void diaUpdateMask(char *mask, int maxLen, int len)
     }
 }
 
+typedef struct
+{
+    int x;
+    int y;
+    int w;
+    int h;
+    int row;
+    char ch;
+    const char *label;
+    int action;
+} ps5_key_t;
+
+enum {
+    PS5_KEY_CHAR = 0,
+    PS5_KEY_BACKSPACE,
+    PS5_KEY_SPACE,
+    PS5_KEY_DONE,
+    PS5_KEY_CAPS
+};
+
+static int diaFindNearestKey(ps5_key_t *keys, int count, int current, int direction)
+{
+    int i;
+    int best = current;
+    int bestScore = 0x7FFFFFFF;
+    int cx = keys[current].x + keys[current].w / 2;
+    int cy = keys[current].y + keys[current].h / 2;
+
+    for (i = 0; i < count; i++) {
+        int ix, iy, dx, dy, score;
+        if (i == current)
+            continue;
+
+        ix = keys[i].x + keys[i].w / 2;
+        iy = keys[i].y + keys[i].h / 2;
+        dx = ix - cx;
+        dy = iy - cy;
+
+        if ((direction == KEY_LEFT && dx >= 0) || (direction == KEY_RIGHT && dx <= 0) ||
+            (direction == KEY_UP && dy >= 0) || (direction == KEY_DOWN && dy <= 0))
+            continue;
+
+        if (direction == KEY_LEFT || direction == KEY_RIGHT)
+            score = (abs(dx) * 8) + abs(dy);
+        else
+            score = (abs(dy) * 8) + abs(dx);
+
+        if (score < bestScore) {
+            bestScore = score;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
 static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *title)
 {
-    static const char *rows[] = {
-        "1234567890",
-        "qwertyuiop",
-        "asdfghjkl",
-        "zxcvbnm.-_"};
-    static const int rowLens[] = {10, 10, 9, 10};
-    static const char *commands[] = {"Back", "Space", "Done", "Shift"};
-    int selRow = 0;
-    int selCol = 0;
     int shift = 0;
     int len = strlen(text);
+    int selected = 0;
     char *mask = NULL;
 
     if (hide_text) {
@@ -82,97 +130,133 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
     rmGetScreenExtents(&screenWidth, &screenHeight);
 
     while (1) {
-        int i, row, keyW, keyH, gap, startY, titleY, inputY;
-        int keyboardW, startX, footerY;
+        ps5_key_t keys[64];
+        int keyCount = 0;
+        int i, keyW, keyH, gap, startX, titleY, inputY, startY, footerY;
+        int backspaceW, wideW, doneX, spaceX, spaceW;
         const char *display = hide_text ? mask : text;
         int titleFont = thmGetPS5TitleFont();
         int semiFont = thmGetPS5SemiBoldFont();
-        int regFont = gTheme->fonts[0];
+        int headerFont = thmGetPS5HeaderFont();
+        GSTEXTURE *circleIcon;
 
         readPads();
 
         rmStartFrame();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
 
-        keyW = screenWidth >= 960 ? 58 : 38;
-        keyH = screenWidth >= 960 ? 34 : 26;
-        gap = screenWidth >= 960 ? 8 : 5;
-        keyboardW = (10 * keyW) + (9 * gap);
-        startX = (screenWidth - keyboardW) / 2;
-        titleY = screenHeight >= 700 ? 54 : 22;
-        inputY = titleY + (screenHeight >= 700 ? 58 : 44);
-        startY = inputY + (screenHeight >= 700 ? 64 : 46);
-        footerY = screenHeight - 28;
+        startX = screenWidth * 75 / 1000;
+        gap = screenWidth >= 960 ? screenWidth * 5 / 1920 : 2;
+        if (gap < 2)
+            gap = 2;
+        keyW = (screenWidth - (startX * 2) - (gap * 10)) / 14;
+        keyH = screenHeight * 106 / 1000;
+        if (keyH < 28)
+            keyH = 28;
+        backspaceW = (keyW * 4) + (gap * 3);
+        wideW = (keyW * 2) + gap;
+        titleY = screenHeight * 62 / 1000;
+        inputY = screenHeight * 258 / 1000;
+        startY = screenHeight * 327 / 1000;
+        footerY = screenHeight - (screenHeight * 56 / 1000);
+
+#define ADD_KEY(_row, _x, _y, _w, _label, _action, _ch) \
+        do { \
+            keys[keyCount].x = (_x); \
+            keys[keyCount].y = (_y); \
+            keys[keyCount].w = (_w); \
+            keys[keyCount].h = keyH; \
+            keys[keyCount].row = (_row); \
+            keys[keyCount].label = (_label); \
+            keys[keyCount].action = (_action); \
+            keys[keyCount].ch = (_ch); \
+            keyCount++; \
+        } while (0)
+
+        for (i = 0; i < 10; i++) {
+            static const char row0[] = "1234567890";
+            ADD_KEY(0, startX + i * (keyW + gap), startY, keyW, NULL, PS5_KEY_CHAR, row0[i]);
+        }
+        ADD_KEY(0, startX + 10 * (keyW + gap), startY, backspaceW, "Backspace", PS5_KEY_BACKSPACE, 0);
+
+        for (i = 0; i < 10; i++) {
+            static const char row1[] = "qwertyuiop";
+            ADD_KEY(1, startX + i * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, row1[i]);
+        }
+        ADD_KEY(1, startX + 10 * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, '-');
+        ADD_KEY(1, startX + 11 * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, '_');
+        ADD_KEY(1, startX + 12 * (keyW + gap), startY + keyH + gap, wideW, ".", PS5_KEY_CHAR, '.');
+
+        for (i = 0; i < 9; i++) {
+            static const char row2[] = "asdfghjkl";
+            ADD_KEY(2, startX + i * (keyW + gap), startY + 2 * (keyH + gap), keyW, NULL, PS5_KEY_CHAR, row2[i]);
+        }
+        ADD_KEY(2, startX + 12 * (keyW + gap), startY + 2 * (keyH + gap), wideW, "Caps", PS5_KEY_CAPS, 0);
+
+        for (i = 0; i < 7; i++) {
+            static const char row3[] = "zxcvbnm";
+            ADD_KEY(3, startX + i * (keyW + gap), startY + 3 * (keyH + gap), keyW, NULL, PS5_KEY_CHAR, row3[i]);
+        }
+        doneX = startX + 12 * (keyW + gap);
+        spaceX = startX + 7 * (keyW + gap);
+        spaceW = doneX - gap - spaceX;
+        ADD_KEY(3, spaceX, startY + 3 * (keyH + gap), spaceW, "Space", PS5_KEY_SPACE, 0);
+        ADD_KEY(3, doneX, startY + 3 * (keyH + gap), wideW, "Done", PS5_KEY_DONE, 0);
+
+#undef ADD_KEY
+
+        if (selected >= keyCount)
+            selected = keyCount - 1;
 
         fntRenderString(titleFont, startX, titleY, ALIGN_LEFT, 0, 0, title != NULL ? title : "Keyboard", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        rmDrawRect(startX, inputY + 34, keyboardW, 1, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x70));
-        fntRenderString(semiFont, startX, inputY, ALIGN_LEFT, keyboardW, 32, display, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(headerFont, startX + keyW / 25, inputY, ALIGN_LEFT, 0, 0, display, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
-        for (row = 0; row < 4; row++) {
-            int rowW = (rowLens[row] * keyW) + ((rowLens[row] - 1) * gap);
-            int x = startX + (keyboardW - rowW) / 2;
-            int y = startY + row * (keyH + gap);
+        for (i = 0; i < keyCount; i++) {
+            int focused = i == selected;
+            char label[16];
+            const char *displayLabel = keys[i].label;
+            u64 keyColor = focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80);
+            u64 textColor = focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
 
-            for (i = 0; i < rowLens[row]; i++) {
-                int focused = selRow == row && selCol == i;
-                char c[2];
-                c[0] = rows[row][i];
-                if (shift && c[0] >= 'a' && c[0] <= 'z')
-                    c[0] -= 32;
-                c[1] = '\0';
-
-                rmDrawRoundedRect(x + i * (keyW + gap), y, keyW, keyH, 5,
-                    focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
-                fntRenderString(focused ? semiFont : regFont, x + i * (keyW + gap) + keyW / 2, y + keyH / 2,
-                    ALIGN_CENTER | ALIGN_VCENTER, 0, 0, c,
-                    focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
+            if (displayLabel == NULL) {
+                label[0] = keys[i].ch;
+                if (shift && label[0] >= 'a' && label[0] <= 'z')
+                    label[0] -= 32;
+                label[1] = '\0';
+                displayLabel = label;
             }
+
+            rmDrawRoundedRect(keys[i].x, keys[i].y, keys[i].w, keys[i].h, 5, keyColor);
+            fntRenderString(semiFont, keys[i].x + keys[i].w / 2, keys[i].y + keys[i].h / 2, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, displayLabel, textColor);
         }
 
-        {
-            int cmdY = startY + 4 * (keyH + gap) + gap;
-            int cmdW = (keyboardW - (3 * gap)) / 4;
-            for (i = 0; i < 4; i++) {
-                int focused = selRow == 4 && selCol == i;
-                rmDrawRoundedRect(startX + i * (cmdW + gap), cmdY, cmdW, keyH, 5,
-                    focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
-                fntRenderString(focused ? semiFont : regFont, startX + i * (cmdW + gap) + cmdW / 2, cmdY + keyH / 2,
-                    ALIGN_CENTER | ALIGN_VCENTER, 0, 0, commands[i],
-                    focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
-            }
-        }
-
-        fntRenderString(semiFont, startX, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Select", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        fntRenderString(semiFont, screenWidth - startX, footerY, ALIGN_RIGHT | ALIGN_VCENTER, 0, 0, "Circle Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        circleIcon = thmGetTexture(CIRCLE_ICON);
+        if (circleIcon && circleIcon->Mem)
+            rmDrawPixmap(circleIcon, screenWidth - startX - 58, footerY, ALIGN_LEFT | ALIGN_VCENTER, 20, 20, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(semiFont, screenWidth - startX - 30, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
         rmEndFrame();
 
         if (getKey(KEY_LEFT)) {
-            int cols = selRow < 4 ? rowLens[selRow] : 4;
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_LEFT);
             sfxPlay(SFX_CURSOR);
-            selCol = selCol > 0 ? selCol - 1 : cols - 1;
+            selected = next != selected ? next : selected;
         } else if (getKey(KEY_RIGHT)) {
-            int cols = selRow < 4 ? rowLens[selRow] : 4;
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_RIGHT);
             sfxPlay(SFX_CURSOR);
-            selCol = selCol < cols - 1 ? selCol + 1 : 0;
+            selected = next != selected ? next : selected;
         } else if (getKey(KEY_UP)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_UP);
             sfxPlay(SFX_CURSOR);
-            selRow = selRow > 0 ? selRow - 1 : 4;
-            if (selRow < 4 && selCol >= rowLens[selRow])
-                selCol = rowLens[selRow] - 1;
-            else if (selRow == 4 && selCol > 3)
-                selCol = 3;
+            selected = next != selected ? next : selected;
         } else if (getKey(KEY_DOWN)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_DOWN);
             sfxPlay(SFX_CURSOR);
-            selRow = selRow < 4 ? selRow + 1 : 0;
-            if (selRow < 4 && selCol >= rowLens[selRow])
-                selCol = rowLens[selRow] - 1;
-            else if (selRow == 4 && selCol > 3)
-                selCol = 3;
+            selected = next != selected ? next : selected;
         } else if (getKeyOn(gSelectButton)) {
-            if (selRow < 4) {
+            if (keys[selected].action == PS5_KEY_CHAR) {
                 if (len < maxLen - 1) {
-                    char c = rows[selRow][selCol];
+                    char c = keys[selected].ch;
                     if (shift && c >= 'a' && c <= 'z')
                         c -= 32;
                     text[len++] = c;
@@ -180,25 +264,25 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
                     diaUpdateMask(mask, maxLen, len);
                     sfxPlay(SFX_CONFIRM);
                 }
-            } else if (selCol == 0) {
+            } else if (keys[selected].action == PS5_KEY_BACKSPACE) {
                 if (len > 0) {
                     text[--len] = '\0';
                     diaUpdateMask(mask, maxLen, len);
                 }
                 sfxPlay(SFX_CANCEL);
-            } else if (selCol == 1) {
+            } else if (keys[selected].action == PS5_KEY_SPACE) {
                 if (len < maxLen - 1) {
                     text[len++] = ' ';
                     text[len] = '\0';
                     diaUpdateMask(mask, maxLen, len);
                 }
                 sfxPlay(SFX_CONFIRM);
-            } else if (selCol == 2) {
+            } else if (keys[selected].action == PS5_KEY_DONE) {
                 sfxPlay(SFX_CONFIRM);
                 if (mask != NULL)
                     free(mask);
                 return 1;
-            } else {
+            } else if (keys[selected].action == PS5_KEY_CAPS) {
                 shift = !shift;
                 sfxPlay(SFX_CONFIRM);
             }
