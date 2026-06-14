@@ -1144,7 +1144,7 @@ static void ps5CopySmbSettingsToTemp(void)
     strncpy(gPS5TempSmbPrefix, gETHPrefix, sizeof(gPS5TempSmbPrefix) - 1);
     gPS5TempSmbPrefix[sizeof(gPS5TempSmbPrefix) - 1] = '\0';
     gPS5TempEthEnabled = gETHStartMode != START_MODE_DISABLED;
-    gPS5TempSmbAddressType = gPCShareAddressIsNetBIOS ? 1 : 0;
+    gPS5TempSmbAddressType = 0;
     gPS5TempSmbDhcp = ps2_ip_use_dhcp ? 1 : 0;
     gPS5TempSmbPort = gPCPort > 0 ? gPCPort : 445;
     gPS5TempSmbCache = smbCacheSize;
@@ -1162,7 +1162,8 @@ static void ps5ApplyTempSmbSettings(void)
     }
 
     gETHStartMode = gPS5TempEthEnabled ? START_MODE_AUTO : START_MODE_DISABLED;
-    gPCShareAddressIsNetBIOS = gPS5TempSmbAddressType ? 1 : 0;
+    gPS5TempSmbAddressType = 0;
+    gPCShareAddressIsNetBIOS = 0;
     ps2_ip_use_dhcp = gPS5TempSmbDhcp ? 1 : 0;
     gPCPort = gPS5TempSmbPort > 0 ? gPS5TempSmbPort : 445;
     smbCacheSize = gPS5TempSmbCache;
@@ -1332,10 +1333,10 @@ void menuHandleInputMenu()
 
                 if (getKey(KEY_UP)) {
                     sfxPlay(SFX_CURSOR);
-                    gPS5SmbSettingsSel = gPS5SmbSettingsSel > 0 ? gPS5SmbSettingsSel - 1 : 9;
+                    gPS5SmbSettingsSel = gPS5SmbSettingsSel > 0 ? gPS5SmbSettingsSel - 1 : 4;
                 } else if (getKey(KEY_DOWN)) {
                     sfxPlay(SFX_CURSOR);
-                    gPS5SmbSettingsSel = gPS5SmbSettingsSel < 9 ? gPS5SmbSettingsSel + 1 : 0;
+                    gPS5SmbSettingsSel = gPS5SmbSettingsSel < 4 ? gPS5SmbSettingsSel + 1 : 0;
                 }
 
                 if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
@@ -1344,68 +1345,26 @@ void menuHandleInputMenu()
                         case 0:
                             gPS5TempEthEnabled = !gPS5TempEthEnabled;
                             break;
-                        case 1:
-                            gPS5TempSmbAddressType = !gPS5TempSmbAddressType;
-                            break;
-                        case 6:
-                            if (getKeyOn(KEY_LEFT))
-                                gPS5TempSmbPort = gPS5TempSmbPort > 1 ? gPS5TempSmbPort - 1 : 65535;
-                            else
-                                gPS5TempSmbPort = gPS5TempSmbPort < 65535 ? gPS5TempSmbPort + 1 : 1;
-                            break;
-                        case 8:
-                            gPS5TempSmbDhcp = !gPS5TempSmbDhcp;
-                            break;
-                        case 9:
-                            if (getKeyOn(KEY_LEFT))
-                                gPS5TempSmbCache = gPS5TempSmbCache > 0 ? gPS5TempSmbCache - 1 : 0;
-                            else if (gPS5TempSmbCache < 64)
-                                gPS5TempSmbCache++;
-                            break;
                     }
                 }
 
                 if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
-                    char tmp[16];
-                    int value;
                     sfxPlay(SFX_CONFIRM);
                     switch (gPS5SmbSettingsSel) {
                         case 0:
                             gPS5TempEthEnabled = !gPS5TempEthEnabled;
                             break;
                         case 1:
-                            gPS5TempSmbAddressType = !gPS5TempSmbAddressType;
+                            ps5EditSmbText(gPS5TempSmbIp, sizeof(gPS5TempSmbIp), 0, "SMB Server IP");
                             break;
                         case 2:
-                            if (gPS5TempSmbAddressType)
-                                ps5EditSmbText(gPS5TempSmbName, sizeof(gPS5TempSmbName), 0, "SMB Server Name");
-                            else
-                                ps5EditSmbText(gPS5TempSmbIp, sizeof(gPS5TempSmbIp), 0, "SMB Server IP");
-                            break;
-                        case 3:
                             ps5EditSmbText(gPS5TempSmbShare, sizeof(gPS5TempSmbShare), 0, "SMB Share");
                             break;
-                        case 4:
+                        case 3:
                             ps5EditSmbText(gPS5TempSmbUser, sizeof(gPS5TempSmbUser), 0, "SMB Username");
                             break;
-                        case 5:
+                        case 4:
                             ps5EditSmbText(gPS5TempSmbPassword, sizeof(gPS5TempSmbPassword), 1, "SMB Password");
-                            break;
-                        case 6:
-                            snprintf(tmp, sizeof(tmp), "%d", gPS5TempSmbPort);
-                            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Port") && sscanf(tmp, "%d", &value) == 1 && value > 0 && value <= 65535)
-                                gPS5TempSmbPort = value;
-                            break;
-                        case 7:
-                            ps5EditSmbText(gPS5TempSmbPrefix, sizeof(gPS5TempSmbPrefix), 0, "SMB Folder Prefix");
-                            break;
-                        case 8:
-                            gPS5TempSmbDhcp = !gPS5TempSmbDhcp;
-                            break;
-                        case 9:
-                            snprintf(tmp, sizeof(tmp), "%d", gPS5TempSmbCache);
-                            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Cache") && sscanf(tmp, "%d", &value) == 1 && value >= 0 && value <= 64)
-                                gPS5TempSmbCache = value;
                             break;
                     }
                 }

@@ -2309,7 +2309,7 @@ static void drawPS5DeviceLoadingOverlay(void)
     int loaderSize = 14;
     int loaderX = (screenWidth - 20 - (loaderSize / 2)) * 4 / rmGetAspectWidth();
     int loaderY = screenHeight - 20;
-    float angle = (float)gPS5TextureFrame * 0.16f;
+    float angle = (float)guiFrameId * 0.08f;
 
     if (loader && loader->Mem)
         rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
@@ -2338,10 +2338,10 @@ static void drawPS5SmbDialogOverlay(void)
 
     if (gPS5SmbDialogState == 2) {
         GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
-        int loaderSize = 16;
+        int loaderSize = 14;
         int loaderX = (dlgX + 32) * 4 / rmGetAspectWidth();
         int loaderY = dlgY + 84;
-        short angle = (short)((guiFrameId * 96) & 0x0FFF);
+        float angle = (float)guiFrameId * 0.08f;
         if (loader && loader->Mem)
             rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
         fntRenderString(gPS5RegFont, dlgX + 58, dlgY + 72, ALIGN_LEFT, dlgW - 82, 40, gPS5SmbDialogMessage, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -2970,16 +2970,10 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5SettingsPage;
         extern int gPS5SmbSettingsSel;
         extern int gPS5TempEthEnabled;
-        extern int gPS5TempSmbAddressType;
-        extern int gPS5TempSmbDhcp;
-        extern int gPS5TempSmbPort;
-        extern int gPS5TempSmbCache;
         extern char gPS5TempSmbIp[16];
-        extern char gPS5TempSmbName[17];
         extern char gPS5TempSmbShare[32];
         extern char gPS5TempSmbUser[32];
         extern char gPS5TempSmbPassword[32];
-        extern char gPS5TempSmbPrefix[32];
         extern unsigned int gPS5SaveNotifyFrame;
         extern int guiFrameId;
 
@@ -3018,7 +3012,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             fntRenderString(gPS5SemiBoldFont, rowX, 20, ALIGN_LEFT, 0, 0, "SMB Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
-            for (i = 0; i < 10; i++) {
+            for (i = 0; i < 5; i++) {
                 char value[96];
                 const char *label = "";
                 int y = smbRowY + i * smbRowStep;
@@ -3033,40 +3027,20 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         snprintf(value, sizeof(value), "< %s >", gPS5TempEthEnabled ? "On" : "Off");
                         break;
                     case 1:
-                        label = "Address type";
-                        snprintf(value, sizeof(value), "< %s >", gPS5TempSmbAddressType ? "Server name" : "IP address");
+                        label = "Server IP";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbIp[0] ? gPS5TempSmbIp : "Not set");
                         break;
                     case 2:
-                        label = gPS5TempSmbAddressType ? "Server name" : "Server IP";
-                        snprintf(value, sizeof(value), "%s", gPS5TempSmbAddressType ? gPS5TempSmbName : gPS5TempSmbIp);
-                        break;
-                    case 3:
                         label = "Share name";
                         snprintf(value, sizeof(value), "%s", gPS5TempSmbShare[0] ? gPS5TempSmbShare : "Not set");
                         break;
-                    case 4:
+                    case 3:
                         label = "Username";
                         snprintf(value, sizeof(value), "%s", gPS5TempSmbUser[0] ? gPS5TempSmbUser : "Guest");
                         break;
-                    case 5:
+                    case 4:
                         label = "Password";
                         snprintf(value, sizeof(value), "%s", gPS5TempSmbPassword[0] ? "********" : "None");
-                        break;
-                    case 6:
-                        label = "Port";
-                        snprintf(value, sizeof(value), "< %d >", gPS5TempSmbPort);
-                        break;
-                    case 7:
-                        label = "Folder prefix";
-                        snprintf(value, sizeof(value), "%s", gPS5TempSmbPrefix[0] ? gPS5TempSmbPrefix : "Root");
-                        break;
-                    case 8:
-                        label = "PS2 IP mode";
-                        snprintf(value, sizeof(value), "< %s >", gPS5TempSmbDhcp ? "DHCP" : "Manual");
-                        break;
-                    case 9:
-                        label = "SMB cache";
-                        snprintf(value, sizeof(value), "< %d >", gPS5TempSmbCache);
                         break;
                 }
 

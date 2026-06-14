@@ -48,6 +48,193 @@ static void diaDrawBoundingBox(int x, int y, int w, int h, int focus)
     rmDrawRect(x - 5, y, w + 10, h + 10, color);
 }
 
+static void diaUpdateMask(char *mask, int maxLen, int len)
+{
+    if (mask != NULL) {
+        int maskLen = len < maxLen ? len : maxLen - 1;
+        memset(mask, '*', maskLen);
+        mask[maskLen] = '\0';
+    }
+}
+
+static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *title)
+{
+    static const char *rows[] = {
+        "1234567890",
+        "qwertyuiop",
+        "asdfghjkl",
+        "zxcvbnm.-_"};
+    static const int rowLens[] = {10, 10, 9, 10};
+    static const char *commands[] = {"Back", "Space", "Done", "Shift"};
+    int selRow = 0;
+    int selCol = 0;
+    int shift = 0;
+    int len = strlen(text);
+    char *mask = NULL;
+
+    if (hide_text) {
+        mask = malloc(maxLen);
+        if (mask == NULL)
+            return 0;
+        diaUpdateMask(mask, maxLen, len);
+    }
+
+    rmGetScreenExtents(&screenWidth, &screenHeight);
+
+    while (1) {
+        int i, row, keyW, keyH, gap, startY, titleY, inputY;
+        int keyboardW, startX, footerY;
+        const char *display = hide_text ? mask : text;
+        int titleFont = thmGetPS5TitleFont();
+        int semiFont = thmGetPS5SemiBoldFont();
+        int regFont = gTheme->fonts[0];
+
+        readPads();
+
+        rmStartFrame();
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+
+        keyW = screenWidth >= 960 ? 58 : 38;
+        keyH = screenWidth >= 960 ? 34 : 26;
+        gap = screenWidth >= 960 ? 8 : 5;
+        keyboardW = (10 * keyW) + (9 * gap);
+        startX = (screenWidth - keyboardW) / 2;
+        titleY = screenHeight >= 700 ? 54 : 22;
+        inputY = titleY + (screenHeight >= 700 ? 58 : 44);
+        startY = inputY + (screenHeight >= 700 ? 64 : 46);
+        footerY = screenHeight - 28;
+
+        fntRenderString(titleFont, startX, titleY, ALIGN_LEFT, 0, 0, title != NULL ? title : "Keyboard", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        rmDrawRect(startX, inputY + 34, keyboardW, 1, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x70));
+        fntRenderString(semiFont, startX, inputY, ALIGN_LEFT, keyboardW, 32, display, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        for (row = 0; row < 4; row++) {
+            int rowW = (rowLens[row] * keyW) + ((rowLens[row] - 1) * gap);
+            int x = startX + (keyboardW - rowW) / 2;
+            int y = startY + row * (keyH + gap);
+
+            for (i = 0; i < rowLens[row]; i++) {
+                int focused = selRow == row && selCol == i;
+                char c[2];
+                c[0] = rows[row][i];
+                if (shift && c[0] >= 'a' && c[0] <= 'z')
+                    c[0] -= 32;
+                c[1] = '\0';
+
+                rmDrawRoundedRect(x + i * (keyW + gap), y, keyW, keyH, 5,
+                    focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+                fntRenderString(focused ? semiFont : regFont, x + i * (keyW + gap) + keyW / 2, y + keyH / 2,
+                    ALIGN_CENTER | ALIGN_VCENTER, 0, 0, c,
+                    focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
+            }
+        }
+
+        {
+            int cmdY = startY + 4 * (keyH + gap) + gap;
+            int cmdW = (keyboardW - (3 * gap)) / 4;
+            for (i = 0; i < 4; i++) {
+                int focused = selRow == 4 && selCol == i;
+                rmDrawRoundedRect(startX + i * (cmdW + gap), cmdY, cmdW, keyH, 5,
+                    focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+                fntRenderString(focused ? semiFont : regFont, startX + i * (cmdW + gap) + cmdW / 2, cmdY + keyH / 2,
+                    ALIGN_CENTER | ALIGN_VCENTER, 0, 0, commands[i],
+                    focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
+            }
+        }
+
+        fntRenderString(semiFont, startX, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Select", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(semiFont, screenWidth - startX, footerY, ALIGN_RIGHT | ALIGN_VCENTER, 0, 0, "Circle Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        rmEndFrame();
+
+        if (getKey(KEY_LEFT)) {
+            int cols = selRow < 4 ? rowLens[selRow] : 4;
+            sfxPlay(SFX_CURSOR);
+            selCol = selCol > 0 ? selCol - 1 : cols - 1;
+        } else if (getKey(KEY_RIGHT)) {
+            int cols = selRow < 4 ? rowLens[selRow] : 4;
+            sfxPlay(SFX_CURSOR);
+            selCol = selCol < cols - 1 ? selCol + 1 : 0;
+        } else if (getKey(KEY_UP)) {
+            sfxPlay(SFX_CURSOR);
+            selRow = selRow > 0 ? selRow - 1 : 4;
+            if (selRow < 4 && selCol >= rowLens[selRow])
+                selCol = rowLens[selRow] - 1;
+            else if (selRow == 4 && selCol > 3)
+                selCol = 3;
+        } else if (getKey(KEY_DOWN)) {
+            sfxPlay(SFX_CURSOR);
+            selRow = selRow < 4 ? selRow + 1 : 0;
+            if (selRow < 4 && selCol >= rowLens[selRow])
+                selCol = rowLens[selRow] - 1;
+            else if (selRow == 4 && selCol > 3)
+                selCol = 3;
+        } else if (getKeyOn(gSelectButton)) {
+            if (selRow < 4) {
+                if (len < maxLen - 1) {
+                    char c = rows[selRow][selCol];
+                    if (shift && c >= 'a' && c <= 'z')
+                        c -= 32;
+                    text[len++] = c;
+                    text[len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                    sfxPlay(SFX_CONFIRM);
+                }
+            } else if (selCol == 0) {
+                if (len > 0) {
+                    text[--len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                }
+                sfxPlay(SFX_CANCEL);
+            } else if (selCol == 1) {
+                if (len < maxLen - 1) {
+                    text[len++] = ' ';
+                    text[len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                }
+                sfxPlay(SFX_CONFIRM);
+            } else if (selCol == 2) {
+                sfxPlay(SFX_CONFIRM);
+                if (mask != NULL)
+                    free(mask);
+                return 1;
+            } else {
+                shift = !shift;
+                sfxPlay(SFX_CONFIRM);
+            }
+        } else if (getKey(KEY_SQUARE)) {
+            if (len > 0) {
+                text[--len] = '\0';
+                diaUpdateMask(mask, maxLen, len);
+            }
+            sfxPlay(SFX_CANCEL);
+        } else if (getKey(KEY_TRIANGLE)) {
+            if (len < maxLen - 1) {
+                text[len++] = ' ';
+                text[len] = '\0';
+                diaUpdateMask(mask, maxLen, len);
+            }
+            sfxPlay(SFX_CONFIRM);
+        } else if (getKeyOn(KEY_SELECT)) {
+            shift = !shift;
+            sfxPlay(SFX_CONFIRM);
+        } else if (getKeyOn(KEY_START)) {
+            sfxPlay(SFX_CONFIRM);
+            if (mask != NULL)
+                free(mask);
+            return 1;
+        } else if (getKey(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE)) {
+            sfxPlay(SFX_CANCEL);
+            break;
+        }
+    }
+
+    if (mask != NULL)
+        free(mask);
+
+    return 0;
+}
+
 int diaShowKeyb(char *text, int maxLen, int hide_text, const char *title)
 {
     int i, j, len = strlen(text), selkeyb = 0, x, w;
@@ -72,6 +259,9 @@ int diaShowKeyb(char *text, int maxLen, int hide_text, const char *title)
     cmdicons[1] = thmGetTexture(TRIANGLE_ICON);
     cmdicons[2] = thmGetTexture(START_ICON);
     cmdicons[3] = thmGetTexture(SELECT_ICON);
+
+    if (gPS5Mode)
+        return diaShowPS5Keyb(text, maxLen, hide_text, title);
 
     rmGetScreenExtents(&screenWidth, &screenHeight);
 

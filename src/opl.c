@@ -1808,7 +1808,7 @@ static int coverIsLocalGameSupport(item_list_t *support)
     if (support->mode >= BDM_MODE && support->mode <= BDM_MODE4)
         return support->priv != NULL;
 
-    return support->mode == HDD_MODE;
+    return support->mode == HDD_MODE || support->mode == ETH_MODE;
 }
 
 static int ps5IsMergedGameSupport(item_list_t *support)
@@ -1850,6 +1850,43 @@ static void coverNormalizePrefix(const char *prefix, char *out, int outSize)
         out[len - 1] = '\0';
 }
 
+static int coverIsSmbPrefix(const char *prefix)
+{
+    return prefix != NULL && !strncmp(prefix, "smb", 3);
+}
+
+static void coverBuildFolderPath(char *path, int pathSize, const char *prefix, const char *folder)
+{
+    char cleanPrefix[64];
+    int len;
+
+    coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
+    len = strlen(cleanPrefix);
+    while (len > 0 && (cleanPrefix[len - 1] == '/' || cleanPrefix[len - 1] == '\\')) {
+        cleanPrefix[--len] = '\0';
+    }
+
+    if (coverIsSmbPrefix(cleanPrefix)) {
+        if (len > 0 && cleanPrefix[len - 1] == ':')
+            snprintf(path, pathSize, "%s%s", cleanPrefix, folder);
+        else
+            snprintf(path, pathSize, "%s\\%s", cleanPrefix, folder);
+    } else {
+        snprintf(path, pathSize, "%s/%s", cleanPrefix, folder);
+    }
+}
+
+static void coverBuildAssetPath(char *path, int pathSize, const char *prefix, const char *folder, const char *startup, const char *suffix, const char *ext)
+{
+    char folderPath[128];
+
+    coverBuildFolderPath(folderPath, sizeof(folderPath), prefix, folder);
+    if (coverIsSmbPrefix(folderPath))
+        snprintf(path, pathSize, "%s\\%s_%s.%s", folderPath, startup, suffix, ext);
+    else
+        snprintf(path, pathSize, "%s/%s_%s.%s", folderPath, startup, suffix, ext);
+}
+
 static int coverFileExists(const char *path)
 {
     static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
@@ -1881,15 +1918,12 @@ static int coverFileExists(const char *path)
 static int coverHasAsset(const char *prefix, const char *folder, const char *startup, const char *suffix)
 {
     char path[256];
-    char cleanPrefix[64];
 
-    coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
-
-    snprintf(path, sizeof(path), "%s/%s/%s_%s.png", cleanPrefix, folder, startup, suffix);
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "png");
     if (coverFileExists(path))
         return 1;
 
-    snprintf(path, sizeof(path), "%s/%s/%s_%s.jpg", cleanPrefix, folder, startup, suffix);
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "jpg");
     if (coverFileExists(path))
         return 1;
 
@@ -1898,12 +1932,10 @@ static int coverHasAsset(const char *prefix, const char *folder, const char *sta
 
 static int coverEnsureFolder(const char *prefix, const char *folder)
 {
-    char cleanPrefix[64];
     char path[128];
     DIR *dir;
 
-    coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
-    snprintf(path, sizeof(path), "%s/%s", cleanPrefix, folder);
+    coverBuildFolderPath(path, sizeof(path), prefix, folder);
 
     coverDebugLog("COVERSAVE mkdir check path='%s'", path);
     dir = opendir(path);
@@ -1982,7 +2014,6 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
     char host[HTTP_CLIENT_SERVER_NAME_MAX];
     char uri[HTTP_CLIENT_URI_MAX];
     char connectHost[HTTP_CLIENT_SERVER_NAME_MAX];
-    char cleanPrefix[64];
     char path[256];
     char *buffer;
     u32 offset;
@@ -2018,8 +2049,7 @@ static int coverDownloadImageToDisk(const char *url, const char *prefix, const c
         return -EIO;
     }
 
-    coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
-    snprintf(path, sizeof(path), "%s/%s/%s_%s.png", cleanPrefix, folder, startup, suffix);
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "png");
     coverDebugLog("COVERSAVE begin host='%s' uri='%s' path='%s'", host, uri, path);
 
     buffer = memalign(64, chunkSize);
