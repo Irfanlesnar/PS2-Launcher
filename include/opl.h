@@ -218,6 +218,7 @@ extern char gPS5CoverDownloadUrl[768];
 void oplRefreshGameCoverStats(void);
 void oplRefreshGameCoverStatsForSupport(item_list_t *support);
 void oplRefreshGameCoverStatsIfNeeded(item_list_t *support);
+void oplRefreshMergedGameList(void);
 void oplSetGameCoverActiveSupport(item_list_t *support);
 void oplMarkGameCoverStatsDirty(void);
 void oplStartGameCoverDownload(int downloadMode);

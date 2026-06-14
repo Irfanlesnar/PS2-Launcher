@@ -1293,9 +1293,9 @@ static int cdirection(unsigned char a, unsigned char b)
         return 1;
 }
 
-u8 gPS5BgColorR = 16;
-u8 gPS5BgColorG = 16;
-u8 gPS5BgColorB = 16;
+u8 gPS5BgColorR = 0;
+u8 gPS5BgColorG = 0;
+u8 gPS5BgColorB = 0;
 
 void guiDrawBGPlasma()
 {
@@ -1680,6 +1680,7 @@ void guiUpdateScreenScale(void)
 int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
 {
     int terminate = 0;
+    int ps5ConfirmFocus = 1; // 1 = Yes, 0 = No
 
     sfxPlay(SFX_MESSAGE);
 
@@ -1690,8 +1691,16 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
 
         extern int gPS5Mode;
         if (gPS5Mode) {
-            if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE))
+            if (addAccept) {
+                if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT))
+                    ps5ConfirmFocus = !ps5ConfirmFocus;
+                if (getKeyOn(gSelectButton))
+                    terminate = ps5ConfirmFocus ? 2 : 1;
+                else if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE))
+                    terminate = 1;
+            } else if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE)) {
                 terminate = 1;
+            }
         } else {
             if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
                 terminate = 1;
@@ -1740,11 +1749,21 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
             int bodyY = dlgY + topPad;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            if (addAccept) {
+                int yesX = dlgX + dlgW - 152;
+                int noX = dlgX + dlgW - 76;
+                int optY = buttonY - 17;
+                rmDrawRoundedRect(yesX - 30, optY, 60, 28, 5, ps5ConfirmFocus ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+                rmDrawRoundedRect(noX - 30, optY, 60, 28, 5, !ps5ConfirmFocus ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+                fntRenderString(gTheme->fonts[0], yesX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+                fntRenderString(gTheme->fonts[0], noX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", !ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+            } else {
+                fntRenderString(gTheme->fonts[0], dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            }
 
         } else {
             rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
@@ -1798,8 +1817,11 @@ void guiRenderTextScreen(const char *message)
     guiStartFrame();
 
     if (gPS5Mode) {
-        // Stay in a pure solid pitch-black screen without showing any loading message or overlays
+        int waitFont = thmGetPS5SemiBoldFont();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0xFF));
+        rmDrawRoundedRect((screenWidth - 360) / 2 - 1, (screenHeight - 120) / 2 - 1, 362, 122, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+        rmDrawRoundedRect((screenWidth - 360) / 2, (screenHeight - 120) / 2, 360, 120, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+        fntRenderString(waitFont, screenWidth >> 1, screenHeight >> 1, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, message, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     } else {
         guiShow();
         rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
@@ -1890,8 +1912,8 @@ int guiConfirmVideoModeChange(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + titleY, ALIGN_LEFT, 0, 0, "Change video output now?", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x60));
@@ -2006,8 +2028,8 @@ int guiConfirmVideoMode(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + timerY, ALIGN_LEFT, textW, MENU_ITEM_HEIGHT, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));

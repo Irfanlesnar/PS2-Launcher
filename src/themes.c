@@ -2280,6 +2280,9 @@ static const char *getPS5DeviceLabel(item_list_t *support)
     if (support->mode == HDD_MODE)
         return "Internal HDD APA";
 
+    if (support->mode == ETH_MODE)
+        return "SMB";
+
     if (support->mode >= BDM_MODE && support->mode < ETH_MODE) {
         bdm_device_data_t *bdmData = (bdm_device_data_t *)support->priv;
         if (bdmData != NULL) {
@@ -2310,6 +2313,52 @@ static void drawPS5DeviceLoadingOverlay(void)
 
     if (loader && loader->Mem)
         rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
+}
+
+static void drawPS5SmbDialogOverlay(void)
+{
+    extern int gPS5SmbDialogState;
+    extern int gPS5SmbDialogFocus;
+    extern char gPS5SmbDialogMessage[128];
+
+    if (gPS5SmbDialogState == 0)
+        return;
+
+    int dlgW = 420;
+    int dlgH = 178;
+    int dlgX = (screenWidth - dlgW) / 2;
+    int dlgY = (screenHeight - dlgH) / 2;
+    int btnY = dlgY + dlgH - 34;
+
+    rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
+    rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+    rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+
+    fntRenderString(gPS5TitleFont, dlgX + 24, dlgY + 22, ALIGN_LEFT, 0, 0, "SMB Games", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+    if (gPS5SmbDialogState == 2) {
+        GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
+        int loaderSize = 16;
+        int loaderX = (dlgX + 32) * 4 / rmGetAspectWidth();
+        int loaderY = dlgY + 84;
+        short angle = (short)((guiFrameId * 96) & 0x0FFF);
+        if (loader && loader->Mem)
+            rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, dlgX + 58, dlgY + 72, ALIGN_LEFT, dlgW - 82, 40, gPS5SmbDialogMessage, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    } else {
+        fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 70, ALIGN_LEFT, dlgW - 48, 58, gPS5SmbDialogMessage, GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
+    }
+
+    if (gPS5SmbDialogState == 1) {
+        int yesX = dlgX + dlgW - 150;
+        int noX = dlgX + dlgW - 74;
+        fntRenderString(gPS5SmbDialogFocus ? gPS5SemiBoldFont : gPS5RegFont, yesX, btnY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes",
+            gPS5SmbDialogFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+        fntRenderString(!gPS5SmbDialogFocus ? gPS5SemiBoldFont : gPS5RegFont, noX, btnY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No",
+            !gPS5SmbDialogFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+    } else if (gPS5SmbDialogState == 3 || gPS5SmbDialogState == 4) {
+        drawPS5RightIconAndText(CIRCLE_ICON, "Close", gPS5RegFont, dlgX + dlgW - 24, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    }
 }
 
 static void clearNetCache(void)
@@ -2908,6 +2957,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
         if (bdmIsDeviceLoading())
             drawPS5DeviceLoadingOverlay();
+        drawPS5SmbDialogOverlay();
     } else {
         extern int gPS5SubSel;
         extern int gPS5TempVMode;
@@ -2917,19 +2967,134 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5TempShowGamesLogo;
         extern int gPS5TempSortMode;
         extern int gPS5SettingsSel;
+        extern int gPS5SettingsPage;
+        extern int gPS5SmbSettingsSel;
+        extern int gPS5TempEthEnabled;
+        extern int gPS5TempSmbAddressType;
+        extern int gPS5TempSmbDhcp;
+        extern int gPS5TempSmbPort;
+        extern int gPS5TempSmbCache;
+        extern char gPS5TempSmbIp[16];
+        extern char gPS5TempSmbName[17];
+        extern char gPS5TempSmbShare[32];
+        extern char gPS5TempSmbUser[32];
+        extern char gPS5TempSmbPassword[32];
+        extern char gPS5TempSmbPrefix[32];
         extern unsigned int gPS5SaveNotifyFrame;
         extern int guiFrameId;
 
         int rowX = 64;
         int rowY = 88;
         const int rowStep = 42;
-        const int cardW = screenWidth - 96;
-        const int cardH = 76;
+        const int cardGap = 16;
+        const int cardW = (screenWidth - 96 - cardGap) / 2;
+        const int cardH = 104;
         const int listTop = cardH + 34;
         int settingsFocusY = rowY;
         int settingsScrollOffset = 0;
 
-        if (gPS5SubSel == 7)
+        if (gPS5SettingsPage == 1) {
+            int headerBottom = 56;
+            int footerTop = screenHeight - 44;
+            int smbRowY = 92;
+            int smbRowStep = 38;
+            int smbFocusY = smbRowY + gPS5SmbSettingsSel * smbRowStep;
+            int smbScrollOffset = 0;
+            int rightX = screenWidth - 64;
+            int footerY = screenHeight - 20;
+            int i;
+
+            if (smbFocusY > footerTop - 54)
+                smbScrollOffset = smbFocusY - (footerTop - 54);
+            else if (smbFocusY < headerBottom + 36)
+                smbScrollOffset = smbFocusY - (headerBottom + 36);
+            smbRowY -= smbScrollOffset;
+
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+            rmDrawRect(0, 0, screenWidth, headerBottom, GS_SETREG_RGBA(0, 0, 0, 0x80));
+            rmDrawRect(0, footerTop, screenWidth, screenHeight - footerTop, GS_SETREG_RGBA(0, 0, 0, 0x80));
+            rmDrawRect(0, headerBottom, screenWidth, 1, GS_SETREG_RGBA(0x38, 0x38, 0x38, 0x40));
+            rmDrawRect(0, footerTop, screenWidth, 1, GS_SETREG_RGBA(0x38, 0x38, 0x38, 0x40));
+
+            fntRenderString(gPS5SemiBoldFont, rowX, 20, ALIGN_LEFT, 0, 0, "SMB Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+            for (i = 0; i < 10; i++) {
+                char value[96];
+                const char *label = "";
+                int y = smbRowY + i * smbRowStep;
+                int focused = gPS5SmbSettingsSel == i;
+
+                if (y < headerBottom + 8 || y > footerTop - 24)
+                    continue;
+
+                switch (i) {
+                    case 0:
+                        label = "SMB games";
+                        snprintf(value, sizeof(value), "< %s >", gPS5TempEthEnabled ? "On" : "Off");
+                        break;
+                    case 1:
+                        label = "Address type";
+                        snprintf(value, sizeof(value), "< %s >", gPS5TempSmbAddressType ? "Server name" : "IP address");
+                        break;
+                    case 2:
+                        label = gPS5TempSmbAddressType ? "Server name" : "Server IP";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbAddressType ? gPS5TempSmbName : gPS5TempSmbIp);
+                        break;
+                    case 3:
+                        label = "Share name";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbShare[0] ? gPS5TempSmbShare : "Not set");
+                        break;
+                    case 4:
+                        label = "Username";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbUser[0] ? gPS5TempSmbUser : "Guest");
+                        break;
+                    case 5:
+                        label = "Password";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbPassword[0] ? "********" : "None");
+                        break;
+                    case 6:
+                        label = "Port";
+                        snprintf(value, sizeof(value), "< %d >", gPS5TempSmbPort);
+                        break;
+                    case 7:
+                        label = "Folder prefix";
+                        snprintf(value, sizeof(value), "%s", gPS5TempSmbPrefix[0] ? gPS5TempSmbPrefix : "Root");
+                        break;
+                    case 8:
+                        label = "PS2 IP mode";
+                        snprintf(value, sizeof(value), "< %s >", gPS5TempSmbDhcp ? "DHCP" : "Manual");
+                        break;
+                    case 9:
+                        label = "SMB cache";
+                        snprintf(value, sizeof(value), "< %d >", gPS5TempSmbCache);
+                        break;
+                }
+
+                fntFitString(gPS5RegFont, value, screenWidth / 2);
+                drawPS5SettingsText(gPS5RegFont, rowX, y, ALIGN_LEFT, label, focused);
+                drawPS5SettingsText(gPS5RegFont, rightX, y, ALIGN_RIGHT, value, focused);
+            }
+
+            drawPS5IconAndText(CIRCLE_ICON, "Back", gPS5SemiBoldFont, 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            drawPS5RightIconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, screenWidth - 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+            if (gPS5SaveNotifyFrame && guiFrameId >= (int)gPS5SaveNotifyFrame && guiFrameId - (int)gPS5SaveNotifyFrame < 120) {
+                int toastW = 188;
+                int toastH = 38;
+                int toastX = (screenWidth - toastW) / 2;
+                int toastY = 386;
+                rmDrawRoundedRect(toastX - 1, toastY - 1, toastW + 2, toastH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+                rmDrawRoundedRect(toastX, toastY, toastW, toastH, 7, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+                fntRenderString(gPS5RegFont, toastX + toastW / 2, toastY + toastH / 2, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Save Successful", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            } else if (gPS5SaveNotifyFrame && guiFrameId - (int)gPS5SaveNotifyFrame >= 120) {
+                gPS5SaveNotifyFrame = 0;
+            }
+
+            drawPS5SmbDialogOverlay();
+            return;
+        }
+
+        if (gPS5SubSel == 7 || gPS5SubSel == 8)
             settingsFocusY = rowY + (cardH / 2);
         else
             settingsFocusY = rowY + listTop + (gPS5SubSel * rowStep);
@@ -2981,46 +3146,56 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         drawPS5SettingsText(gPS5RegFont, rowX, rowY + listTop + (rowStep * 5), ALIGN_LEFT, "Sorting games", gPS5SubSel == 5);
         drawPS5SettingsText(gPS5RegFont, rightX, rowY + listTop + (rowStep * 5), ALIGN_RIGHT, sortStr, gPS5SubSel == 5);
 
-        // 4. Draw game cover downloader with rounded highlight card and white border stroke
+        // 4. Draw quick action cards.
         char coverSummary[96];
+        char smbSummary[96];
         char coverButton[32];
         int coverFocused = gPS5SubSel == 7;
-        u64 strokeColor = coverFocused ? GS_SETREG_RGBA(0x24, 0x24, 0x24, 0x80) : GS_SETREG_RGBA(0x12, 0x12, 0x12, 0x80);
-        u64 cardColor = coverFocused ? GS_SETREG_RGBA(0x08, 0x08, 0x08, 0x80) : GS_SETREG_RGBA(0x06, 0x06, 0x06, 0x80);
-        u64 coverColor = coverFocused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56);
-        u64 coverSubColor = coverFocused ? GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x60) : GS_SETREG_RGBA(0x50, 0x50, 0x50, 0x48);
+        int smbFocused = gPS5SubSel == 8;
+        u64 idleCardColor = GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80);
+        u64 focusedCardColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
+        u64 idleHeadingColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
+        u64 idleSubColor = GS_SETREG_RGBA(0xA0, 0xA0, 0xA0, 0x72);
+        u64 focusedTextColor = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
+        u64 idleButtonColor = GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80);
+        u64 focusedButtonColor = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
+        u64 buttonTextColor = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
 
-        snprintf(coverSummary, sizeof(coverSummary), "Any cover art missing? Download it now.");
+        snprintf(coverSummary, sizeof(coverSummary), "Missing covers? Download now.");
+        snprintf(smbSummary, sizeof(smbSummary), "Connect network shared games.");
         if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP)
             snprintf(coverButton, sizeof(coverButton), "Downloading");
         else
             snprintf(coverButton, sizeof(coverButton), "Download");
 
         int cardX = rowX - 16;
+        int smbCardX = cardX + cardW + cardGap;
         int cardY = rowY;
+        int cardRadius = 7;
         
-        // Draw a thicker border stroke for better visibility on high resolution displays.
-        rmDrawRoundedRect(cardX - 2, cardY - 2, cardW + 4, cardH + 4, 10, strokeColor);
-        // Draw card background
-        rmDrawRoundedRect(cardX, cardY, cardW, cardH, 8, cardColor);
-        if (coverFocused) {
-            drawPS5FocusPointer(cardX - 36, cardY + (cardH / 2));
+        rmDrawRoundedRect(cardX, cardY, cardW, cardH, cardRadius, coverFocused ? focusedCardColor : idleCardColor);
+        fntRenderString(gPS5SemiBoldFont, cardX + 18, cardY + 14, ALIGN_LEFT, 0, 0, "Game Covers", coverFocused ? focusedTextColor : idleHeadingColor);
+        fntRenderString(gPS5RegFont, cardX + 18, cardY + 34, ALIGN_LEFT, 0.72f, 0.72f, coverSummary, coverFocused ? focusedTextColor : idleSubColor);
+        {
+            int btnW = (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) ? 104 : 82;
+            int btnH = 28;
+            int btnX = cardX + 18;
+            int btnY = cardY + 66;
+            rmDrawRoundedRect(btnX, btnY, btnW, btnH, 5, coverFocused ? focusedButtonColor : idleButtonColor);
+            fntRenderString(gPS5RegFont, btnX + (btnW / 2), btnY + 5, ALIGN_HCENTER, 0, 0, coverButton, buttonTextColor);
         }
 
-        fntRenderString(gPS5RegFont, cardX + 18, cardY + 16, ALIGN_LEFT, 0, 0, "Game Covers", coverColor);
-        fntRenderString(gPS5SmallFont, cardX + 18, cardY + 42, ALIGN_LEFT, 0, 0, coverSummary, coverSubColor);
-
-        int btnW = (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) ? 118 : 92;
-        int btnH = 28;
-        int btnX = cardX + cardW - btnW - 16;
-        int btnY = cardY + (cardH - btnH) / 2;
-
-        if (coverFocused) {
-            rmDrawRoundedRect(btnX, btnY, btnW, btnH, 5, GS_SETREG_RGBA(0x20, 0x32, 0x4A, 0x80));
-            fntRenderString(gPS5RegFont, btnX + (btnW / 2), btnY + 5, ALIGN_HCENTER, 0, 0, coverButton, GS_SETREG_RGBA(0xF0, 0xF7, 0xFF, 0x80));
-        } else {
-            rmDrawRoundedRect(btnX, btnY, btnW, btnH, 5, GS_SETREG_RGBA(0x12, 0x18, 0x22, 0x80));
-            fntRenderString(gPS5RegFont, btnX + (btnW / 2), btnY + 5, ALIGN_HCENTER, 0, 0, coverButton, GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x70));
+        rmDrawRoundedRect(smbCardX, cardY, cardW, cardH, cardRadius, smbFocused ? focusedCardColor : idleCardColor);
+        fntRenderString(gPS5SemiBoldFont, smbCardX + 18, cardY + 14, ALIGN_LEFT, 0, 0, "SMB Settings", smbFocused ? focusedTextColor : idleHeadingColor);
+        fntRenderString(gPS5RegFont, smbCardX + 18, cardY + 34, ALIGN_LEFT, 0.72f, 0.72f, smbSummary, smbFocused ? focusedTextColor : idleSubColor);
+        {
+            const char *smbState = gPS5TempEthEnabled ? "On" : "Off";
+            int smbBtnW = 82;
+            int smbBtnH = 28;
+            int smbBtnX = smbCardX + 18;
+            int smbBtnY = cardY + 66;
+            rmDrawRoundedRect(smbBtnX, smbBtnY, smbBtnW, smbBtnH, 5, smbFocused ? focusedButtonColor : idleButtonColor);
+            fntRenderString(gPS5RegFont, smbBtnX + (smbBtnW / 2), smbBtnY + 5, ALIGN_HCENTER, 0, 0, smbState, buttonTextColor);
         }
 
         {
@@ -3079,8 +3254,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             int toastH = 38;
             int toastX = (screenWidth - toastW) / 2;
             int toastY = 386;
-            rmDrawRoundedRect(toastX - 1, toastY - 1, toastW + 2, toastH + 2, 8, GS_SETREG_RGBA(0x28, 0x42, 0x62, 0x60));
-            rmDrawRoundedRect(toastX, toastY, toastW, toastH, 7, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(toastX - 1, toastY - 1, toastW + 2, toastH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(toastX, toastY, toastW, toastH, 7, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
             fntRenderString(gPS5RegFont, toastX + toastW / 2, toastY + toastH / 2, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Save Successful", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
         } else if (gPS5SaveNotifyFrame && guiFrameId - (int)gPS5SaveNotifyFrame >= 120) {
             gPS5SaveNotifyFrame = 0;
@@ -3106,9 +3281,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             // 2. Glassmorphic rounded modal container
             // Outer light border stroke for depth
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x26, 0x38, 0x50, 0x36));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
             // Container background
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x08, 0x0D, 0x14, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
 
             // 3. Header title based on download status
             const char *headerTitleText = "Download Covers";
@@ -3124,8 +3299,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
                 fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 70, ALIGN_LEFT, 0, 0, "How do you want to start the download?", GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
 
-                rmDrawRoundedRect(leftX, optY, optW, optH, 5, !missingFocused ? GS_SETREG_RGBA(0x20, 0x32, 0x4A, 0x80) : GS_SETREG_RGBA(0x12, 0x18, 0x22, 0x80));
-                rmDrawRoundedRect(rightX, optY, optW, optH, 5, missingFocused ? GS_SETREG_RGBA(0x20, 0x32, 0x4A, 0x80) : GS_SETREG_RGBA(0x12, 0x18, 0x22, 0x80));
+                rmDrawRoundedRect(leftX, optY, optW, optH, 5, !missingFocused ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+                rmDrawRoundedRect(rightX, optY, optW, optH, 5, missingFocused ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
                 fntRenderString(gPS5RegFont, leftX + optW / 2, optY + 8, ALIGN_HCENTER, 0, 0, "Full games", !missingFocused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x70, 0x78, 0x80, 0x70));
                 fntRenderString(gPS5RegFont, rightX + optW / 2, optY + 8, ALIGN_HCENTER, 0, 0, "Missing games", missingFocused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x70, 0x78, 0x80, 0x70));
 
@@ -3197,6 +3372,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                 drawPS5RightIconAndText(CIRCLE_ICON, "Close", gPS5RegFont, btnRight, btnY, btnColor);
             }
         }
+
+        drawPS5SmbDialogOverlay();
     }
 }
 

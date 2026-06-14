@@ -15,10 +15,12 @@
 #include "include/pad.h"
 #include "include/gui.h"
 #include "include/guigame.h"
+#include "include/dia.h"
 #include "include/system.h"
 #include "include/ioman.h"
 #include "include/sound.h"
 #include "include/ethsupport.h"
+#include "include/config.h"
 #include <assert.h>
 
 enum MENU_IDs {
@@ -1020,6 +1022,174 @@ int gPS5SavedSortMode = -1;
 int gPS5TempSortMode = 1;
 int gPS5SavedSelectButton = -1;
 int gPS5TempSelectButton = KEY_CIRCLE;
+int gPS5SmbSettingsSel = 0;
+int gPS5TempEthEnabled = 0;
+int gPS5TempSmbAddressType = 0;
+int gPS5TempSmbDhcp = 1;
+int gPS5TempSmbPort = 445;
+int gPS5TempSmbCache = 16;
+char gPS5TempSmbIp[16] = "192.168.1.10";
+char gPS5TempSmbName[17] = "";
+char gPS5TempSmbShare[32] = "";
+char gPS5TempSmbUser[32] = "";
+char gPS5TempSmbPassword[32] = "";
+char gPS5TempSmbPrefix[32] = "";
+static int gPS5SmbPromptState = 0; // 0 = can ask, 1 = answered, 2 = loading
+static int gPS5SmbLoadStatus = 0;
+int gPS5SmbDialogState = 0; // 0 = hidden, 1 = confirm, 2 = loading, 3 = info, 4 = error
+int gPS5SmbDialogFocus = 1; // 1 = Yes, 0 = No
+char gPS5SmbDialogMessage[128] = "";
+
+static void ps5LoadSmbGamesTask(void)
+{
+    item_list_t *eth = ethGetObject(0);
+
+    if (eth != NULL && eth->itemUpdate != NULL)
+        eth->itemUpdate(eth);
+
+    gPS5SmbLoadStatus = 0;
+}
+
+static void ps5QueueSmbLoad(void)
+{
+    item_list_t *eth = ethGetObject(0);
+
+    if (eth == NULL) {
+        gPS5SmbDialogState = 4;
+        snprintf(gPS5SmbDialogMessage, sizeof(gPS5SmbDialogMessage), "SMB is not available.");
+        return;
+    }
+
+    gPS5SmbPromptState = 2;
+    gPS5SmbLoadStatus = 1;
+    gPS5SmbDialogState = 2;
+    snprintf(gPS5SmbDialogMessage, sizeof(gPS5SmbDialogMessage), "Loading SMB games...");
+    eth->itemInit(eth);
+    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &ps5LoadSmbGamesTask);
+}
+
+static void ps5UpdateSmbDialog(void)
+{
+    item_list_t *eth;
+    int count;
+
+    if (gPS5SmbDialogState != 2 || gPS5SmbLoadStatus != 0)
+        return;
+
+    eth = ethGetObject(0);
+    count = (eth != NULL && eth->itemGetCount != NULL) ? eth->itemGetCount(eth) : 0;
+
+    if (gNetworkStartup == 0 && count > 0) {
+        oplRefreshMergedGameList();
+        gPS5SmbDialogState = 0;
+    } else if (gNetworkStartup == 0) {
+        gPS5SmbDialogState = 3;
+        snprintf(gPS5SmbDialogMessage, sizeof(gPS5SmbDialogMessage), "SMB loaded, but no games were found.");
+    } else {
+        gPS5SmbDialogState = 4;
+        snprintf(gPS5SmbDialogMessage, sizeof(gPS5SmbDialogMessage), "SMB failed to load.\nError code: %d", gNetworkStartup);
+    }
+
+    gPS5SmbPromptState = 1;
+}
+
+static int ps5HandleSmbDialogInput(void)
+{
+    extern int gSelectButton;
+
+    ps5UpdateSmbDialog();
+    if (gPS5SmbDialogState == 0)
+        return 0;
+
+    if (gPS5SmbDialogState == 1) {
+        if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+            sfxPlay(SFX_CURSOR);
+            gPS5SmbDialogFocus = !gPS5SmbDialogFocus;
+        }
+        if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+            if (gPS5SmbDialogFocus) {
+                sfxPlay(SFX_CONFIRM);
+                ps5QueueSmbLoad();
+            } else {
+                sfxPlay(SFX_CANCEL);
+                gPS5SmbPromptState = 1;
+                gPS5SmbDialogState = 0;
+            }
+        } else if (getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE)) {
+            sfxPlay(SFX_CANCEL);
+            gPS5SmbPromptState = 1;
+            gPS5SmbDialogState = 0;
+        }
+    } else if (gPS5SmbDialogState == 3 || gPS5SmbDialogState == 4) {
+        if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE) || getKeyOn(gSelectButton)) {
+            sfxPlay(SFX_CONFIRM);
+            gPS5SmbDialogState = 0;
+        }
+    }
+
+    return 1;
+}
+
+static void ps5CopySmbSettingsToTemp(void)
+{
+    snprintf(gPS5TempSmbIp, sizeof(gPS5TempSmbIp), "%d.%d.%d.%d", pc_ip[0], pc_ip[1], pc_ip[2], pc_ip[3]);
+    strncpy(gPS5TempSmbName, gPCShareNBAddress, sizeof(gPS5TempSmbName) - 1);
+    gPS5TempSmbName[sizeof(gPS5TempSmbName) - 1] = '\0';
+    strncpy(gPS5TempSmbShare, gPCShareName, sizeof(gPS5TempSmbShare) - 1);
+    gPS5TempSmbShare[sizeof(gPS5TempSmbShare) - 1] = '\0';
+    strncpy(gPS5TempSmbUser, gPCUserName, sizeof(gPS5TempSmbUser) - 1);
+    gPS5TempSmbUser[sizeof(gPS5TempSmbUser) - 1] = '\0';
+    strncpy(gPS5TempSmbPassword, gPCPassword, sizeof(gPS5TempSmbPassword) - 1);
+    gPS5TempSmbPassword[sizeof(gPS5TempSmbPassword) - 1] = '\0';
+    strncpy(gPS5TempSmbPrefix, gETHPrefix, sizeof(gPS5TempSmbPrefix) - 1);
+    gPS5TempSmbPrefix[sizeof(gPS5TempSmbPrefix) - 1] = '\0';
+    gPS5TempEthEnabled = gETHStartMode != START_MODE_DISABLED;
+    gPS5TempSmbAddressType = gPCShareAddressIsNetBIOS ? 1 : 0;
+    gPS5TempSmbDhcp = ps2_ip_use_dhcp ? 1 : 0;
+    gPS5TempSmbPort = gPCPort > 0 ? gPCPort : 445;
+    gPS5TempSmbCache = smbCacheSize;
+}
+
+static void ps5ApplyTempSmbSettings(void)
+{
+    int ip0 = 0, ip1 = 0, ip2 = 0, ip3 = 0;
+
+    if (sscanf(gPS5TempSmbIp, "%d.%d.%d.%d", &ip0, &ip1, &ip2, &ip3) == 4) {
+        pc_ip[0] = ip0;
+        pc_ip[1] = ip1;
+        pc_ip[2] = ip2;
+        pc_ip[3] = ip3;
+    }
+
+    gETHStartMode = gPS5TempEthEnabled ? START_MODE_AUTO : START_MODE_DISABLED;
+    gPCShareAddressIsNetBIOS = gPS5TempSmbAddressType ? 1 : 0;
+    ps2_ip_use_dhcp = gPS5TempSmbDhcp ? 1 : 0;
+    gPCPort = gPS5TempSmbPort > 0 ? gPS5TempSmbPort : 445;
+    smbCacheSize = gPS5TempSmbCache;
+
+    strncpy(gPCShareNBAddress, gPS5TempSmbName, sizeof(gPCShareNBAddress) - 1);
+    gPCShareNBAddress[sizeof(gPCShareNBAddress) - 1] = '\0';
+    strncpy(gPCShareName, gPS5TempSmbShare, sizeof(gPCShareName) - 1);
+    gPCShareName[sizeof(gPCShareName) - 1] = '\0';
+    strncpy(gPCUserName, gPS5TempSmbUser, sizeof(gPCUserName) - 1);
+    gPCUserName[sizeof(gPCUserName) - 1] = '\0';
+    strncpy(gPCPassword, gPS5TempSmbPassword, sizeof(gPCPassword) - 1);
+    gPCPassword[sizeof(gPCPassword) - 1] = '\0';
+    strncpy(gETHPrefix, gPS5TempSmbPrefix, sizeof(gETHPrefix) - 1);
+    gETHPrefix[sizeof(gETHPrefix) - 1] = '\0';
+}
+
+static void ps5EditSmbText(char *value, int maxLen, int hideText, const char *title)
+{
+    char tmp[CONFIG_KEY_VALUE_LEN];
+
+    strncpy(tmp, value, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    if (diaShowKeyb(tmp, maxLen, hideText, title)) {
+        strncpy(value, tmp, maxLen - 1);
+        value[maxLen - 1] = '\0';
+    }
+}
 
 static void ps5SaveSettings(void)
 {
@@ -1055,6 +1225,7 @@ static void ps5SaveSettings(void)
     gPS5ShowGamesLogo = gPS5TempShowGamesLogo;
     gPS5SortMode = gPS5TempSortMode;
     gSelectButton = gPS5TempSelectButton;
+    ps5ApplyTempSmbSettings();
 
     gPS5SavedUISound = gPS5UISound;
     gPS5SavedShowCoverImages = gPS5ShowCoverImages;
@@ -1063,7 +1234,9 @@ static void ps5SaveSettings(void)
     gPS5SavedSelectButton = gSelectButton;
     gPS5SavedVMode = gVMode;
 
-    saveConfigQuiet(CONFIG_OPL);
+    saveConfigQuiet(CONFIG_OPL | CONFIG_NETWORK);
+    if (gETHStartMode != START_MODE_DISABLED)
+        gPS5SmbPromptState = 0;
     gPS5SaveNotifyFrame = guiFrameId;
 }
 
@@ -1095,12 +1268,17 @@ void menuHandleInputMenu()
             gPS5TempShowGamesLogo = gPS5ShowGamesLogo;
             gPS5SavedSortMode = gPS5SortMode;
             gPS5TempSortMode = gPS5SortMode;
+            ps5CopySmbSettingsToTemp();
             oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
         }
-        if (gPS5SubSel > 7)
-            gPS5SubSel = 7;
+        if (gPS5SubSel > 8)
+            gPS5SubSel = 8;
         if (gPS5SubSel > 5 && gPS5SubSel < 7)
             gPS5SubSel = 5;
+
+        if (ps5HandleSmbDialogInput()) {
+            return;
+        }
 
         if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_PROMPT) {
             if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
@@ -1137,9 +1315,111 @@ void menuHandleInputMenu()
             return;
         }
 
+        {
+            extern int gPS5SettingsPage;
+            if (gPS5SettingsPage == 1) {
+                if (getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE)) {
+                    sfxPlay(SFX_CANCEL);
+                    gPS5SettingsPage = 0;
+                    return;
+                }
+
+                if (getKeyOn(KEY_SQUARE)) {
+                    sfxPlay(SFX_CONFIRM);
+                    ps5SaveSettings();
+                    return;
+                }
+
+                if (getKey(KEY_UP)) {
+                    sfxPlay(SFX_CURSOR);
+                    gPS5SmbSettingsSel = gPS5SmbSettingsSel > 0 ? gPS5SmbSettingsSel - 1 : 9;
+                } else if (getKey(KEY_DOWN)) {
+                    sfxPlay(SFX_CURSOR);
+                    gPS5SmbSettingsSel = gPS5SmbSettingsSel < 9 ? gPS5SmbSettingsSel + 1 : 0;
+                }
+
+                if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                    sfxPlay(SFX_CURSOR);
+                    switch (gPS5SmbSettingsSel) {
+                        case 0:
+                            gPS5TempEthEnabled = !gPS5TempEthEnabled;
+                            break;
+                        case 1:
+                            gPS5TempSmbAddressType = !gPS5TempSmbAddressType;
+                            break;
+                        case 6:
+                            if (getKeyOn(KEY_LEFT))
+                                gPS5TempSmbPort = gPS5TempSmbPort > 1 ? gPS5TempSmbPort - 1 : 65535;
+                            else
+                                gPS5TempSmbPort = gPS5TempSmbPort < 65535 ? gPS5TempSmbPort + 1 : 1;
+                            break;
+                        case 8:
+                            gPS5TempSmbDhcp = !gPS5TempSmbDhcp;
+                            break;
+                        case 9:
+                            if (getKeyOn(KEY_LEFT))
+                                gPS5TempSmbCache = gPS5TempSmbCache > 0 ? gPS5TempSmbCache - 1 : 0;
+                            else if (gPS5TempSmbCache < 64)
+                                gPS5TempSmbCache++;
+                            break;
+                    }
+                }
+
+                if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                    char tmp[16];
+                    int value;
+                    sfxPlay(SFX_CONFIRM);
+                    switch (gPS5SmbSettingsSel) {
+                        case 0:
+                            gPS5TempEthEnabled = !gPS5TempEthEnabled;
+                            break;
+                        case 1:
+                            gPS5TempSmbAddressType = !gPS5TempSmbAddressType;
+                            break;
+                        case 2:
+                            if (gPS5TempSmbAddressType)
+                                ps5EditSmbText(gPS5TempSmbName, sizeof(gPS5TempSmbName), 0, "SMB Server Name");
+                            else
+                                ps5EditSmbText(gPS5TempSmbIp, sizeof(gPS5TempSmbIp), 0, "SMB Server IP");
+                            break;
+                        case 3:
+                            ps5EditSmbText(gPS5TempSmbShare, sizeof(gPS5TempSmbShare), 0, "SMB Share");
+                            break;
+                        case 4:
+                            ps5EditSmbText(gPS5TempSmbUser, sizeof(gPS5TempSmbUser), 0, "SMB Username");
+                            break;
+                        case 5:
+                            ps5EditSmbText(gPS5TempSmbPassword, sizeof(gPS5TempSmbPassword), 1, "SMB Password");
+                            break;
+                        case 6:
+                            snprintf(tmp, sizeof(tmp), "%d", gPS5TempSmbPort);
+                            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Port") && sscanf(tmp, "%d", &value) == 1 && value > 0 && value <= 65535)
+                                gPS5TempSmbPort = value;
+                            break;
+                        case 7:
+                            ps5EditSmbText(gPS5TempSmbPrefix, sizeof(gPS5TempSmbPrefix), 0, "SMB Folder Prefix");
+                            break;
+                        case 8:
+                            gPS5TempSmbDhcp = !gPS5TempSmbDhcp;
+                            break;
+                        case 9:
+                            snprintf(tmp, sizeof(tmp), "%d", gPS5TempSmbCache);
+                            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Cache") && sscanf(tmp, "%d", &value) == 1 && value >= 0 && value <= 64)
+                                gPS5TempSmbCache = value;
+                            break;
+                    }
+                }
+                return;
+            }
+        }
+
         // Triangle key: Back to Games tab, revert changes if not saved
         if (getKeyOn(KEY_TRIANGLE)) {
             sfxPlay(SFX_CANCEL);
+            {
+                extern int gPS5SettingsPage;
+                gPS5SettingsPage = 0;
+            }
             if (gVMode != gPS5SavedVMode) {
                 gVMode = gPS5SavedVMode;
                 applyConfig(-1, -1, 0);
@@ -1155,6 +1435,10 @@ void menuHandleInputMenu()
             gPS5TempShowCoverImages = gPS5SavedShowCoverImages;
             gPS5TempShowGamesLogo = gPS5SavedShowGamesLogo;
             gPS5TempSortMode = gPS5SavedSortMode;
+            {
+                extern int gPS5SettingsPage;
+                gPS5SettingsPage = 0;
+            }
             gPS5ActiveTab = 0;
             return;
         }
@@ -1277,14 +1561,41 @@ void menuHandleInputMenu()
                 gPS5SubSel = 4;
             }
         } else if (gPS5SubSel == 7) { // Focus is on Game Covers
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 8;
+            }
             if (getKey(KEY_DOWN)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5SubSel = 0;
+            }
+            if (getKey(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 8;
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);
                 gPS5CoverDownloadMode = PS5_COVER_DOWNLOAD_MISSING;
                 gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_PROMPT;
+            }
+        } else if (gPS5SubSel == 8) { // Focus is on SMB Settings
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 7;
+            }
+            if (getKey(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 7;
+            }
+            if (getKey(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 0;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                extern int gPS5SettingsPage;
+                sfxPlay(SFX_CONFIRM);
+                gPS5SettingsPage = 1;
+                gPS5SmbSettingsSel = 0;
             }
         }
         return;
@@ -1416,6 +1727,9 @@ void menuHandleInputMain()
         extern int gPS5ShowCoverImages;
         extern int gPS5ShowGamesLogo;
         extern int gPS5SortMode;
+        if (ps5HandleSmbDialogInput()) {
+            return;
+        }
         if (getKeyOn(KEY_L1)) {
             sfxPlay(SFX_CURSOR);
             if (gPS5ActiveTab == 1) {
@@ -1448,6 +1762,11 @@ void menuHandleInputMain()
                 gPS5TempShowGamesLogo = gPS5ShowGamesLogo;
                 gPS5SavedSortMode = gPS5SortMode;
                 gPS5TempSortMode = gPS5SortMode;
+                ps5CopySmbSettingsToTemp();
+                {
+                    extern int gPS5SettingsPage;
+                    gPS5SettingsPage = 0;
+                }
             }
             gPS5ActiveTab = 1;
             oplSetGameCoverActiveSupport(selected_item != NULL ? selected_item->item->userdata : NULL);
@@ -1456,6 +1775,17 @@ void menuHandleInputMain()
                 menuSetMainMenuCurrent(menuGetMainMenu());
             }
             return;
+        }
+
+        if (gPS5ActiveTab == 0 && gETHStartMode != START_MODE_DISABLED && gPS5SmbPromptState == 0) {
+            item_list_t *eth = ethGetObject(0);
+            if (eth != NULL && !eth->enabled) {
+                gPS5SmbPromptState = 2;
+                gPS5SmbDialogState = 1;
+                gPS5SmbDialogFocus = 1;
+                snprintf(gPS5SmbDialogMessage, sizeof(gPS5SmbDialogMessage), "Do you want to load SMB games?");
+                return;
+            }
         }
 
         if (gPS5ActiveTab == 1) {

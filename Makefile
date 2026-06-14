@@ -77,18 +77,19 @@ FRONTEND_OBJS = pad.o xparam.o fntsys.o renderman.o menusys.o OSDHistory.o syste
 
 IOP_OBJS =	iomanx.o filexio.o ps2fs.o usbd.o bdmevent.o \
 		bdm.o bdmfs_fatfs.o usbmass_bd.o iLinkman.o IEEE1394_bd.o mx4sio_bd.o \
-		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o \
-		ps2dev9.o smsutils.o ps2ip.o smap.o httpclient-iop.o netman.o ps2ips.o \
+		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o lwnbdsvr.o \
+		ps2dev9.o smsutils.o ps2ip.o smap.o httpclient-iop.o netman.o ps2ips.o nbns-iop.o \
 		isofs.o \
 		sio2man.o padman.o mcman.o mcserv.o \
-		bdm_mcemu.o hdd_mcemu.o \
+		bdm_mcemu.o hdd_mcemu.o smb_mcemu.o \
 		iremsndpatch.o apemodpatch.o f2techioppatch.o cleareffects.o resetspu.o \
 		libsd.o audsrv.o
 
 EECORE_OBJS = ee_core.o ioprp.o util.o \
 		udnl.o imgdrv.o eesync.o \
-		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o \
-		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o
+		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o smb_cdvdman.o \
+		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o \
+		ingame_smstcpip.o smap_ingame.o smbman.o smbinit.o
 
 PNG_ASSETS = loader Instagram_icon logo square cross circle triangle focus
 	# unused icons - up down l1 l2 l3 r1 r2 r3

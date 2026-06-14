@@ -156,6 +156,7 @@ static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected,
 static void reset(void);
 static void deferredAudioInit(void);
 static int coverIsLocalGameSupport(item_list_t *support);
+static int ps5IsMergedGameSupport(item_list_t *support);
 
 // frame counter
 static unsigned int frameCounter;
@@ -229,7 +230,7 @@ static int oplResolveMenuGame(struct menu_item *curMenu, item_list_t **support, 
     encodedItem = (resolvedId & PS5_GAME_ITEM_FLAG) != 0;
     oplResolveGameItem(resolvedId, resolvedSupport, &resolvedSupport, &resolvedId);
 
-    if (!encodedItem && coverIsLocalGameSupport(resolvedSupport)) {
+    if (!encodedItem && ps5IsMergedGameSupport(resolvedSupport)) {
         int idByTitle;
 
         if (resolvedSupport->itemUpdate != NULL)
@@ -240,7 +241,7 @@ static int oplResolveMenuGame(struct menu_item *curMenu, item_list_t **support, 
             int mode;
             for (mode = 0; mode < MODE_COUNT; mode++) {
                 item_list_t *candidate = list_support[mode].support;
-                if (!coverIsLocalGameSupport(candidate) || !candidate->enabled)
+                if (!ps5IsMergedGameSupport(candidate) || !candidate->enabled)
                     continue;
 
                 if (candidate->itemUpdate != NULL)
@@ -607,7 +608,9 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
     else if (mode == APP_MODE)
         startMode = gAPPStartMode;
 
-    if (gPS5Mode && startMode == START_MODE_DISABLED && !(mode == HDD_MODE && gEnableBdmHDD)) {
+    if (gPS5Mode && mode == ETH_MODE && startMode != START_MODE_DISABLED) {
+        startMode = START_MODE_MANUAL;
+    } else if (gPS5Mode && startMode == START_MODE_DISABLED && !(mode == HDD_MODE && gEnableBdmHDD)) {
         startMode = START_MODE_MANUAL;
     }
 
@@ -877,7 +880,7 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
     // read the new game list
     struct gui_update_t *gup = NULL;
     int count = 0;
-    int aggregateLocalGames = gPS5Mode && coverIsLocalGameSupport(mdl->support);
+    int aggregateLocalGames = gPS5Mode && ps5IsMergedGameSupport(mdl->support);
 
     if (!aggregateLocalGames)
         count = mdl->support->itemUpdate(mdl->support);
@@ -888,7 +891,7 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
             item_list_t *sourceSupport = list_support[mode].support;
             int sourceCount, i;
 
-            if (!coverIsLocalGameSupport(sourceSupport) || !sourceSupport->enabled)
+            if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled)
                 continue;
 
             sourceCount = sourceSupport->itemUpdate(sourceSupport);
@@ -1808,6 +1811,25 @@ static int coverIsLocalGameSupport(item_list_t *support)
     return support->mode == HDD_MODE;
 }
 
+static int ps5IsMergedGameSupport(item_list_t *support)
+{
+    if (coverIsLocalGameSupport(support))
+        return 1;
+
+    return support != NULL && support->enabled && support->mode == ETH_MODE;
+}
+
+void oplRefreshMergedGameList(void)
+{
+    int mode;
+
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        item_list_t *support = list_support[mode].support;
+        if (ps5IsMergedGameSupport(support))
+            ioPutRequest(IO_MENU_UPDATE_DEFFERED, &support->mode);
+    }
+}
+
 static void coverDebugLog(const char *format, ...)
 {
     (void)format;
@@ -2702,7 +2724,7 @@ static void setDefaults(void)
 
     ps2_ip_use_dhcp = 1;
     gETHOpMode = ETH_OP_MODE_AUTO;
-    gPCShareAddressIsNetBIOS = 1;
+    gPCShareAddressIsNetBIOS = 0;
     gPCShareNBAddress[0] = '\0';
     ps2_ip[0] = 192;
     ps2_ip[1] = 168;
@@ -2759,7 +2781,7 @@ static void setDefaults(void)
 
     gBDMStartMode = START_MODE_AUTO;
     gHDDStartMode = START_MODE_AUTO;
-    gETHStartMode = START_MODE_AUTO;
+    gETHStartMode = START_MODE_DISABLED;
     gAPPStartMode = START_MODE_AUTO;
 
     gEnableILK = 0;
