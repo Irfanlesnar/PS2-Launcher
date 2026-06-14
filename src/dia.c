@@ -34,8 +34,11 @@ static int screenWidth;
 static int screenHeight;
 
 extern void *focus_png;
+extern void *roboto_bold_raw;
+extern int size_roboto_bold_raw;
 static GSTEXTURE gDiaPS5FocusTex;
 static int gDiaPS5FocusTexLoaded = 0;
+static int gDiaPS5IpFont = -1;
 
 // Utility stuff
 #define KEYB_MODE   2
@@ -212,21 +215,27 @@ int diaShowIpEditor(char *text, int maxLen)
 {
     int parts[4];
     int selected = 0;
+    int pressAnim = 0;
+    int pressDir = 0;
 
     if (!gPS5Mode)
         return diaShowKeyb(text, maxLen, 0, "SMB Server IP");
 
     diaParseIp(text, parts);
     rmGetScreenExtents(&screenWidth, &screenHeight);
+    if (gDiaPS5IpFont < 0)
+        gDiaPS5IpFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 48);
 
     while (1) {
-        int font = thmGetPS5TitleFont();
+        int font = gDiaPS5IpFont >= 0 ? gDiaPS5IpFont : thmGetPS5TitleFont();
         int footerFont = thmGetPS5SemiBoldFont();
         int centerY = screenHeight / 2;
-        int segmentW = screenWidth * 118 / 1000;
-        int dotGap = screenWidth * 38 / 1000;
+        int segmentW = screenWidth * 130 / 1000;
+        int dotGap = screenWidth * 30 / 1000;
         int totalW = (segmentW * 4) + (dotGap * 3);
         int baseX = (screenWidth - totalW) / 2;
+        int arrowSize = 27;
+        int tapOffset = pressAnim > 0 ? (pressAnim * 2) : 0;
         int arrowX;
         int segCenter[4];
         int dotCenter[3];
@@ -245,8 +254,8 @@ int diaShowIpEditor(char *text, int maxLen)
         }
 
         arrowX = segCenter[selected];
-        diaDrawPS5FocusArrow(arrowX, centerY - 108, 54, 1);
-        diaDrawPS5FocusArrow(arrowX, centerY + 112, 54, 0);
+        diaDrawPS5FocusArrow(arrowX, centerY - 70 + (pressDir < 0 ? tapOffset : 0), arrowSize, 1);
+        diaDrawPS5FocusArrow(arrowX, centerY + 76 - (pressDir > 0 ? tapOffset : 0), arrowSize, 0);
 
         for (i = 0; i < 4; i++) {
             if (i == 2)
@@ -262,6 +271,8 @@ int diaShowIpEditor(char *text, int maxLen)
         diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 112, screenHeight - 56, footerFont);
 
         rmEndFrame();
+        if (pressAnim > 0)
+            pressAnim--;
 
         if (getKey(KEY_LEFT)) {
             sfxPlay(SFX_CURSOR);
@@ -271,12 +282,18 @@ int diaShowIpEditor(char *text, int maxLen)
             selected = selected < 3 ? selected + 1 : 0;
         } else if (getKey(KEY_UP)) {
             sfxPlay(SFX_CURSOR);
-            if (parts[selected] < 255)
+            if (parts[selected] < 255) {
                 parts[selected]++;
+                pressAnim = 4;
+                pressDir = -1;
+            }
         } else if (getKey(KEY_DOWN)) {
             sfxPlay(SFX_CURSOR);
-            if (parts[selected] > 0)
+            if (parts[selected] > 0) {
                 parts[selected]--;
+                pressAnim = 4;
+                pressDir = 1;
+            }
         } else if (getKeyOn(KEY_SQUARE)) {
             sfxPlay(SFX_CONFIRM);
             snprintf(text, maxLen, "%d.%d.%03d.%d", parts[0], parts[1], parts[2], parts[3]);
