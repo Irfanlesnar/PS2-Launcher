@@ -12,6 +12,7 @@
 #include "include/renderman.h"
 #include "include/fntsys.h"
 #include "include/themes.h"
+#include "include/textures.h"
 #include "include/util.h"
 #include "include/sound.h"
 
@@ -31,6 +32,10 @@
 
 static int screenWidth;
 static int screenHeight;
+
+extern void *focus_png;
+static GSTEXTURE gDiaPS5FocusTex;
+static int gDiaPS5FocusTexLoaded = 0;
 
 // Utility stuff
 #define KEYB_MODE   2
@@ -164,8 +169,15 @@ static void diaDrawPS5FocusArrow(int cx, int cy, int size, int up)
     GSTEXTURE *focus = thmGetTexture(FOCUS_ICON);
     float angle = up ? -1.5707963f : 1.5707963f;
 
+    if ((focus == NULL || focus->Mem == NULL) && !gDiaPS5FocusTexLoaded) {
+        memset(&gDiaPS5FocusTex, 0, sizeof(GSTEXTURE));
+        gDiaPS5FocusTexLoaded = texLoadMem(&gDiaPS5FocusTex, &focus_png) >= 0 ? 1 : -1;
+    }
+    if (focus == NULL || focus->Mem == NULL)
+        focus = gDiaPS5FocusTexLoaded == 1 ? &gDiaPS5FocusTex : NULL;
+
     if (focus != NULL && focus->Mem != NULL)
-        rmDrawRotatedPixmap(focus, cx * 4 / rmGetAspectWidth(), cy, size, size, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        rmDrawRotatedPixmap(focus, cx, cy, size, size, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     else
         diaDrawPS5Triangle(cx, cy - (up ? 0 : size / 2), size / 2, up, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 }
@@ -210,12 +222,14 @@ int diaShowIpEditor(char *text, int maxLen)
     while (1) {
         int font = thmGetPS5TitleFont();
         int footerFont = thmGetPS5SemiBoldFont();
-        int baseX = screenWidth * 205 / 1000;
         int centerY = screenHeight / 2;
-        int stepX = screenWidth * 190 / 1000;
-        int dotOffset = screenWidth * 110 / 1000;
+        int segmentW = screenWidth * 118 / 1000;
+        int dotGap = screenWidth * 38 / 1000;
+        int totalW = (segmentW * 4) + (dotGap * 3);
+        int baseX = (screenWidth - totalW) / 2;
         int arrowX;
-        int x[4];
+        int segCenter[4];
+        int dotCenter[3];
         int i;
         char value[8];
 
@@ -224,21 +238,24 @@ int diaShowIpEditor(char *text, int maxLen)
         rmStartFrame();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
 
-        for (i = 0; i < 4; i++)
-            x[i] = baseX + (i * stepX);
+        for (i = 0; i < 4; i++) {
+            segCenter[i] = baseX + (i * (segmentW + dotGap)) + (segmentW / 2);
+            if (i < 3)
+                dotCenter[i] = baseX + ((i + 1) * segmentW) + (i * dotGap) + (dotGap / 2);
+        }
 
-        arrowX = x[selected] + 48;
+        arrowX = segCenter[selected];
         diaDrawPS5FocusArrow(arrowX, centerY - 108, 54, 1);
-        diaDrawPS5FocusArrow(arrowX, centerY + 122, 54, 0);
+        diaDrawPS5FocusArrow(arrowX, centerY + 112, 54, 0);
 
         for (i = 0; i < 4; i++) {
             if (i == 2)
                 snprintf(value, sizeof(value), "%03d", parts[i]);
             else
                 snprintf(value, sizeof(value), "%d", parts[i]);
-            fntRenderString(font, x[i], centerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(font, segCenter[i], centerY, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             if (i < 3)
-                fntRenderString(font, x[i] + dotOffset, centerY + 18, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+                fntRenderString(font, dotCenter[i], centerY + 6, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
         }
 
         diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 230, screenHeight - 56, footerFont);
