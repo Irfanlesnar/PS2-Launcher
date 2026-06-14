@@ -1355,7 +1355,7 @@ void menuHandleInputMenu()
                             gPS5TempEthEnabled = !gPS5TempEthEnabled;
                             break;
                         case 1:
-                            ps5EditSmbText(gPS5TempSmbIp, sizeof(gPS5TempSmbIp), 0, "SMB Server IP");
+                            diaShowIpEditor(gPS5TempSmbIp, sizeof(gPS5TempSmbIp));
                             break;
                         case 2:
                             ps5EditSmbText(gPS5TempSmbShare, sizeof(gPS5TempSmbShare), 0, "SMB Share");

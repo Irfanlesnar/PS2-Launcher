@@ -85,6 +85,26 @@ static int diaFindNearestKey(ps5_key_t *keys, int count, int current, int direct
     int cx = keys[current].x + keys[current].w / 2;
     int cy = keys[current].y + keys[current].h / 2;
 
+    if (direction == KEY_LEFT || direction == KEY_RIGHT) {
+        for (i = 0; i < count; i++) {
+            int ix, dx;
+            if (i == current || keys[i].row != keys[current].row)
+                continue;
+
+            ix = keys[i].x + keys[i].w / 2;
+            dx = ix - cx;
+            if ((direction == KEY_LEFT && dx >= 0) || (direction == KEY_RIGHT && dx <= 0))
+                continue;
+            if (abs(dx) < bestScore) {
+                bestScore = abs(dx);
+                best = i;
+            }
+        }
+
+        if (best != current)
+            return best;
+    }
+
     for (i = 0; i < count; i++) {
         int ix, iy, dx, dy, score;
         if (i == current)
@@ -111,6 +131,116 @@ static int diaFindNearestKey(ps5_key_t *keys, int count, int current, int direct
     }
 
     return best;
+}
+
+static void diaDrawPS5Triangle(int cx, int cy, int size, int up, u64 color)
+{
+    int row;
+
+    for (row = 0; row < size; row++) {
+        int width = (row * 2) + 1;
+        int y = up ? cy + row : cy - row;
+        rmDrawRect(cx - row, y, width, 1, color);
+    }
+}
+
+static void diaDrawPS5FooterIconText(int iconId, const char *text, int x, int y, int font)
+{
+    GSTEXTURE *icon = thmGetTexture(iconId);
+    if (icon != NULL && icon->Mem != NULL)
+        rmDrawPixmap(icon, x, y, ALIGN_LEFT | ALIGN_VCENTER, 20, 20, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    fntRenderString(font, x + 28, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, text, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+}
+
+static int diaParseIp(const char *text, int *parts)
+{
+    int a = 192, b = 168, c = 0, d = 0;
+
+    if (text == NULL || sscanf(text, "%d.%d.%d.%d", &a, &b, &c, &d) != 4) {
+        a = 192;
+        b = 168;
+        c = 0;
+        d = 0;
+    }
+
+    parts[0] = a < 0 ? 0 : (a > 255 ? 255 : a);
+    parts[1] = b < 0 ? 0 : (b > 255 ? 255 : b);
+    parts[2] = c < 0 ? 0 : (c > 255 ? 255 : c);
+    parts[3] = d < 0 ? 0 : (d > 255 ? 255 : d);
+    return 0;
+}
+
+int diaShowIpEditor(char *text, int maxLen)
+{
+    int parts[4];
+    int selected = 0;
+
+    if (!gPS5Mode)
+        return diaShowKeyb(text, maxLen, 0, "SMB Server IP");
+
+    diaParseIp(text, parts);
+    rmGetScreenExtents(&screenWidth, &screenHeight);
+
+    while (1) {
+        int font = thmGetPS5TitleFont();
+        int footerFont = thmGetPS5SemiBoldFont();
+        int baseX = screenWidth * 205 / 1000;
+        int centerY = screenHeight / 2;
+        int stepX = screenWidth * 190 / 1000;
+        int dotOffset = screenWidth * 110 / 1000;
+        int x[4];
+        int i;
+        char value[8];
+
+        readPads();
+
+        rmStartFrame();
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+
+        for (i = 0; i < 4; i++)
+            x[i] = baseX + (i * stepX);
+
+        diaDrawPS5Triangle(x[selected] + 48, centerY - 108, 22, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        diaDrawPS5Triangle(x[selected] + 48, centerY + 108, 22, 0, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        for (i = 0; i < 4; i++) {
+            if (i == 2)
+                snprintf(value, sizeof(value), "%03d", parts[i]);
+            else
+                snprintf(value, sizeof(value), "%d", parts[i]);
+            fntRenderString(font, x[i], centerY, ALIGN_LEFT | ALIGN_VCENTER, 2.20f, 2.20f, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            if (i < 3)
+                fntRenderString(font, x[i] + dotOffset, centerY + 18, ALIGN_LEFT | ALIGN_VCENTER, 2.20f, 2.20f, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        }
+
+        diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 230, screenHeight - 56, footerFont);
+        diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 112, screenHeight - 56, footerFont);
+
+        rmEndFrame();
+
+        if (getKey(KEY_LEFT)) {
+            sfxPlay(SFX_CURSOR);
+            selected = selected > 0 ? selected - 1 : 3;
+        } else if (getKey(KEY_RIGHT)) {
+            sfxPlay(SFX_CURSOR);
+            selected = selected < 3 ? selected + 1 : 0;
+        } else if (getKey(KEY_UP)) {
+            sfxPlay(SFX_CURSOR);
+            if (parts[selected] < 255)
+                parts[selected]++;
+        } else if (getKey(KEY_DOWN)) {
+            sfxPlay(SFX_CURSOR);
+            if (parts[selected] > 0)
+                parts[selected]--;
+        } else if (getKeyOn(KEY_SQUARE)) {
+            sfxPlay(SFX_CONFIRM);
+            snprintf(text, maxLen, "%d.%d.%03d.%d", parts[0], parts[1], parts[2], parts[3]);
+            return 1;
+        } else if (getKeyOn(KEY_CIRCLE)) {
+            sfxPlay(SFX_CANCEL);
+            return 0;
+        }
+    }
 }
 
 static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *title)
@@ -150,9 +280,7 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
         if (gap < 2)
             gap = 2;
         keyW = (screenWidth - (startX * 2) - (gap * 10)) / 14;
-        keyH = screenHeight * 106 / 1000;
-        if (keyH < 28)
-            keyH = 28;
+        keyH = keyW;
         backspaceW = (keyW * 4) + (gap * 3);
         wideW = (keyW * 2) + gap;
         titleY = screenHeight * 62 / 1000;
@@ -215,7 +343,7 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
             int focused = i == selected;
             char label[16];
             const char *displayLabel = keys[i].label;
-            u64 keyColor = focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80);
+            u64 keyColor = focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80);
             u64 textColor = focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
 
             if (displayLabel == NULL) {
