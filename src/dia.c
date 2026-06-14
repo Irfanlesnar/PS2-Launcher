@@ -103,6 +103,21 @@ static int diaFindNearestKey(ps5_key_t *keys, int count, int current, int direct
 
         if (best != current)
             return best;
+
+        for (i = 0; i < count; i++) {
+            int ix;
+            if (i == current || keys[i].row != keys[current].row)
+                continue;
+
+            ix = keys[i].x + keys[i].w / 2;
+            if (best == current ||
+                (direction == KEY_RIGHT && ix < (keys[best].x + keys[best].w / 2)) ||
+                (direction == KEY_LEFT && ix > (keys[best].x + keys[best].w / 2))) {
+                best = i;
+            }
+        }
+
+        return best;
     }
 
     for (i = 0; i < count; i++) {
@@ -142,6 +157,17 @@ static void diaDrawPS5Triangle(int cx, int cy, int size, int up, u64 color)
         int y = up ? cy + row : cy - row;
         rmDrawRect(cx - row, y, width, 1, color);
     }
+}
+
+static void diaDrawPS5FocusArrow(int cx, int cy, int size, int up)
+{
+    GSTEXTURE *focus = thmGetTexture(FOCUS_ICON);
+    float angle = up ? -1.5707963f : 1.5707963f;
+
+    if (focus != NULL && focus->Mem != NULL)
+        rmDrawRotatedPixmap(focus, cx * 4 / rmGetAspectWidth(), cy, size, size, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    else
+        diaDrawPS5Triangle(cx, cy - (up ? 0 : size / 2), size / 2, up, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 }
 
 static void diaDrawPS5FooterIconText(int iconId, const char *text, int x, int y, int font)
@@ -188,6 +214,7 @@ int diaShowIpEditor(char *text, int maxLen)
         int centerY = screenHeight / 2;
         int stepX = screenWidth * 190 / 1000;
         int dotOffset = screenWidth * 110 / 1000;
+        int arrowX;
         int x[4];
         int i;
         char value[8];
@@ -200,17 +227,18 @@ int diaShowIpEditor(char *text, int maxLen)
         for (i = 0; i < 4; i++)
             x[i] = baseX + (i * stepX);
 
-        diaDrawPS5Triangle(x[selected] + 48, centerY - 108, 22, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        diaDrawPS5Triangle(x[selected] + 48, centerY + 108, 22, 0, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        arrowX = x[selected] + 48;
+        diaDrawPS5FocusArrow(arrowX, centerY - 108, 54, 1);
+        diaDrawPS5FocusArrow(arrowX, centerY + 122, 54, 0);
 
         for (i = 0; i < 4; i++) {
             if (i == 2)
                 snprintf(value, sizeof(value), "%03d", parts[i]);
             else
                 snprintf(value, sizeof(value), "%d", parts[i]);
-            fntRenderString(font, x[i], centerY, ALIGN_LEFT | ALIGN_VCENTER, 2.20f, 2.20f, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(font, x[i], centerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             if (i < 3)
-                fntRenderString(font, x[i] + dotOffset, centerY + 18, ALIGN_LEFT | ALIGN_VCENTER, 2.20f, 2.20f, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+                fntRenderString(font, x[i] + dotOffset, centerY + 18, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
         }
 
         diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 230, screenHeight - 56, footerFont);
