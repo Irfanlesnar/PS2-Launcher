@@ -1749,20 +1749,17 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
             int bodyY = dlgY + topPad;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
 
             fntRenderString(gTheme->fonts[0], textX, bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             if (addAccept) {
                 int yesX = dlgX + dlgW - 152;
                 int noX = dlgX + dlgW - 76;
-                int optY = buttonY - 17;
-                rmDrawRoundedRect(yesX - 30, optY, 60, 28, 5, ps5ConfirmFocus ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
-                rmDrawRoundedRect(noX - 30, optY, 60, 28, 5, !ps5ConfirmFocus ? GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
-                fntRenderString(gTheme->fonts[0], yesX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
-                fntRenderString(gTheme->fonts[0], noX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", !ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+                fntRenderString(ps5ConfirmFocus ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], yesX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+                fntRenderString(!ps5ConfirmFocus ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], noX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", !ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
             } else {
-                fntRenderString(gTheme->fonts[0], dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+                fntRenderString(thmGetPS5SemiBoldFont(), dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             }
 
         } else {
@@ -1819,8 +1816,8 @@ void guiRenderTextScreen(const char *message)
     if (gPS5Mode) {
         int waitFont = thmGetPS5SemiBoldFont();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0xFF));
-        rmDrawRoundedRect((screenWidth - 360) / 2 - 1, (screenHeight - 120) / 2 - 1, 362, 122, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
-        rmDrawRoundedRect((screenWidth - 360) / 2, (screenHeight - 120) / 2, 360, 120, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+        rmDrawRoundedRect((screenWidth - 360) / 2 - 1, (screenHeight - 120) / 2 - 1, 362, 122, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+        rmDrawRoundedRect((screenWidth - 360) / 2, (screenHeight - 120) / 2, 360, 120, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
         fntRenderString(waitFont, screenWidth >> 1, screenHeight >> 1, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, message, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     } else {
         guiShow();
@@ -1912,8 +1909,8 @@ int guiConfirmVideoModeChange(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + titleY, ALIGN_LEFT, 0, 0, "Change video output now?", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x60));
@@ -1921,8 +1918,8 @@ int guiConfirmVideoModeChange(void)
             u64 yesColor = focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
             u64 cancelColor = !focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
 
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Cancel", cancelColor);
+            fntRenderString(focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
+            fntRenderString(!focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Cancel", cancelColor);
         } else {
             rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
 
@@ -2028,8 +2025,8 @@ int guiConfirmVideoMode(void)
             int textX = dlgX + 24;
             int buttonY = dlgY + dlgH - bottomPad;
 
-            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 9, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 8, GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
 
             fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gTheme->fonts[0], textX, dlgY + timerY, ALIGN_LEFT, textW, MENU_ITEM_HEIGHT, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));
@@ -2037,8 +2034,8 @@ int guiConfirmVideoMode(void)
             u64 yesColor = focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
             u64 noColor = !focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
 
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", noColor);
+            fntRenderString(focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
+            fntRenderString(!focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", noColor);
 
         } else {
             rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);

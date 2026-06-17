@@ -157,6 +157,7 @@ static void reset(void);
 static void deferredAudioInit(void);
 static int coverIsLocalGameSupport(item_list_t *support);
 static int ps5IsMergedGameSupport(item_list_t *support);
+static opl_io_module_t *ps5GetMergedGameModule(void);
 
 // frame counter
 static unsigned int frameCounter;
@@ -174,11 +175,16 @@ int oplMakeGameItemId(int mode, int id)
     return PS5_GAME_ITEM_FLAG | ((mode & 0xFF) << PS5_GAME_ITEM_MODE_SHIFT) | (id & PS5_GAME_ITEM_ID_MASK);
 }
 
+int oplIsGameItemIdEncoded(int itemId)
+{
+    return (itemId & PS5_GAME_ITEM_FLAG) != 0;
+}
+
 int oplResolveGameItem(int itemId, item_list_t *fallback, item_list_t **support, int *sourceId)
 {
     int mode, id;
 
-    if ((itemId & PS5_GAME_ITEM_FLAG) != 0) {
+    if (oplIsGameItemIdEncoded(itemId)) {
         mode = (itemId >> PS5_GAME_ITEM_MODE_SHIFT) & 0xFF;
         id = itemId & PS5_GAME_ITEM_ID_MASK;
         if (mode >= 0 && mode < MODE_COUNT && list_support[mode].support != NULL) {
@@ -229,6 +235,37 @@ static int oplResolveMenuGame(struct menu_item *curMenu, item_list_t **support, 
     resolvedId = curMenu->current->item.id;
     encodedItem = (resolvedId & PS5_GAME_ITEM_FLAG) != 0;
     oplResolveGameItem(resolvedId, resolvedSupport, &resolvedSupport, &resolvedId);
+
+    if (encodedItem && resolvedSupport != NULL && resolvedSupport->itemGetCount != NULL &&
+        (resolvedId < 0 || resolvedId >= resolvedSupport->itemGetCount(resolvedSupport) ||
+         (resolvedSupport->itemGetName != NULL && strcmp(resolvedSupport->itemGetName(resolvedSupport, resolvedId), selectedTitle) != 0))) {
+        int idByTitle = -1;
+
+        if (resolvedSupport->itemUpdate != NULL)
+            resolvedSupport->itemUpdate(resolvedSupport);
+
+        idByTitle = oplFindGameByTitle(resolvedSupport, selectedTitle);
+        if (idByTitle >= 0) {
+            resolvedId = idByTitle;
+        } else {
+            int mode;
+            for (mode = 0; mode < MODE_COUNT; mode++) {
+                item_list_t *candidate = list_support[mode].support;
+                if (candidate == NULL || !candidate->enabled || candidate == resolvedSupport)
+                    continue;
+
+                if (candidate->itemUpdate != NULL)
+                    candidate->itemUpdate(candidate);
+
+                idByTitle = oplFindGameByTitle(candidate, selectedTitle);
+                if (idByTitle >= 0) {
+                    resolvedSupport = candidate;
+                    resolvedId = idByTitle;
+                    break;
+                }
+            }
+        }
+    }
 
     if (!encodedItem && ps5IsMergedGameSupport(resolvedSupport)) {
         int idByTitle;
@@ -471,15 +508,10 @@ static void itemExecSelect(struct menu_item *curMenu)
 static void itemExecRefresh(struct menu_item *curMenu)
 {
     item_list_t *support = curMenu->userdata;
-    int i;
 
     if (support && support->enabled) {
         if (gPS5Mode && support->mode != APP_MODE) {
-            for (i = 0; i < MODE_COUNT; i++) {
-                item_list_t *listSupport = list_support[i].support;
-                if (coverIsLocalGameSupport(listSupport) && listSupport->enabled)
-                    ioPutRequest(IO_MENU_UPDATE_DEFFERED, &listSupport->mode);
-            }
+            oplRefreshMergedGameList();
             sfxPlay(SFX_CONFIRM);
             return;
         }
@@ -866,7 +898,6 @@ config_set_t *oplGetLegacyAppsInfo(char *name)
 // ----------------------------------------------------------
 static void updateMenuFromGameList(opl_io_module_t *mdl)
 {
-    guiExecDeferredOps();
     clearMenuGameList(mdl);
 
     const char *temp = NULL;
@@ -894,7 +925,10 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
             if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled)
                 continue;
 
-            sourceCount = sourceSupport->itemUpdate(sourceSupport);
+            if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL)
+                sourceCount = sourceSupport->itemGetCount(sourceSupport);
+            else
+                sourceCount = sourceSupport->itemUpdate(sourceSupport);
             if (sourceCount <= 0)
                 continue;
 
@@ -966,11 +1000,22 @@ void menuDeferredUpdate(void *data)
     short int *mode = data;
 
     opl_io_module_t *mod = &list_support[*mode];
+    opl_io_module_t *mergedMod;
     if (!mod->support)
         return;
 
     if (gPS5Mode && gPS5ActiveTab == 1 && mod->support->mode >= BDM_MODE && mod->support->mode < ETH_MODE)
         return;
+
+    if (gPS5Mode && ps5IsMergedGameSupport(mod->support)) {
+        mergedMod = ps5GetMergedGameModule();
+        if (mergedMod == NULL)
+            return;
+        if (mod != mergedMod) {
+            ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
+            return;
+        }
+    }
 
     // see if we have to update
     if (mod->support->itemNeedsUpdate(mod->support)) {
@@ -1819,15 +1864,40 @@ static int ps5IsMergedGameSupport(item_list_t *support)
     return support != NULL && support->enabled && support->mode == ETH_MODE;
 }
 
-void oplRefreshMergedGameList(void)
+static opl_io_module_t *ps5GetMergedGameModule(void)
 {
     int mode;
 
+    for (mode = BDM_MODE; mode <= BDM_MODE4; mode++) {
+        if (list_support[mode].support != NULL && list_support[mode].support->enabled)
+            return &list_support[mode];
+    }
+
+    if (list_support[HDD_MODE].support != NULL && list_support[HDD_MODE].support->enabled)
+        return &list_support[HDD_MODE];
+
+    if (list_support[ETH_MODE].support != NULL && list_support[ETH_MODE].support->enabled)
+        return &list_support[ETH_MODE];
+
+    return NULL;
+}
+
+void oplRefreshMergedGameList(void)
+{
+    int mode;
+    opl_io_module_t *mergedMod = ps5GetMergedGameModule();
+
     for (mode = 0; mode < MODE_COUNT; mode++) {
         item_list_t *support = list_support[mode].support;
-        if (ps5IsMergedGameSupport(support))
-            ioPutRequest(IO_MENU_UPDATE_DEFFERED, &support->mode);
+        if (support != NULL && support->mode >= BDM_MODE && support->mode <= BDM_MODE4) {
+            bdm_device_data_t *pDeviceData = (bdm_device_data_t *)support->priv;
+            if (pDeviceData != NULL)
+                pDeviceData->ForceRefresh = 1;
+        }
     }
+
+    if (mergedMod != NULL)
+        ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
 }
 
 static void coverDebugLog(const char *format, ...)
@@ -2585,7 +2655,6 @@ static int loadLwnbdSvr(void)
 
     // block all io ops, wait for the ones still running to finish
     ioBlockOps(1);
-    guiExecDeferredOps();
 
     // Deinitialize all support without shutting down the HDD unit.
     deinitAllSupport(NO_EXCEPTION, IO_MODE_SELECTED_ALL);
@@ -2709,7 +2778,6 @@ void deinit(int exception, int modeSelected)
 {
     // block all io ops, wait for the ones still running to finish
     ioBlockOps(1);
-    guiExecDeferredOps();
 
 #ifdef PADEMU
     ds34usb_reset();

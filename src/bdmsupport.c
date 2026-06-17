@@ -74,10 +74,12 @@ int bdmFindPartition(char *target, const char *name, int write)
 static unsigned int BdmGeneration = 0;
 static unsigned int BdmStableGeneration = 0;
 static unsigned int BdmPendingGeneration = 0;
-static clock_t BdmPendingSince = 0;
+static int BdmPendingSinceFrame = 0;
+static int BdmOptionalLoadQueued = 0;
+extern int guiFrameId;
 
-#define BDM_EVENT_QUIET_MS      3000
-#define BDM_FIRST_SCAN_DELAY_MS 1500
+#define BDM_EVENT_QUIET_FRAMES      180
+#define BDM_FIRST_SCAN_DELAY_FRAMES 90
 
 static void bdmEventHandler(void *packet, void *opt)
 {
@@ -111,6 +113,8 @@ int bdmIsDeviceLoading(void)
 
 static void bdmLoadBlockDeviceModules(void)
 {
+    int loadedOptional = 0;
+
     WaitSema(bdmLoadModuleLock);
 
     if (gEnableILK && !iLinkModLoaded) {
@@ -121,6 +125,7 @@ static void bdmLoadBlockDeviceModules(void)
         sysLoadModuleBuffer(&IEEE1394_bd_irx, size_IEEE1394_bd_irx, 0, NULL);
 
         iLinkModLoaded = 1;
+        loadedOptional = 1;
     }
 
     if (gEnableMX4SIO && !mx4sioModLoaded) {
@@ -129,6 +134,7 @@ static void bdmLoadBlockDeviceModules(void)
         sysLoadModuleBuffer(&mx4sio_bd_irx, size_mx4sio_bd_irx, 0, NULL);
 
         mx4sioModLoaded = 1;
+        loadedOptional = 1;
     }
 
     if (gEnableBdmHDD && !hddModLoaded) {
@@ -137,9 +143,18 @@ static void bdmLoadBlockDeviceModules(void)
         hddLoadModules();
 
         hddModLoaded = 1;
+        loadedOptional = 1;
     }
 
     SignalSema(bdmLoadModuleLock);
+
+    if (loadedOptional) {
+        BdmGeneration++;
+        gBdmEventGeneration++;
+        gBdmDeviceLoading = 1;
+    }
+
+    BdmOptionalLoadQueued = 0;
 }
 
 void bdmLoadModules(void)
@@ -180,7 +195,7 @@ void bdmInit(item_list_t *itemList)
     pDeviceData->bdmModifiedDVDPrev = 0;
     pDeviceData->bdmGameCount = 0;
     pDeviceData->bdmGames = NULL;
-    pDeviceData->bdmScanReadyAt = 0;
+    pDeviceData->bdmScanReadyFrame = 0;
     pDeviceData->DeferredScan = 0;
     configGetInt(configGetByType(CONFIG_OPL), "usb_frames_delay", &itemList->delay);
     itemList->enabled = 1;
@@ -208,20 +223,20 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
-        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->bdmScanReadyFrame = 0;
         pDeviceData->DeferredScan = 0;
         result = 1;
     }
 
-    if (result == 0 && BdmStableGeneration != BdmGeneration) {
+    if (BdmStableGeneration != BdmGeneration) {
         if (BdmPendingGeneration != BdmGeneration) {
             BdmPendingGeneration = BdmGeneration;
-            BdmPendingSince = clock();
+            BdmPendingSinceFrame = guiFrameId;
             gBdmDeviceLoading = 1;
             return 0;
         }
 
-        if ((clock() - BdmPendingSince) < (BDM_EVENT_QUIET_MS * (CLOCKS_PER_SEC / 1000))) {
+        if (guiFrameId - BdmPendingSinceFrame < BDM_EVENT_QUIET_FRAMES) {
             gBdmDeviceLoading = 1;
             return 0;
         }
@@ -229,7 +244,11 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         BdmStableGeneration = BdmGeneration;
     }
 
-    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
+    if (!BdmOptionalLoadQueued) {
+        BdmOptionalLoadQueued = 1;
+        if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules) < 0)
+            BdmOptionalLoadQueued = 0;
+    }
 
     // If the device menu is visible double check the device type and if support for this device type is enabled. If the user switches device support
     // to off for a bdm device we want to hide the menu even though the drivers are still loaded and the device is being detected by bdm.
@@ -260,13 +279,13 @@ static int bdmNeedsUpdate(item_list_t *itemList)
     }
 
     if (pDeviceData->DeferredScan != 0) {
-        if (clock() < pDeviceData->bdmScanReadyAt) {
+        if (guiFrameId < pDeviceData->bdmScanReadyFrame) {
             gBdmDeviceLoading = 1;
             return 0;
         }
 
         pDeviceData->DeferredScan = 0;
-        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->bdmScanReadyFrame = 0;
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
@@ -283,7 +302,7 @@ static int bdmNeedsUpdate(item_list_t *itemList)
     int deviceResult = bdmUpdateDeviceData(itemList);
     if (deviceResult > 0 && result == 0) {
         pDeviceData->DeferredScan = 1;
-        pDeviceData->bdmScanReadyAt = clock() + (BDM_FIRST_SCAN_DELAY_MS * (CLOCKS_PER_SEC / 1000));
+        pDeviceData->bdmScanReadyFrame = guiFrameId + BDM_FIRST_SCAN_DELAY_FRAMES;
         gBdmDeviceLoading = 1;
         sfxPlay(SFX_BD_CONNECT);
         return 0;
@@ -340,12 +359,33 @@ static int bdmNeedsUpdate(item_list_t *itemList)
     return result;
 }
 
+static int bdmDeviceReadyForFilesystem(item_list_t *itemList, bdm_device_data_t *pDeviceData)
+{
+    int visible = itemList->owner != NULL ? ((opl_io_module_t *)itemList->owner)->menuItem.visible : 0;
+
+    if (visible == 0 || pDeviceData->bdmPrefix[0] == '\0')
+        return 0;
+
+    if (BdmStableGeneration != BdmGeneration || pDeviceData->DeferredScan != 0)
+        return 0;
+
+    if (pDeviceData->bdmScanReadyFrame != 0 && guiFrameId < pDeviceData->bdmScanReadyFrame)
+        return 0;
+
+    return 1;
+}
+
 static int bdmUpdateGameList(item_list_t *itemList)
 {
     bdm_device_data_t *pDeviceData = (bdm_device_data_t *)itemList->priv;
     int visible = itemList->owner != NULL ? ((opl_io_module_t *)itemList->owner)->menuItem.visible : 0;
 
-    if (visible == 0 || pDeviceData->bdmPrefix[0] == '\0') {
+    if (!bdmDeviceReadyForFilesystem(itemList, pDeviceData)) {
+        if (visible != 0 && pDeviceData->bdmPrefix[0] != '\0') {
+            gBdmDeviceLoading = 1;
+            return pDeviceData->bdmGameCount;
+        }
+
         // The submenu has already been cleared by the caller; it is now safe to
         // release the game array that submenu entries used for their text.
         free(pDeviceData->bdmGames);
@@ -1042,7 +1082,7 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
-        pDeviceData->bdmScanReadyAt = 0;
+        pDeviceData->bdmScanReadyFrame = 0;
         pDeviceData->DeferredScan = 0;
         pDeviceData->ThemesLoaded = 0;
         pDeviceData->LanguagesLoaded = 0;

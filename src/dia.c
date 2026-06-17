@@ -188,9 +188,12 @@ static void diaDrawPS5FocusArrow(int cx, int cy, int size, int up)
 static void diaDrawPS5FooterIconText(int iconId, const char *text, int x, int y, int font)
 {
     GSTEXTURE *icon = thmGetTexture(iconId);
+    int iconSize = 14;
+    int gap = 6;
+
     if (icon != NULL && icon->Mem != NULL)
-        rmDrawPixmap(icon, x, y, ALIGN_LEFT | ALIGN_VCENTER, 20, 20, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-    fntRenderString(font, x + 28, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, text, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        rmDrawPixmap(icon, x, y, ALIGN_LEFT | ALIGN_VCENTER, iconSize, iconSize, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    fntRenderString(font, x + iconSize + gap, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, text, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 }
 
 static int diaParseIp(const char *text, int *parts)
@@ -230,45 +233,71 @@ int diaShowIpEditor(char *text, int maxLen)
         int font = gDiaPS5IpFont >= 0 ? gDiaPS5IpFont : thmGetPS5TitleFont();
         int footerFont = thmGetPS5SemiBoldFont();
         int centerY = screenHeight / 2;
-        int segmentW = screenWidth * 130 / 1000;
-        int dotGap = screenWidth * 30 / 1000;
-        int totalW = (segmentW * 4) + (dotGap * 3);
-        int baseX = (screenWidth - totalW) / 2;
         int arrowSize = 27;
         int tapOffset = pressAnim > 0 ? (pressAnim * 2) : 0;
         int arrowX;
         int segCenter[4];
-        int dotCenter[3];
+        int segW[4];
         int i;
-        char value[8];
+        char values[4][8];
+        int dotW;
+        int dotPad = 0;  // pixels of padding on each side of the dot
+        int numPad = 0;  // minimal padding around each number
+        int totalW;
+        int curX;
+
+        // Measure the dot width
+        dotW = rmUnScaleX(fntCalcDimensions(font, "."));
+
+        // Format and measure each octet
+        for (i = 0; i < 4; i++) {
+            snprintf(values[i], sizeof(values[i]), "%d", parts[i]);
+            segW[i] = rmUnScaleX(fntCalcDimensions(font, values[i])) + numPad * 2;
+        }
+
+        // Calculate total width: all segments + dots between them
+        totalW = 0;
+        for (i = 0; i < 4; i++)
+            totalW += segW[i];
+        totalW += 3 * (dotW + dotPad * 2); // 3 dots with padding
+
+        curX = (screenWidth - totalW) / 2;
+
+        // Calculate center positions for each segment and dot
+        for (i = 0; i < 4; i++) {
+            segCenter[i] = curX + segW[i] / 2;
+            curX += segW[i];
+            if (i < 3) {
+                curX += dotPad;
+                curX += dotW + dotPad;
+            }
+        }
 
         readPads();
 
         rmStartFrame();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
 
-        for (i = 0; i < 4; i++) {
-            segCenter[i] = baseX + (i * (segmentW + dotGap)) + (segmentW / 2);
-            if (i < 3)
-                dotCenter[i] = baseX + ((i + 1) * segmentW) + (i * dotGap) + (dotGap / 2);
-        }
-
         arrowX = segCenter[selected];
-        diaDrawPS5FocusArrow(arrowX, centerY - 70 + (pressDir < 0 ? tapOffset : 0), arrowSize, 1);
-        diaDrawPS5FocusArrow(arrowX, centerY + 76 - (pressDir > 0 ? tapOffset : 0), arrowSize, 0);
+        diaDrawPS5FocusArrow(arrowX, centerY - 32 + (pressDir < 0 ? tapOffset : 0), arrowSize, 1);
+        diaDrawPS5FocusArrow(arrowX, centerY + 38 - (pressDir > 0 ? tapOffset : 0), arrowSize, 0);
 
+        // Re-walk the layout to draw numbers and dots
+        curX = (screenWidth - totalW) / 2;
         for (i = 0; i < 4; i++) {
-            if (i == 2)
-                snprintf(value, sizeof(value), "%03d", parts[i]);
-            else
-                snprintf(value, sizeof(value), "%d", parts[i]);
-            fntRenderString(font, segCenter[i], centerY, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, value, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-            if (i < 3)
-                fntRenderString(font, dotCenter[i], centerY + 6, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            int cx = curX + segW[i] / 2;
+            fntRenderString(font, cx, centerY, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, values[i], GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            curX += segW[i];
+            if (i < 3) {
+                curX += dotPad;
+                int dotX = curX + dotW / 2;
+                fntRenderString(font, dotX, centerY + 6, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+                curX += dotW + dotPad;
+            }
         }
 
-        diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 230, screenHeight - 56, footerFont);
-        diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 112, screenHeight - 56, footerFont);
+        diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 206, screenHeight - 20, footerFont);
+        diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 106, screenHeight - 20, footerFont);
 
         rmEndFrame();
         if (pressAnim > 0)
@@ -296,7 +325,7 @@ int diaShowIpEditor(char *text, int maxLen)
             }
         } else if (getKeyOn(KEY_SQUARE)) {
             sfxPlay(SFX_CONFIRM);
-            snprintf(text, maxLen, "%d.%d.%03d.%d", parts[0], parts[1], parts[2], parts[3]);
+            snprintf(text, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
             return 1;
         } else if (getKeyOn(KEY_CIRCLE)) {
             sfxPlay(SFX_CANCEL);
@@ -322,10 +351,10 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
     rmGetScreenExtents(&screenWidth, &screenHeight);
 
     while (1) {
-        ps5_key_t keys[64];
+        ps5_key_t keys[80];
         int keyCount = 0;
         int i, keyW, keyH, gap, startX, titleY, inputY, startY, footerY;
-        int backspaceW, wideW, doneX, spaceX, spaceW;
+        int unitW, wideW, doneX, spaceX, spaceW;
         const char *display = hide_text ? mask : text;
         int titleFont = thmGetPS5TitleFont();
         int semiFont = thmGetPS5SemiBoldFont();
@@ -341,14 +370,14 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
         gap = screenWidth >= 960 ? screenWidth * 5 / 1920 : 2;
         if (gap < 2)
             gap = 2;
-        keyW = (screenWidth - (startX * 2) - (gap * 10)) / 14;
+        keyW = (screenWidth - (startX * 2) - (gap * 15)) / 16;
         keyH = keyW;
-        backspaceW = (keyW * 4) + (gap * 3);
+        unitW = keyW + gap;
         wideW = (keyW * 2) + gap;
         titleY = screenHeight * 62 / 1000;
         inputY = screenHeight * 258 / 1000;
         startY = screenHeight * 327 / 1000;
-        footerY = screenHeight - (screenHeight * 56 / 1000);
+        footerY = screenHeight - 20;
 
 #define ADD_KEY(_row, _x, _y, _w, _label, _action, _ch) \
         do { \
@@ -363,36 +392,65 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
             keyCount++; \
         } while (0)
 
+#define KEY_X(_col) (startX + (_col) * unitW)
+#define KEY_Y(_row) (startY + (_row) * (keyH + gap))
+#define KEY_W(_cols) ((keyW * (_cols)) + (gap * ((_cols) - 1)))
+
         for (i = 0; i < 10; i++) {
             static const char row0[] = "1234567890";
-            ADD_KEY(0, startX + i * (keyW + gap), startY, keyW, NULL, PS5_KEY_CHAR, row0[i]);
+            ADD_KEY(0, KEY_X(i), KEY_Y(0), keyW, NULL, PS5_KEY_CHAR, row0[i]);
         }
-        ADD_KEY(0, startX + 10 * (keyW + gap), startY, backspaceW, "Backspace", PS5_KEY_BACKSPACE, 0);
+        ADD_KEY(0, KEY_X(10), KEY_Y(0), keyW, NULL, PS5_KEY_CHAR, '+');
+        ADD_KEY(0, KEY_X(11), KEY_Y(0), KEY_W(5), "Backspace", PS5_KEY_BACKSPACE, 0);
 
+        for (i = 0; i < 8; i++) {
+            static const char row1[] = "!@#$%^&(";
+            ADD_KEY(1, KEY_X(i), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, row1[i]);
+        }
+        ADD_KEY(1, KEY_X(8), KEY_Y(1), KEY_W(2), ")", PS5_KEY_CHAR, ')');
+        ADD_KEY(1, KEY_X(10), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '-');
+        ADD_KEY(1, KEY_X(11), KEY_Y(1), KEY_W(2), "_", PS5_KEY_CHAR, '_');
+        ADD_KEY(1, KEY_X(13), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '{');
+        ADD_KEY(1, KEY_X(14), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '}');
+        ADD_KEY(1, KEY_X(15), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '/');
+
+        ADD_KEY(2, KEY_X(0), KEY_Y(2), KEY_W(2), "?", PS5_KEY_CHAR, '?');
         for (i = 0; i < 10; i++) {
-            static const char row1[] = "qwertyuiop";
-            ADD_KEY(1, startX + i * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, row1[i]);
+            static const char row2[] = "qwertyuiop";
+            ADD_KEY(2, KEY_X(i + 2), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, row2[i]);
         }
-        ADD_KEY(1, startX + 10 * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, '-');
-        ADD_KEY(1, startX + 11 * (keyW + gap), startY + keyH + gap, keyW, NULL, PS5_KEY_CHAR, '_');
-        ADD_KEY(1, startX + 12 * (keyW + gap), startY + keyH + gap, wideW, ".", PS5_KEY_CHAR, '.');
+        ADD_KEY(2, KEY_X(12), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, '[');
+        ADD_KEY(2, KEY_X(13), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, ']');
+        ADD_KEY(2, KEY_X(14), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, '\\');
+        ADD_KEY(2, KEY_X(15), KEY_Y(2), keyW, "\"", PS5_KEY_CHAR, '"');
 
+        ADD_KEY(3, KEY_X(0), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '<');
+        ADD_KEY(3, KEY_X(1), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '>');
         for (i = 0; i < 9; i++) {
-            static const char row2[] = "asdfghjkl";
-            ADD_KEY(2, startX + i * (keyW + gap), startY + 2 * (keyH + gap), keyW, NULL, PS5_KEY_CHAR, row2[i]);
+            static const char row3[] = "asdfghjkl";
+            ADD_KEY(3, KEY_X(i + 2), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, row3[i]);
         }
-        ADD_KEY(2, startX + 12 * (keyW + gap), startY + 2 * (keyH + gap), wideW, "Caps", PS5_KEY_CAPS, 0);
+        ADD_KEY(3, KEY_X(11), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, ':');
+        ADD_KEY(3, KEY_X(12), KEY_Y(3), KEY_W(2), ";", PS5_KEY_CHAR, ';');
+        ADD_KEY(3, KEY_X(14), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, ',');
+        ADD_KEY(3, KEY_X(15), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '.');
+
+        ADD_KEY(4, KEY_X(0), KEY_Y(4), KEY_W(2), "Caps", PS5_KEY_CAPS, 0);
 
         for (i = 0; i < 7; i++) {
             static const char row3[] = "zxcvbnm";
-            ADD_KEY(3, startX + i * (keyW + gap), startY + 3 * (keyH + gap), keyW, NULL, PS5_KEY_CHAR, row3[i]);
+            ADD_KEY(4, KEY_X(i + 2), KEY_Y(4), keyW, NULL, PS5_KEY_CHAR, row3[i]);
         }
-        doneX = startX + 12 * (keyW + gap);
-        spaceX = startX + 7 * (keyW + gap);
-        spaceW = doneX - gap - spaceX;
-        ADD_KEY(3, spaceX, startY + 3 * (keyH + gap), spaceW, "Space", PS5_KEY_SPACE, 0);
-        ADD_KEY(3, doneX, startY + 3 * (keyH + gap), wideW, "Done", PS5_KEY_DONE, 0);
 
+        doneX = KEY_X(14);
+        spaceX = KEY_X(9);
+        spaceW = doneX - gap - spaceX;
+        ADD_KEY(4, spaceX, KEY_Y(4), spaceW, "Spacebar", PS5_KEY_SPACE, 0);
+        ADD_KEY(4, doneX, KEY_Y(4), wideW, "Done", PS5_KEY_DONE, 0);
+
+#undef KEY_W
+#undef KEY_Y
+#undef KEY_X
 #undef ADD_KEY
 
         if (selected >= keyCount)
@@ -416,14 +474,14 @@ static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *tit
                 displayLabel = label;
             }
 
-            rmDrawRoundedRect(keys[i].x, keys[i].y, keys[i].w, keys[i].h, 5, keyColor);
+            rmDrawRoundedRect(keys[i].x, keys[i].y, keys[i].w, keys[i].h, 2, keyColor);
             fntRenderString(semiFont, keys[i].x + keys[i].w / 2, keys[i].y + keys[i].h / 2, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, displayLabel, textColor);
         }
 
         circleIcon = thmGetTexture(CIRCLE_ICON);
         if (circleIcon && circleIcon->Mem)
-            rmDrawPixmap(circleIcon, screenWidth - startX - 58, footerY, ALIGN_LEFT | ALIGN_VCENTER, 20, 20, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        fntRenderString(semiFont, screenWidth - startX - 30, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            rmDrawPixmap(circleIcon, screenWidth - startX - 52, footerY, ALIGN_LEFT | ALIGN_VCENTER, 14, 14, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(semiFont, screenWidth - startX - 32, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
         rmEndFrame();
 

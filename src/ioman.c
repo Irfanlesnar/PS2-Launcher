@@ -213,6 +213,17 @@ int ioPutRequest(int type, void *data)
 
     WaitSema(gEndSemaId);
 
+    if (type == IO_MENU_UPDATE_DEFFERED || type == IO_COMPAT_UPDATE_DEFFERED) {
+        struct io_request_t *cur = gReqList;
+        while (cur) {
+            if (cur->type == type && cur->data == data) {
+                SignalSema(gEndSemaId);
+                return IO_OK;
+            }
+            cur = cur->next;
+        }
+    }
+
     // We don't have to lock the tip of the queue...
     // If it exists, it won't be touched, if it does not exist, it is not being processed
     struct io_request_t *req = gReqEnd;

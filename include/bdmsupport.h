@@ -38,7 +38,7 @@ typedef struct
     int bdmDeviceTick;      // Used alongside BdmGeneration to tell if device data needs to be refreshed
     int bdmHddIsLBA48;      // 1 if the HDD supports LBA48, 0 if the HDD only supports LBA28
     int ataHighestUDMAMode; // Highest UDMA mode supported by the HDD
-    clock_t bdmScanReadyAt;
+    int bdmScanReadyFrame;
     unsigned char ThemesLoaded;
     unsigned char LanguagesLoaded;
     unsigned char ForceRefresh;
