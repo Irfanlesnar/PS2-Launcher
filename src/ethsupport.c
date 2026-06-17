@@ -355,34 +355,50 @@ int ethLoadInitModules(void)
 
 void ethDisplayErrorStatus(void)
 {
+    if (gPS5Mode) {
+        switch (gNetworkStartup) {
+            case ERROR_ETH_MODULE_SMBMAN_FAILURE:
+            case ERROR_ETH_SMB_CONN:
+            case ERROR_ETH_SMB_LOGON:
+            case ERROR_ETH_SMB_OPENSHARE:
+            case ERROR_ETH_SMB_LISTSHARES:
+            case ERROR_ETH_SMB_LISTGAMES:
+            case ERROR_ETH_LINK_FAIL:
+            case ERROR_ETH_DHCP_FAIL:
+                LOG("ETH: Silent PS5 SMB/network error %d.\n", gNetworkStartup);
+                return;
+        }
+    }
+
     switch (gNetworkStartup) {
         case 0: // No error
             break;
         case ERROR_ETH_MODULE_NETIF_FAILURE:
             setErrorMessageWithCode(_STR_NETWORK_STARTUP_ERROR_NETIF, gNetworkStartup);
             break;
+        case ERROR_ETH_MODULE_SMBMAN_FAILURE:
+            LOG("ETH: Cannot load SMB module (error %d).\n", gNetworkStartup);
+            break;
         case ERROR_ETH_SMB_CONN:
-            setErrorMessageWithCode(_STR_NETWORK_STARTUP_ERROR_CONN, gNetworkStartup);
+            LOG("ETH: Cannot connect to SMB server (error %d).\n", gNetworkStartup);
             break;
         case ERROR_ETH_SMB_LOGON:
-            setErrorMessageWithCode(_STR_NETWORK_STARTUP_ERROR_LOGON, gNetworkStartup);
+            LOG("ETH: Cannot log into SMB server (error %d).\n", gNetworkStartup);
             break;
         case ERROR_ETH_SMB_OPENSHARE:
-            setErrorMessageWithCode(_STR_NETWORK_STARTUP_ERROR_SHARE, gNetworkStartup);
+            LOG("ETH: Cannot open SMB share (error %d).\n", gNetworkStartup);
             break;
         case ERROR_ETH_SMB_LISTSHARES:
-            setErrorMessageWithCode(_STR_NETWORK_SHARE_LIST_ERROR, gNetworkStartup);
+            LOG("ETH: Cannot list SMB shares (error %d).\n", gNetworkStartup);
             break;
         case ERROR_ETH_SMB_LISTGAMES:
-            setErrorMessageWithCode(_STR_NETWORK_GAMES_LIST_ERROR, gNetworkStartup);
+            LOG("ETH: Cannot list SMB games (error %d).\n", gNetworkStartup);
             break;
         case ERROR_ETH_LINK_FAIL:
             LOG("ETH: Unable to get valid link status.\n");
-            setErrorMessageWithCode(_STR_NETWORK_ERROR_LINK_FAIL, gNetworkStartup);
             break;
         case ERROR_ETH_DHCP_FAIL:
             LOG("ETH: Unable to get valid IP address via DHCP.\n");
-            setErrorMessageWithCode(_STR_NETWORK_ERROR_DHCP_FAIL, gNetworkStartup);
             break;
         default:
             setErrorMessageWithCode(_STR_NETWORK_STARTUP_ERROR, gNetworkStartup);
@@ -423,7 +439,8 @@ void ethInit(item_list_t *itemList)
 
     if (gNetworkStartup >= ERROR_ETH_SMB_CONN) {
         LOG("ETHSUPPORT Re-Init\n");
-        thmReinit(ethBase);
+        // if (ethBase != NULL)
+        //     thmReinit(ethBase);
         ethULSizePrev = -2;
         ethGameCount = 0;
         ioPutRequest(IO_CUSTOM_SIMPLEACTION, &ethInitSMB);
@@ -747,6 +764,8 @@ static void ethCleanUp(item_list_t *itemList, int exception)
         LOG("ETHSUPPORT CleanUp\n");
 
         free(ethGames);
+        ethGames = NULL;
+        ethGameCount = 0;
 
         // disconnect from the active SMB session
         if ((exception & UNMOUNT_EXCEPTION) == 0)

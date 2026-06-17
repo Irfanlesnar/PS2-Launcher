@@ -201,7 +201,7 @@ static int updateISOGameList(const char *path, const struct game_cache_list *cac
 
             for (i = 0; i < count; i++) {
                 for (j = 0; j < cache->count; j++) {
-                    if (strncmp(cache->games[i].name, game->gameinfo.name, ISO_GAME_NAME_MAX + 1) == 0 && strncmp(cache->games[i].extension, game->gameinfo.extension, ISO_GAME_EXTENSION_MAX + 1) == 0)
+                    if (strncmp(cache->games[j].name, game->gameinfo.name, ISO_GAME_NAME_MAX + 1) == 0 && strncmp(cache->games[j].extension, game->gameinfo.extension, ISO_GAME_EXTENSION_MAX + 1) == 0)
                         break;
                 }
 
@@ -290,6 +290,7 @@ static int scanForISO(char *path, char type, struct game_list_t **glist)
     char fullpath[256];
     struct dirent *dirent;
     DIR *dir;
+    int isSMBPath = !strncasecmp(path, "smb", 3);
 
     int cacheLoaded = loadISOGameListCache(path, &cache) == 0;
 
@@ -327,6 +328,13 @@ static int scanForISO(char *path, char type, struct game_list_t **glist)
             } else if (cacheLoaded && queryISOGameListCache(&cache, &cachedGInfo, dirent->d_name) == 0) {
                 // use cached entry
                 memcpy(game, &cachedGInfo, sizeof(base_game_info_t));
+            } else if (isSMBPath) {
+                strncpy(game->startup, dirent->d_name, GAME_STARTUP_MAX - 1);
+                game->startup[GAME_STARTUP_MAX - 1] = '\0';
+                strncpy(game->name, dirent->d_name, NameLen);
+                game->name[NameLen] = '\0';
+                strncpy(game->extension, &dirent->d_name[NameLen], sizeof(game->extension) - 1);
+                game->extension[sizeof(game->extension) - 1] = '\0';
             } else {
                 // need to mount and read SYSTEM.CNF
                 char startup[GAME_STARTUP_MAX];
@@ -373,11 +381,7 @@ int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gam
     int fd, size, id = 0, result;
     int count;
     char path[256];
-
-    free(*list);
-    *list = NULL;
-    *fsize = -1;
-    *gamecount = 0;
+    base_game_info_t *newList = NULL;
 
     // temporary storage for the game names
     struct game_list_t *dlist_head = NULL;
@@ -405,11 +409,11 @@ int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gam
         count += size / sizeof(USBExtreme_game_entry_t);
 
         if (count > 0) {
-            if ((*list = (base_game_info_t *)malloc(sizeof(base_game_info_t) * count)) != NULL) {
-                memset(*list, 0, sizeof(base_game_info_t) * count);
+            if ((newList = (base_game_info_t *)malloc(sizeof(base_game_info_t) * count)) != NULL) {
+                memset(newList, 0, sizeof(base_game_info_t) * count);
 
                 while (size > 0) {
-                    base_game_info_t *g = &(*list)[id++];
+                    base_game_info_t *g = &newList[id++];
 
                     // populate game entry in list even if entry corrupted
                     read(fd, &GameEntry, sizeof(USBExtreme_game_entry_t));
@@ -425,49 +429,71 @@ int sbReadList(base_game_info_t **list, const char *prefix, int *fsize, int *gam
                     g->media = GameEntry.media;
                     g->format = GAME_FORMAT_USBLD;
                     g->sizeMB = 0;
-
-
-                    /* TODO: size calculation is very slow
-                    implmented some caching, or do not touch at all */
-
-                    // calculate total size for individual game
-                    /*int ulfd = 1;
-                    u8 part;
-                    unsigned int name_checksum = USBA_crc32(g->name);
-
-                    for (part = 0; part < g->parts && ulfd >= 0; part++) {
-                        snprintf(path, sizeof(path), "%sul.%08X.%s.%02x", prefix, name_checksum, g->startup, part);
-                        ulfd = openFile(path, O_RDONLY);
-                        if (ulfd >= 0) {
-                            g->sizeMB += (getFileSize(ulfd) >> 20);
-                            close(ulfd);
-                        }
-                    }*/
                 }
             }
         }
         close(fd);
     } else if (count > 0) {
-        *list = (base_game_info_t *)malloc(sizeof(base_game_info_t) * count);
+        newList = (base_game_info_t *)malloc(sizeof(base_game_info_t) * count);
     }
 
-    if (*list != NULL) {
+    if (newList != NULL) {
         // copy the dlist into the list
         while ((id < count) && dlist_head) {
             // copy one game, advance
             struct game_list_t *cur = dlist_head;
             dlist_head = dlist_head->next;
 
-            memcpy(&(*list)[id++], &cur->gameinfo, sizeof(base_game_info_t));
+            memcpy(&newList[id++], &cur->gameinfo, sizeof(base_game_info_t));
             free(cur);
         }
-    } else
+    } else {
+        while (dlist_head) {
+            struct game_list_t *cur = dlist_head;
+            dlist_head = dlist_head->next;
+            free(cur);
+        }
         count = 0;
+    }
 
-    if (count > 0)
+    free(*list);
+    *list = newList;
+    if (count > 0) {
         *gamecount = count;
+    } else {
+        *gamecount = 0;
+        *fsize = -1;
+    }
 
     return count;
+}
+
+int sbResolveISOStartup(base_game_info_t *game, const char *prefix, const char *sep)
+{
+    char path[256];
+    char startup[GAME_STARTUP_MAX];
+    int MountFD;
+
+    if (game == NULL || game->format != GAME_FORMAT_ISO || game->startup[0] == '\0')
+        return -EINVAL;
+
+    if (strlen(game->startup) == GAME_STARTUP_MAX - 1 && game->startup[4] == '_' && game->startup[8] == '.')
+        return 0;
+
+    snprintf(path, sizeof(path), "%s%s%s%s%s", prefix, game->media == SCECdPS2CD ? "CD" : "DVD", sep, game->name, game->extension);
+    MountFD = fileXioMount("iso:", path, FIO_MT_RDONLY);
+    if (MountFD < 0)
+        return MountFD;
+
+    if (GetStartupExecName("iso:/SYSTEM.CNF;1", startup, GAME_STARTUP_MAX - 1) != 0) {
+        fileXioUmount("iso:");
+        return -EIO;
+    }
+
+    strncpy(game->startup, startup, GAME_STARTUP_MAX);
+    game->startup[GAME_STARTUP_MAX] = '\0';
+    fileXioUmount("iso:");
+    return 0;
 }
 
 extern int probed_fd;
