@@ -36,6 +36,7 @@ static char bdmEmptyString[] = "";
 
 void bdmInitDevicesData();
 int bdmUpdateDeviceData(item_list_t *itemList);
+static void bdmDeferScan(bdm_device_data_t *pDeviceData, int frames);
 
 // Identifies the partition that the specified file is stored on and generates a full path to it.
 int bdmFindPartition(char *target, const char *name, int write)
@@ -79,7 +80,9 @@ static int BdmOptionalLoadQueued = 0;
 extern int guiFrameId;
 
 #define BDM_EVENT_QUIET_FRAMES      180
-#define BDM_FIRST_SCAN_DELAY_FRAMES 90
+#define BDM_FIRST_SCAN_DELAY_FRAMES 300
+#define BDM_RETRY_SCAN_FRAMES       180
+#define BDM_MAX_RETRY_SCAN_FRAMES   900
 
 static void bdmEventHandler(void *packet, void *opt)
 {
@@ -99,15 +102,18 @@ int bdmIsDeviceLoading(void)
 {
     int i;
 
-    if (gBdmDeviceLoading || BdmStableGeneration != BdmGeneration)
+    if (BdmStableGeneration != BdmGeneration)
         return 1;
 
     for (i = 0; i < MAX_BDM_DEVICES; i++) {
         bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[i].priv;
-        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0)
-            return 1;
+        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0) {
+            if (pDeviceData->bdmScanReadyFrame != 0 && guiFrameId < pDeviceData->bdmScanReadyFrame)
+                return 1;
+        }
     }
 
+    gBdmDeviceLoading = 0;
     return 0;
 }
 
@@ -196,6 +202,7 @@ void bdmInit(item_list_t *itemList)
     pDeviceData->bdmGameCount = 0;
     pDeviceData->bdmGames = NULL;
     pDeviceData->bdmScanReadyFrame = 0;
+    pDeviceData->bdmRetryCount = 0;
     pDeviceData->DeferredScan = 0;
     configGetInt(configGetByType(CONFIG_OPL), "usb_frames_delay", &itemList->delay);
     itemList->enabled = 1;
@@ -224,6 +231,7 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
         pDeviceData->bdmScanReadyFrame = 0;
+        pDeviceData->bdmRetryCount = 0;
         pDeviceData->DeferredScan = 0;
         result = 1;
     }
@@ -286,6 +294,7 @@ static int bdmNeedsUpdate(item_list_t *itemList)
 
         pDeviceData->DeferredScan = 0;
         pDeviceData->bdmScanReadyFrame = 0;
+        pDeviceData->bdmRetryCount = 0;
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
@@ -359,6 +368,16 @@ static int bdmNeedsUpdate(item_list_t *itemList)
     return result;
 }
 
+static void bdmDeferScan(bdm_device_data_t *pDeviceData, int frames)
+{
+    if (frames > BDM_MAX_RETRY_SCAN_FRAMES)
+        frames = BDM_MAX_RETRY_SCAN_FRAMES;
+
+    pDeviceData->DeferredScan = 1;
+    pDeviceData->bdmScanReadyFrame = guiFrameId + frames;
+    gBdmDeviceLoading = 1;
+}
+
 static int bdmDeviceReadyForFilesystem(item_list_t *itemList, bdm_device_data_t *pDeviceData)
 {
     int visible = itemList->owner != NULL ? ((opl_io_module_t *)itemList->owner)->menuItem.visible : 0;
@@ -396,7 +415,15 @@ static int bdmUpdateGameList(item_list_t *itemList)
         return 0;
     }
 
-    sbReadList(&pDeviceData->bdmGames, pDeviceData->bdmPrefix, &pDeviceData->bdmULSizePrev, &pDeviceData->bdmGameCount);
+    if (sbReadList(&pDeviceData->bdmGames, pDeviceData->bdmPrefix, &pDeviceData->bdmULSizePrev, &pDeviceData->bdmGameCount) < 0) {
+        int retryFrames = BDM_RETRY_SCAN_FRAMES * (pDeviceData->bdmRetryCount + 1);
+        if (pDeviceData->bdmRetryCount < 5)
+            pDeviceData->bdmRetryCount++;
+        bdmDeferScan(pDeviceData, retryFrames);
+        return pDeviceData->bdmGameCount;
+    }
+
+    pDeviceData->bdmRetryCount = 0;
     gBdmDeviceLoading = 0;
     return pDeviceData->bdmGameCount;
 }
@@ -1083,6 +1110,7 @@ int bdmUpdateDeviceData(item_list_t *itemList)
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;
         pDeviceData->bdmScanReadyFrame = 0;
+        pDeviceData->bdmRetryCount = 0;
         pDeviceData->DeferredScan = 0;
         pDeviceData->ThemesLoaded = 0;
         pDeviceData->LanguagesLoaded = 0;

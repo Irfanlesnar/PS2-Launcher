@@ -40,6 +40,7 @@ static int ethGetNetIFLinkStatus(void);
 static int ethApplyNetIFConfig(void);
 static int ethApplyIPConfig(void);
 static int ethReadNetConfig(void);
+static int ethUpdateGameList(item_list_t *itemList);
 
 static int ethInitSemaID = -1;
 
@@ -265,6 +266,7 @@ static void ethInitSMB(void)
         lngAddLanguages(path, "\\", ethGameList.mode);
 
         sbCreateFolders(ethPrefix, 1);
+        ethUpdateGameList(&ethGameList);
     } else if (gPCShareName[0] || !(gNetworkStartup >= ERROR_ETH_SMB_OPENSHARE)) {
         ethDisplayErrorStatus();
     }
@@ -444,6 +446,7 @@ void ethInit(item_list_t *itemList)
         ethULSizePrev = -2;
         ethGameCount = 0;
         ioPutRequest(IO_CUSTOM_SIMPLEACTION, &ethInitSMB);
+        itemList->enabled = 1;
     } else {
         LOG("ETHSUPPORT Init\n");
         ethBase = "smb0:";
@@ -890,6 +893,21 @@ static int ethApplyNetIFConfig(void)
 static int ethGetNetIFLinkStatus(void)
 {
     return (NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) == NETMAN_NETIF_ETH_LINK_STATE_UP);
+}
+
+int ethIsNetworkLinkUp(void)
+{
+    return ethModulesLoaded && ethGetNetIFLinkStatus();
+}
+
+void ethClearGameList(void)
+{
+    free(ethGames);
+    ethGames = NULL;
+    ethGameCount = 0;
+    ethULSizePrev = -2;
+    ethModifiedCDPrev = 0;
+    ethModifiedDVDPrev = 0;
 }
 
 static int ethApplyIPConfig(void)

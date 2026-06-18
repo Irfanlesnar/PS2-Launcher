@@ -974,6 +974,15 @@ int guiGetOpCompleted(int opid)
 
 int guiDeferUpdate(struct gui_update_t *op)
 {
+    if (op != NULL && op->type == GUI_OP_APPEND_MENU && op->submenu.text != NULL) {
+        char *textCopy = (char *)malloc(strlen(op->submenu.text) + 1);
+        if (textCopy != NULL) {
+            strcpy(textCopy, op->submenu.text);
+            op->submenu.text = textCopy;
+        } else
+            op->submenu.text = NULL;
+    }
+
     WaitSema(gSemaId);
 
     struct gui_update_list_t *up = (struct gui_update_list_t *)malloc(sizeof(struct gui_update_list_t));
@@ -1012,6 +1021,8 @@ static void guiHandleOp(struct gui_update_t *item)
             wasEmpty = !item->menu.menu->submenu;
             result = submenuAppendItem(item->menu.subMenu, item->submenu.icon_id,
                                        item->submenu.text, item->submenu.id, item->submenu.text_id);
+            free(item->submenu.text);
+            item->submenu.text = NULL;
 
             item->menu.menu->submenu = *item->menu.subMenu;
 

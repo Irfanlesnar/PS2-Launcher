@@ -39,6 +39,7 @@ typedef struct
     int bdmHddIsLBA48;      // 1 if the HDD supports LBA48, 0 if the HDD only supports LBA28
     int ataHighestUDMAMode; // Highest UDMA mode supported by the HDD
     int bdmScanReadyFrame;
+    int bdmRetryCount;
     unsigned char ThemesLoaded;
     unsigned char LanguagesLoaded;
     unsigned char ForceRefresh;

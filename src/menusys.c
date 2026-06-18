@@ -58,7 +58,7 @@ enum GAME_MENU_IDs {
     GAME_PS5_GSM_RESOLUTION = 120,
 };
 
-#define PS5_SMB_SETTINGS_COUNT 11
+#define PS5_SMB_SETTINGS_COUNT 12
 
 // global menu variables
 static menu_list_t *menu;
@@ -607,11 +607,18 @@ void submenuRebuildCache(submenu_list_t *submenu)
 static submenu_list_t *submenuAllocItem(int icon_id, char *text, int id, int text_id)
 {
     submenu_list_t *it = (submenu_list_t *)malloc(sizeof(submenu_list_t));
+    char *textCopy = NULL;
+
+    if (text != NULL) {
+        textCopy = (char *)malloc(strlen(text) + 1);
+        if (textCopy != NULL)
+            strcpy(textCopy, text);
+    }
 
     it->prev = NULL;
     it->next = NULL;
     it->item.icon_id = icon_id;
-    it->item.text = text;
+    it->item.text = textCopy;
     it->item.text_id = text_id;
     it->item.id = id;
     it->item.cache_id = NULL;
@@ -648,6 +655,7 @@ static void submenuDestroyItem(submenu_list_t *submenu)
 {
     free(submenu->item.cache_id);
     free(submenu->item.cache_uid);
+    free(submenu->item.text);
 
     free(submenu);
 }
@@ -1212,6 +1220,9 @@ int gPS5SmbDialogState = 0; // 0 = hidden, 1 = confirm, 2 = loading, 3 = info, 4
 int gPS5SmbDialogFocus = 1; // 1 = Yes, 0 = No
 char gPS5SmbDialogMessage[128] = "";
 
+int gPS5SmbCheckDialogState = 0; // 0 = hidden, 1 = testing, 2 = success, 3 = error
+char gPS5SmbCheckDialogMessage[256] = "";
+
 static void ps5LoadSmbGamesTask(void);
 extern int bdmIsDeviceLoading(void);
 
@@ -1222,6 +1233,12 @@ static void ps5LoadSmbGamesTask(void)
     if (eth != NULL) {
         if (eth->itemInit != NULL && (!eth->enabled || gNetworkStartup != 0))
             eth->itemInit(eth);
+        if (!ethIsNetworkLinkUp()) {
+            ethClearGameList();
+            gNetworkStartup = ERROR_ETH_LINK_FAIL;
+            gPS5SmbLoadStatus = 2;
+            return;
+        }
         if (eth->itemUpdate != NULL)
             eth->itemUpdate(eth);
     }
@@ -1323,7 +1340,11 @@ static void ps5UpdateSmbDialog(void)
         if (ioHasPendingRequests())
             return;
 
-        oplRefreshMergedGameList();
+        if (!gPS5SmbRefreshQueued) {
+            oplRefreshMergedGameList();
+            gPS5SmbRefreshQueued = 1;
+            return;
+        }
 
         gPS5SmbDialogState = 0;
         int shouldRetry = ps5SmbShouldRetryStartup();
@@ -1346,6 +1367,86 @@ static void ps5UpdateSmbDialog(void)
     gPS5SmbUiLoading = 0;
     gPS5SmbRetryFrame = 0;
     gPS5SmbManualRefreshFrame = 0;
+}
+
+static void ps5CheckSmbConnectionTask(void)
+{
+    item_list_t *eth = ethGetObject(0);
+    if (eth != NULL) {
+        if (eth->itemCleanUp != NULL)
+            eth->itemCleanUp(eth, 0);
+        gNetworkStartup = ERROR_ETH_NOT_STARTED;
+        if (eth->itemInit != NULL)
+            eth->itemInit(eth);
+    }
+}
+
+static void ps5UpdateSmbCheckDialog(void)
+{
+    if (gPS5SmbCheckDialogState != 1)
+        return;
+
+    if (ioHasPendingRequests())
+        return;
+
+    if (gNetworkStartup == 0) {
+        gPS5SmbCheckDialogState = 2; // Success
+        snprintf(gPS5SmbCheckDialogMessage, sizeof(gPS5SmbCheckDialogMessage),
+                 "Connection successful!\n\nFound %d games on the SMB share.", ethGetObject(0) ? ethGetObject(0)->itemGetCount(ethGetObject(0)) : 0);
+    } else {
+        gPS5SmbCheckDialogState = 3; // Error
+        char errorDetail[128];
+        switch (gNetworkStartup) {
+            case ERROR_ETH_MODULE_NETIF_FAILURE:
+                strncpy(errorDetail, "Network interface failure.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_MODULE_SMBMAN_FAILURE:
+                strncpy(errorDetail, "Failed to load SMB modules.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_SMB_CONN:
+                strncpy(errorDetail, "Cannot connect to SMB server. Check IP and port.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_SMB_LOGON:
+                strncpy(errorDetail, "Logon failed. Check username and password.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_SMB_OPENSHARE:
+                strncpy(errorDetail, "Cannot open share. Check share name.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_SMB_LISTSHARES:
+                strncpy(errorDetail, "Cannot list shares on server.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_SMB_LISTGAMES:
+                strncpy(errorDetail, "Cannot list games in share.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_LINK_FAIL:
+                strncpy(errorDetail, "Ethernet link down. Check cable.", sizeof(errorDetail));
+                break;
+            case ERROR_ETH_DHCP_FAIL:
+                strncpy(errorDetail, "DHCP configuration failed.", sizeof(errorDetail));
+                break;
+            default:
+                snprintf(errorDetail, sizeof(errorDetail), "Unknown error code: %d", gNetworkStartup);
+                break;
+        }
+        snprintf(gPS5SmbCheckDialogMessage, sizeof(gPS5SmbCheckDialogMessage),
+                 "Connection failed!\n\nDetails: %s", errorDetail);
+    }
+}
+
+static int ps5HandleSmbCheckDialogInput(void)
+{
+    ps5UpdateSmbCheckDialog();
+    if (gPS5SmbCheckDialogState == 0)
+        return 0;
+
+    if (gPS5SmbCheckDialogState == 2 || gPS5SmbCheckDialogState == 3) {
+        if (getKeyOn(KEY_CIRCLE)) {
+            sfxPlay(SFX_CANCEL);
+            gPS5SmbCheckDialogState = 0;
+            oplRefreshMergedGameList();
+        }
+    }
+    return 1;
 }
 
 static int ps5HandleSmbDialogInput(void)
@@ -1552,6 +1653,9 @@ void menuHandleInputMenu()
         if (ps5HandleSmbDialogInput()) {
             return;
         }
+        if (ps5HandleSmbCheckDialogInput()) {
+            return;
+        }
         if (ps5SmbConsumeInputWhileBusy())
             return;
 
@@ -1663,6 +1767,12 @@ void menuHandleInputMenu()
                             break;
                         case 10:
                             ps5EditSmbInt(&gPS5TempSmbCache, 0, 32, "SMB Cache");
+                            break;
+                        case 11:
+                            ps5ApplyTempSmbSettings();
+                            gPS5SmbCheckDialogState = 1;
+                            strncpy(gPS5SmbCheckDialogMessage, "Connecting to SMB server...", sizeof(gPS5SmbCheckDialogMessage));
+                            ioPutRequest(IO_CUSTOM_SIMPLEACTION, &ps5CheckSmbConnectionTask);
                             break;
                     }
                 }
@@ -1985,6 +2095,9 @@ void menuHandleInputMain()
         extern int gPS5ShowGamesLogo;
         extern int gPS5SortMode;
         if (ps5HandleSmbDialogInput()) {
+            return;
+        }
+        if (ps5HandleSmbCheckDialogInput()) {
             return;
         }
         if (ps5SmbConsumeInputWhileBusy())

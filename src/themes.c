@@ -18,6 +18,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <stdio.h>
+#include <kernel.h>
 #include "httpclient.h"
 #include <stdarg.h>
 
@@ -1373,7 +1374,7 @@ static int ps5CarouselSquareWidthForHeight(int height)
 int gPS5SettingsPage = 0; // 0 = Main Settings list, 1 = Display Settings sub-menu
 int gPS5SettingsSel = 0;
 
-#define PS5_SMB_SETTINGS_COUNT 11
+#define PS5_SMB_SETTINGS_COUNT 12
 
 int gPS5TempVMode = 0;
 int gPS5SubSel = 7;
@@ -1401,25 +1402,40 @@ typedef struct {
 } net_req_t;
 
 #define NET_CACHE_INITIAL_CAPACITY 64
-#define PS5_TEXTURE_KEEP_FRAMES 120
+#define PS5_TEXTURE_KEEP_FRAMES 18000
 #define PS5_MAX_TEXTURE_LOADS_PER_FRAME 2
 #define PS5_LOGO_LOAD_DELAY_FRAMES 36
+#define PS5_TEX_LOADING -2
+#define PS5_TEX_LOAD_TIMEOUT_FRAMES 900
 static net_req_t *gNetCache = NULL;
 static int gNetCacheCount = 0;
 static int gNetCacheCapacity = 0;
 static unsigned int gPS5TextureFrame = 0;
 static int gPS5TextureLoadsThisFrame = 0;
+static unsigned int gPS5CacheGeneration = 1;
 int gPS5CarouselNavInterrupt = 0;
 static item_list_t *gPS5ArtworkResolveList = NULL;
 static int gPS5ArtworkResolveSourceId = -1;
 static int gPS5ArtworkResolveRunning = 0;
 static volatile int gPS5ArtworkResolveDirty = 0;
+static volatile int gPS5AsyncTexRunning = 0;
+static volatile int gPS5AsyncTexDone = 0;
+static int gPS5AsyncTexCacheIndex = -1;
+static int gPS5AsyncTexIsLogo = 0;
+static unsigned int gPS5AsyncTexGeneration = 0;
+static unsigned int gPS5AsyncTexStartFrame = 0;
+static int gPS5AsyncTexResult = -1;
+static char gPS5AsyncTexPath[256];
+static GSTEXTURE gPS5AsyncTex;
+static u8 gPS5AsyncTexStack[64 * 1024] ALIGNED(16);
+static s32 gPS5AsyncTexThreadId = -1;
 static char gNetDebugMsg[256] = "Net Status: System ready.";
 
 extern void *_gp;
 extern void *focus_png;
 
 static void clearNetCache(void);
+static void findBuiltInCoverForGame(const char *gameTitle, char *matchedPath, int maxLen);
 
 static GSTEXTURE gPS5FocusPointerTex;
 static int gPS5FocusPointerLoaded = 0;
@@ -1489,6 +1505,154 @@ static void unloadPS5LogoTexture(net_req_t *entry)
         texFree(&entry->logoTex);
         entry->hasLogoTex = 0;
     }
+}
+
+static void ps5FreeLoadedTexture(GSTEXTURE *texture)
+{
+    if (texture != NULL && texture->Mem != NULL) {
+        rmUnloadTexture(texture);
+        texFree(texture);
+        memset(texture, 0, sizeof(GSTEXTURE));
+    }
+}
+
+static void ps5LoadTextureTask(void)
+{
+    memset(&gPS5AsyncTex, 0, sizeof(gPS5AsyncTex));
+    gPS5AsyncTexResult = loadPS5CoverTexture(&gPS5AsyncTex, gPS5AsyncTexPath);
+    gPS5AsyncTexDone = 1;
+    gPS5AsyncTexRunning = 0;
+}
+
+static void ps5LoadTextureThread(void *arg)
+{
+    ps5LoadTextureTask();
+    ExitDeleteThread();
+}
+
+static void ps5CompleteAsyncTextureLoad(void)
+{
+    net_req_t *entry;
+    int stale;
+
+    if (!gPS5AsyncTexDone)
+        return;
+
+    stale = gPS5AsyncTexGeneration != gPS5CacheGeneration ||
+            gPS5AsyncTexCacheIndex < 0 ||
+            gPS5AsyncTexCacheIndex >= gNetCacheCount;
+
+    if (!stale) {
+        entry = &gNetCache[gPS5AsyncTexCacheIndex];
+        if (gPS5AsyncTexIsLogo) {
+            if (gPS5AsyncTexResult >= 0) {
+                entry->logoTex = gPS5AsyncTex;
+                entry->hasLogoTex = 1;
+            } else {
+                entry->hasLogoTex = -1;
+            }
+        } else {
+            if (gPS5AsyncTexResult >= 0) {
+                entry->coverTex = gPS5AsyncTex;
+                entry->hasTex = 1;
+            } else {
+                char builtInPath[256];
+                findBuiltInCoverForGame(entry->gameTitle, builtInPath, sizeof(builtInPath));
+                if (builtInPath[0] != '\0' && strncmp(entry->coverPath, "embedded:", 9) != 0) {
+                    strncpy(entry->coverPath, builtInPath, sizeof(entry->coverPath) - 1);
+                    entry->coverPath[sizeof(entry->coverPath) - 1] = '\0';
+                    entry->hasTex = 0;
+                } else {
+                    entry->hasTex = -1;
+                }
+            }
+        }
+    } else if (gPS5AsyncTexResult >= 0) {
+        ps5FreeLoadedTexture(&gPS5AsyncTex);
+    }
+
+    memset(&gPS5AsyncTex, 0, sizeof(gPS5AsyncTex));
+    gPS5AsyncTexPath[0] = '\0';
+    gPS5AsyncTexCacheIndex = -1;
+    gPS5AsyncTexDone = 0;
+    gPS5AsyncTexRunning = 0;
+    gPS5AsyncTexThreadId = -1;
+}
+
+static int ps5QueueTextureLoad(net_req_t *entry, int isLogo)
+{
+    int idx;
+    int *state;
+    const char *path;
+
+    if (entry == NULL || gPS5AsyncTexRunning || gPS5AsyncTexDone)
+        return 0;
+
+    idx = entry - gNetCache;
+    if (idx < 0 || idx >= gNetCacheCount)
+        return 0;
+
+    state = isLogo ? &entry->hasLogoTex : &entry->hasTex;
+    path = isLogo ? entry->logoPath : entry->coverPath;
+    if (*state != 0 || path == NULL || path[0] == '\0')
+        return 0;
+
+    strncpy(gPS5AsyncTexPath, path, sizeof(gPS5AsyncTexPath) - 1);
+    gPS5AsyncTexPath[sizeof(gPS5AsyncTexPath) - 1] = '\0';
+    gPS5AsyncTexCacheIndex = idx;
+    gPS5AsyncTexIsLogo = isLogo;
+    gPS5AsyncTexGeneration = gPS5CacheGeneration;
+    gPS5AsyncTexStartFrame = gPS5TextureFrame;
+    gPS5AsyncTexResult = -1;
+    gPS5AsyncTexDone = 0;
+    gPS5AsyncTexRunning = 1;
+
+    {
+        ee_thread_t thread;
+        memset(&thread, 0, sizeof(thread));
+        thread.attr = 0;
+        thread.stack_size = sizeof(gPS5AsyncTexStack);
+        thread.gp_reg = &_gp;
+        thread.func = &ps5LoadTextureThread;
+        thread.stack = gPS5AsyncTexStack;
+        thread.initial_priority = 31;
+        gPS5AsyncTexThreadId = CreateThread(&thread);
+    }
+
+    if (gPS5AsyncTexThreadId < 0 || StartThread(gPS5AsyncTexThreadId, NULL) < 0) {
+        gPS5AsyncTexRunning = 0;
+        gPS5AsyncTexCacheIndex = -1;
+        *state = 0;
+        gPS5AsyncTexThreadId = -1;
+        gPS5AsyncTexPath[0] = '\0';
+        return 0;
+    }
+
+    *state = PS5_TEX_LOADING;
+    return 1;
+}
+
+static void ps5RecoverTimedOutTextureLoad(void)
+{
+    net_req_t *entry;
+    int *state;
+
+    if (!gPS5AsyncTexRunning || gPS5AsyncTexDone)
+        return;
+
+    if (gPS5TextureFrame - gPS5AsyncTexStartFrame < PS5_TEX_LOAD_TIMEOUT_FRAMES)
+        return;
+
+    if (gPS5AsyncTexGeneration == gPS5CacheGeneration &&
+        gPS5AsyncTexCacheIndex >= 0 &&
+        gPS5AsyncTexCacheIndex < gNetCacheCount) {
+        entry = &gNetCache[gPS5AsyncTexCacheIndex];
+        state = gPS5AsyncTexIsLogo ? &entry->hasLogoTex : &entry->hasTex;
+        if (*state == PS5_TEX_LOADING)
+            *state = 0;
+    }
+
+    gPS5AsyncTexStartFrame = gPS5TextureFrame;
 }
 
 static int ensureNetCacheCapacity(void)
@@ -1707,66 +1871,18 @@ static void findBuiltInCoverForGame(const char *gameTitle, char *matchedPath, in
 
 extern volatile unsigned int gBdmEventGeneration;
 
-int debugOpenProbe(const char *path) {
+int debugOpenProbe(const char *path)
+{
     extern int gNetworkStartup;
+
     if (path != NULL) {
-        if (bdmIsUsbPathDisconnected(path)) {
-            return -1; // This exact USB mass path is gone. Do not block other connected devices.
-        }
-        if (strncmp(path, "smb", 3) == 0 && gNetworkStartup != 0) {
-            return -1; // SMB is not connected or starting up. Do not block.
-        }
+        if (bdmIsUsbPathDisconnected(path))
+            return -1;
+        if (strncmp(path, "smb", 3) == 0 && gNetworkStartup != 0)
+            return -1;
     }
+
     return open(path, O_RDONLY);
-}
-
-static void findCoverInCoversFolder(const char *gameTitle, const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
-    if (startup && startup[0] != '\0') {
-        char prefix[128];
-        if (devicePrefix && devicePrefix[0] != '\0') {
-            strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
-            prefix[sizeof(prefix) - 1] = '\0';
-            int len = strlen(prefix);
-            if (len > 0 && prefix[len - 1] == '/') prefix[len - 1] = '\0';
-        } else {
-            strcpy(prefix, "mass0:");
-        }
-
-        snprintf(matchedPath, maxLen, "%s/ART/%s_COV.png", prefix, startup);
-        int fd = debugOpenProbe(matchedPath);
-        if (fd >= 0) {
-            close(fd);
-            return;
-        }
-    }
-
-    matchedPath[0] = '\0';
-}
-
-static void findLogoInLogosFolder(const char *startup, const char *devicePrefix, char *matchedPath, int maxLen) {
-    if (!startup || startup[0] == '\0') {
-        matchedPath[0] = '\0';
-        return;
-    }
-
-    char prefix[128];
-    if (devicePrefix && devicePrefix[0] != '\0') {
-        strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
-        prefix[sizeof(prefix) - 1] = '\0';
-        int len = strlen(prefix);
-        if (len > 0 && prefix[len - 1] == '/') prefix[len - 1] = '\0';
-    } else {
-        strcpy(prefix, "mass0:");
-    }
-
-    snprintf(matchedPath, maxLen, "%s/LOGO/%s_LOGO.png", prefix, startup);
-    int fd = debugOpenProbe(matchedPath);
-    if (fd >= 0) {
-        close(fd);
-        return;
-    }
-
-    matchedPath[0] = '\0';
 }
 
 static void triggerNetFetch(const char *title, const char *startup, const char *devicePrefix, int allowDeviceProbe) {
@@ -1809,16 +1925,36 @@ static void triggerNetFetch(const char *title, const char *startup, const char *
     gNetCache[idx].hasColor = 0;
 
     matchedPath[0] = '\0';
-    if (allowDeviceProbe) {
-        findCoverInCoversFolder(title, startup, devicePrefix, matchedPath, sizeof(matchedPath));
+    if (allowDeviceProbe && startup && startup[0] != '\0') {
+        char prefix[128];
+        if (devicePrefix && devicePrefix[0] != '\0') {
+            strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
+            prefix[sizeof(prefix) - 1] = '\0';
+            int len = strlen(prefix);
+            if (len > 0 && prefix[len - 1] == '/')
+                prefix[len - 1] = '\0';
+        } else {
+            strcpy(prefix, "mass0:");
+        }
+        snprintf(matchedPath, sizeof(matchedPath), "%s/ART/%s_COV.png", prefix, startup);
     }
     if (matchedPath[0] == '\0') {
         findBuiltInCoverForGame(title, matchedPath, sizeof(matchedPath));
     }
 
     char logoPath[256] = {0};
-    if (allowDeviceProbe) {
-        findLogoInLogosFolder(startup, devicePrefix, logoPath, sizeof(logoPath));
+    if (allowDeviceProbe && startup && startup[0] != '\0') {
+        char prefix[128];
+        if (devicePrefix && devicePrefix[0] != '\0') {
+            strncpy(prefix, devicePrefix, sizeof(prefix) - 1);
+            prefix[sizeof(prefix) - 1] = '\0';
+            int len = strlen(prefix);
+            if (len > 0 && prefix[len - 1] == '/')
+                prefix[len - 1] = '\0';
+        } else {
+            strcpy(prefix, "mass0:");
+        }
+        snprintf(logoPath, sizeof(logoPath), "%s/LOGO/%s_LOGO.png", prefix, startup);
     }
     strncpy(gNetCache[idx].logoPath, logoPath, sizeof(gNetCache[idx].logoPath) - 1);
     gNetCache[idx].logoPath[sizeof(gNetCache[idx].logoPath) - 1] = '\0';
@@ -1921,10 +2057,7 @@ static net_req_t *preparePS5CarouselCardMedia(struct menu_list *menu, submenu_li
             cacheEntry->lastCoverFrame = gPS5TextureFrame;
             if (cacheEntry->hasTex == 0 && !isUnplugged && gPS5CarouselNavInterrupt <= 0 && gPS5TextureLoadsThisFrame < PS5_MAX_TEXTURE_LOADS_PER_FRAME) {
                 gPS5TextureLoadsThisFrame++;
-                if (loadPS5CoverTexture(&cacheEntry->coverTex, cacheEntry->coverPath) >= 0)
-                    cacheEntry->hasTex = 1;
-                else
-                    cacheEntry->hasTex = -1;
+                ps5QueueTextureLoad(cacheEntry, 0);
             }
         }
         return cacheEntry;
@@ -2339,10 +2472,7 @@ void drawPS5GameHeaderArtwork(const char *title, int x, int y, int w, int h)
         entry->lastCoverFrame = gPS5TextureFrame;
         if (entry->hasTex == 0 && gPS5TextureLoadsThisFrame < PS5_MAX_TEXTURE_LOADS_PER_FRAME) {
             gPS5TextureLoadsThisFrame++;
-            if (loadPS5CoverTexture(&entry->coverTex, entry->coverPath) >= 0)
-                entry->hasTex = 1;
-            else
-                entry->hasTex = -1;
+            ps5QueueTextureLoad(entry, 0);
         }
 
         if (entry->hasTex == 1) {
@@ -2498,6 +2628,44 @@ static void drawPS5SmbDialogOverlay(void)
     }
 }
 
+static void drawPS5SmbCheckDialogOverlay(void)
+{
+    extern int gPS5SmbCheckDialogState;
+    extern char gPS5SmbCheckDialogMessage[256];
+
+    if (gPS5SmbCheckDialogState == 0)
+        return;
+
+    int dlgW = 460;
+    int dlgH = 200;
+    int dlgX = (screenWidth - dlgW) / 2;
+    int dlgY = (screenHeight - dlgH) / 2;
+    int btnY = dlgY + dlgH - 34;
+
+    rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
+    rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+    rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
+
+    fntRenderString(gPS5TitleFont, dlgX + 24, dlgY + 22, ALIGN_LEFT, 0, 0, "Check SMB Connection", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+    if (gPS5SmbCheckDialogState == 1) {
+        GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
+        int loaderSize = 14;
+        int loaderX = (dlgX + 32) * 4 / rmGetAspectWidth();
+        int loaderY = dlgY + 84;
+        float angle = (float)guiFrameId * 0.08f;
+        if (loader && loader->Mem)
+            rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, dlgX + 58, dlgY + 72, ALIGN_LEFT, dlgW - 82, 60, gPS5SmbCheckDialogMessage, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    } else {
+        fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 70, ALIGN_LEFT, dlgW - 48, 80, gPS5SmbCheckDialogMessage, GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
+    }
+
+    if (gPS5SmbCheckDialogState == 2 || gPS5SmbCheckDialogState == 3) {
+        drawPS5RightIconAndText(CIRCLE_ICON, "Close", gPS5SemiBoldFont, dlgX + dlgW - 24, btnY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    }
+}
+
 static void drawPS5SaveBusyOverlay(void)
 {
     GSTEXTURE *loader;
@@ -2525,6 +2693,7 @@ static void drawPS5SaveBusyOverlay(void)
 static void clearNetCache(void)
 {
     int i;
+    gPS5CacheGeneration++;
     for (i = 0; i < gNetCacheCount; i++) {
         unloadPS5CoverTexture(&gNetCache[i]);
         unloadPS5LogoTexture(&gNetCache[i]);
@@ -2645,6 +2814,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
     initPS5MaskTextures();
     gPS5TextureFrame++;
     gPS5TextureLoadsThisFrame = 0;
+    ps5CompleteAsyncTextureLoad();
+    ps5RecoverTimedOutTextureLoad();
     if (gPS5ArtworkResolveDirty) {
         gPS5ArtworkResolveDirty = 0;
         clearNetCache();
@@ -2790,12 +2961,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                     if (selCache->hasLogoTex == 0 && !isUnplugged && gPS5CarouselNavInterrupt <= 0 &&
                         selectedStableFrames >= PS5_LOGO_LOAD_DELAY_FRAMES && gPS5TextureLoadsThisFrame < PS5_MAX_TEXTURE_LOADS_PER_FRAME) {
                         gPS5TextureLoadsThisFrame++;
-                        if (loadPS5CoverTexture(&selCache->logoTex, selCache->logoPath) >= 0) {
-                            selCache->hasLogoTex = 1;
-                            logoAlpha = 0.0f; // Reset to 0 to ensure clean fade-in after load completes
-                        } else {
-                            selCache->hasLogoTex = -1;
-                        }
+                        ps5QueueTextureLoad(selCache, 1);
                     }
                     
                     if (selCache->hasLogoTex == 1) {
@@ -3101,6 +3267,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         if (gPS5CarouselNavInterrupt > 0)
             gPS5CarouselNavInterrupt--;
         drawPS5SmbDialogOverlay();
+        drawPS5SmbCheckDialogOverlay();
     } else {
         extern int gPS5SubSel;
         extern int gPS5TempVMode;
@@ -3215,6 +3382,10 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         label = "SMB cache";
                         snprintf(value, sizeof(value), "%d", gPS5TempSmbCache);
                         break;
+                    case 11:
+                        label = "Check SMB connection";
+                        snprintf(value, sizeof(value), "Check");
+                        break;
                 }
 
                 fntFitString(focused ? gPS5SemiBoldFont : gPS5RegFont, value, screenWidth / 2);
@@ -3228,7 +3399,8 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             int isToggle = (gPS5SmbSettingsSel == 0 || gPS5SmbSettingsSel == 5 || gPS5SmbSettingsSel == 7);
             u64 modifyColor = isToggle ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
-            drawPS5IconAndText(CROSS_ICON, "Modify", gPS5SemiBoldFont, 50, footerY, modifyColor);
+            const char *actionText = (gPS5SmbSettingsSel == 11) ? "Select" : "Modify";
+            drawPS5IconAndText(CROSS_ICON, actionText, gPS5SemiBoldFont, 50, footerY, modifyColor);
 
             int nextRightX = drawPS5RightIconAndText(CIRCLE_ICON, "Back", gPS5SemiBoldFont, screenWidth - 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             drawPS5RightIconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, nextRightX - 24, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -3247,6 +3419,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             drawPS5SaveBusyOverlay();
             drawPS5SmbDialogOverlay();
+            drawPS5SmbCheckDialogOverlay();
             return;
         }
 
@@ -3530,6 +3703,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         }
 
         drawPS5SmbDialogOverlay();
+        drawPS5SmbCheckDialogOverlay();
     }
 }
 
