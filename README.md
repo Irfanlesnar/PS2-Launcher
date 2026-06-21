@@ -74,6 +74,19 @@ https://github.com/ps2homebrew/Open-PS2-Loader
 
 This software is intended for use with legally owned games, backups, and homebrew software.
 
+## ❤️ Support Active Development
+
+Donations are completely optional, but they help support active development and future updates.
+
+### Global
+- **GitHub Sponsors:** https://github.com/sponsors/Irfanlesnar
+- **Ko-fi:** https://ko-fi.com/irfanlesnar
+
+### India
+- **UPI:** `irfanahamed.lesnar@okicici`
+
+Thank you for your support!
+
 ---
 
 Made with passion for the PlayStation 2 community.
