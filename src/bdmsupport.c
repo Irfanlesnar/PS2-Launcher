@@ -107,14 +107,19 @@ int bdmIsDeviceLoading(void)
 
     for (i = 0; i < MAX_BDM_DEVICES; i++) {
         bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[i].priv;
-        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0) {
-            if (pDeviceData->bdmScanReadyFrame != 0 && guiFrameId < pDeviceData->bdmScanReadyFrame)
-                return 1;
-        }
+        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0)
+            return 1;
     }
 
     gBdmDeviceLoading = 0;
     return 0;
+}
+
+static int bdmOptionalModulesNeedLoading(void)
+{
+    return (gEnableILK && !iLinkModLoaded) ||
+           (gEnableMX4SIO && !mx4sioModLoaded) ||
+           (gEnableBdmHDD && !hddModLoaded);
 }
 
 static void bdmLoadBlockDeviceModules(void)
@@ -182,7 +187,9 @@ void bdmLoadModules(void)
     sysLoadModuleBuffer(&usbmass_bd_irx, size_usbmass_bd_irx, 0, NULL);
 
     // Load Optional Block Device drivers
-    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
+    BdmOptionalLoadQueued = 1;
+    if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules) < 0)
+        BdmOptionalLoadQueued = 0;
 
     LOG("[BDMEVENT]:\n");
     sysLoadModuleBuffer(&bdmevent_irx, size_bdmevent_irx, 0, NULL);
@@ -252,7 +259,7 @@ static int bdmNeedsUpdate(item_list_t *itemList)
         BdmStableGeneration = BdmGeneration;
     }
 
-    if (!BdmOptionalLoadQueued) {
+    if (bdmOptionalModulesNeedLoading() && !BdmOptionalLoadQueued) {
         BdmOptionalLoadQueued = 1;
         if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules) < 0)
             BdmOptionalLoadQueued = 0;
@@ -948,7 +955,11 @@ void bdmEnumerateDevices()
 
     // Because bdmLoadModules is called before the config file is loaded bdmLoadBlockDeviceModules will not have loaded any
     // optional bdm modules. Now that the config file has been loaded try loading any optional modules that weren't previously loaded.
-    ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules);
+    if (bdmOptionalModulesNeedLoading() && !BdmOptionalLoadQueued) {
+        BdmOptionalLoadQueued = 1;
+        if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &bdmLoadBlockDeviceModules) < 0)
+            BdmOptionalLoadQueued = 0;
+    }
 
     LOG("bdmEnumerateDevices done\n");
 }
@@ -1032,6 +1043,7 @@ int bdmIsUsbPathDisconnected(const char *path)
 int bdmUpdateDeviceData(item_list_t *itemList)
 {
     char path[16] = {0};
+    char driver[32] = {0};
 
     // If bdm mode is disabled bail out as we don't want to update the visibility state of the device pages.
     if (gBDMStartMode == START_MODE_DISABLED)
@@ -1051,29 +1063,42 @@ int bdmUpdateDeviceData(item_list_t *itemList)
 
     // If we opened the device and the menu isn't visible (OR is visible but hasn't been initialized ex: manual device start) initialize device info.
     if (dir >= 0 && (visible == 0 || pDeviceData->bdmPrefix[0] == '\0')) {
-        if (gBDMPrefix[0] != '\0')
-            snprintf(pDeviceData->bdmPrefix, sizeof(pDeviceData->bdmPrefix), "mass%d:%s/", itemList->mode, gBDMPrefix);
-        else
-            snprintf(pDeviceData->bdmPrefix, sizeof(pDeviceData->bdmPrefix), "mass%d:", itemList->mode);
-
         // Get the name of the underlying device driver that backs the fat fs.
-        fileXioIoctl2(dir, USBMASS_IOCTL_GET_DRIVERNAME, NULL, 0, &pDeviceData->bdmDriver, sizeof(pDeviceData->bdmDriver) - 1);
-        fileXioIoctl2(dir, USBMASS_IOCTL_GET_DEVICE_NUMBER, NULL, 0, &pDeviceData->massDeviceIndex, sizeof(pDeviceData->massDeviceIndex));
+        if (fileXioIoctl2(dir, USBMASS_IOCTL_GET_DRIVERNAME, NULL, 0, driver, sizeof(driver) - 1) < 0 || driver[0] == '\0') {
+            fileXioDclose(dir);
+            bdmDeferScan(pDeviceData, BDM_RETRY_SCAN_FRAMES);
+            return 0;
+        }
+
+        driver[sizeof(driver) - 1] = '\0';
 
         itemList->flags = 0;
 
         // Determine the bdm device type based on the underlying device driver.
-        if (!strcmp(pDeviceData->bdmDriver, "usb"))
+        if (!strcmp(driver, "usb"))
             pDeviceData->bdmDeviceType = BDM_TYPE_USB;
-        else if (!strcmp(pDeviceData->bdmDriver, "sd") && strlen(pDeviceData->bdmDriver) == 2)
+        else if (!strcmp(driver, "sd") && strlen(driver) == 2)
             pDeviceData->bdmDeviceType = BDM_TYPE_ILINK;
-        else if (!strcmp(pDeviceData->bdmDriver, "sdc") && strlen(pDeviceData->bdmDriver) == 3)
+        else if (!strcmp(driver, "sdc") && strlen(driver) == 3)
             pDeviceData->bdmDeviceType = BDM_TYPE_SDC;
-        else if (!strcmp(pDeviceData->bdmDriver, "ata") && strlen(pDeviceData->bdmDriver) == 3) {
+        else if (!strcmp(driver, "ata") && strlen(driver) == 3) {
             pDeviceData->bdmDeviceType = BDM_TYPE_ATA;
             itemList->flags = MODE_FLAG_COMPAT_DMA;
-        } else
+        } else {
             pDeviceData->bdmDeviceType = BDM_TYPE_UNKNOWN;
+            fileXioDclose(dir);
+            bdmDeferScan(pDeviceData, BDM_RETRY_SCAN_FRAMES);
+            return 0;
+        }
+
+        snprintf(pDeviceData->bdmDriver, sizeof(pDeviceData->bdmDriver), "%s", driver);
+        pDeviceData->massDeviceIndex = -1;
+        fileXioIoctl2(dir, USBMASS_IOCTL_GET_DEVICE_NUMBER, NULL, 0, &pDeviceData->massDeviceIndex, sizeof(pDeviceData->massDeviceIndex));
+
+        if (gBDMPrefix[0] != '\0')
+            snprintf(pDeviceData->bdmPrefix, sizeof(pDeviceData->bdmPrefix), "mass%d:%s/", itemList->mode, gBDMPrefix);
+        else
+            snprintf(pDeviceData->bdmPrefix, sizeof(pDeviceData->bdmPrefix), "mass%d:", itemList->mode);
 
         // If the device is backed by the ATA driver then get the supported LBA size for the drive.
         if (pDeviceData->bdmDeviceType == BDM_TYPE_ATA) {

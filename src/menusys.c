@@ -2303,10 +2303,6 @@ void menuHandleInputMain()
         menuPrevPage();
     } else if (getKey(KEY_R1)) {
         menuNextPage();
-    } else if (getKeyOn(KEY_L2)) { // home
-        menuFirstPage();
-    } else if (getKeyOn(KEY_R2)) { // end
-        menuLastPage();
     }
 
     // Last Played Auto Start
@@ -2352,10 +2348,6 @@ void menuHandleInputInfo()
         menuPrevPage();
     } else if (getKey(KEY_R1)) {
         menuNextPage();
-    } else if (getKeyOn(KEY_L2)) {
-        menuFirstPage();
-    } else if (getKeyOn(KEY_R2)) {
-        menuLastPage();
     }
 }
 

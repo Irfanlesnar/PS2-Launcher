@@ -158,6 +158,7 @@ static void deferredAudioInit(void);
 static int coverIsLocalGameSupport(item_list_t *support);
 static int ps5IsMergedGameSupport(item_list_t *support);
 static opl_io_module_t *ps5GetMergedGameModule(void);
+static unsigned int ps5MergedSourceUpdateMask;
 
 // frame counter
 static unsigned int frameCounter;
@@ -1007,7 +1008,6 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
     int focusedMode = -1;
     char focusedStartup[GAME_STARTUP_MAX] = "";
     char focusedTitle[128] = "";
-    int mergedScanBusy = 0;
 
     if (aggregateLocalGames && mdl->menuItem.current != NULL) {
         item_list_t *focusedSupport = mdl->support;
@@ -1054,16 +1054,14 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
             if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled)
                 continue;
 
-            if (sourceSupport->mode >= BDM_MODE && sourceSupport->mode < ETH_MODE && bdmIsDeviceLoading()) {
-                if (sourceSupport->itemGetCount != NULL)
-                    sourceCount = sourceSupport->itemGetCount(sourceSupport);
-                else
-                    sourceCount = 0;
-                mergedScanBusy = 1;
-            } else if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL) {
+            if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL) {
+                sourceCount = sourceSupport->itemGetCount(sourceSupport);
+            } else if ((ps5MergedSourceUpdateMask & (1u << sourceSupport->mode)) != 0) {
+                sourceCount = sourceSupport->itemUpdate(sourceSupport);
+            } else if (sourceSupport->itemGetCount != NULL) {
                 sourceCount = sourceSupport->itemGetCount(sourceSupport);
             } else {
-                sourceCount = sourceSupport->itemUpdate(sourceSupport);
+                sourceCount = 0;
             }
             if (sourceCount <= 0)
                 continue;
@@ -1125,10 +1123,6 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
         }
     }
 
-    if (aggregateLocalGames && count <= 0 && mergedScanBusy) {
-        return;
-    }
-
     if (gAutosort && count > 0) {
         gup = guiOpCreate(GUI_OP_SORT);
         gup->menu.menu = &mdl->menuItem;
@@ -1160,6 +1154,9 @@ void menuDeferredUpdate(void *data)
         return;
 
     if (gPS5Mode && ps5IsMergedGameSupport(mod->support)) {
+        int mode;
+        int needsUpdate = 0;
+
         mergedMod = ps5GetMergedGameModule();
         if (mergedMod == NULL)
             return;
@@ -1167,6 +1164,29 @@ void menuDeferredUpdate(void *data)
             ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
             return;
         }
+
+        ps5MergedSourceUpdateMask = 0;
+        for (mode = BDM_MODE; mode <= HDD_MODE; mode++) {
+            item_list_t *sourceSupport = list_support[mode].support;
+
+            if (mode == ETH_MODE)
+                continue;
+
+            if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled || sourceSupport->itemNeedsUpdate == NULL)
+                continue;
+
+            if (sourceSupport->itemNeedsUpdate(sourceSupport)) {
+                ps5MergedSourceUpdateMask |= 1u << sourceSupport->mode;
+                needsUpdate = 1;
+            }
+        }
+
+        if (needsUpdate) {
+            updateMenuFromGameList(mergedMod);
+            ps5MergedSourceUpdateMask = 0;
+            shouldAppsUpdate = 1;
+        }
+        return;
     }
 
     // see if we have to update
@@ -1191,8 +1211,15 @@ static void menuUpdateHook()
     // schedule updates of all the list handlers
     if (gAutoRefresh) {
         for (i = 0; i < MODE_COUNT; i++) {
+            opl_io_module_t *mergedMod;
+
             if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
                 continue;
+            if (gPS5Mode && list_support[i].support != NULL && ps5IsMergedGameSupport(list_support[i].support)) {
+                mergedMod = ps5GetMergedGameModule();
+                if (mergedMod != NULL && &list_support[i] != mergedMod)
+                    continue;
+            }
             if ((list_support[i].support && list_support[i].support->enabled) && ((list_support[i].support->updateDelay > 0) && (frameCounter % list_support[i].support->updateDelay == 0)))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
@@ -1201,8 +1228,15 @@ static void menuUpdateHook()
     // Schedule updates of all list handlers that are to run every frame, regardless of whether auto refresh is active or not.
     if (frameCounter % MENU_GENERAL_UPDATE_DELAY == 0) {
         for (i = 0; i < MODE_COUNT; i++) {
+            opl_io_module_t *mergedMod;
+
             if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
                 continue;
+            if (gPS5Mode && list_support[i].support != NULL && ps5IsMergedGameSupport(list_support[i].support)) {
+                mergedMod = ps5GetMergedGameModule();
+                if (mergedMod != NULL && &list_support[i] != mergedMod)
+                    continue;
+            }
             if ((list_support[i].support && list_support[i].support->enabled) && (list_support[i].support->updateDelay == 0))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
