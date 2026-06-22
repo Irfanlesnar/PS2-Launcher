@@ -29,6 +29,9 @@
 #define DIA_SCROLL_SPEED  300
 // scroll speed (delay in ms!) when setting int value
 #define DIA_INT_SET_SPEED 100
+#define DIA_PS5_IP_SET_SPEED_SLOW   120
+#define DIA_PS5_IP_SET_SPEED_MEDIUM 70
+#define DIA_PS5_IP_SET_SPEED_FAST   35
 
 static int screenWidth;
 static int screenHeight;
@@ -214,15 +217,59 @@ static int diaParseIp(const char *text, int *parts)
     return 0;
 }
 
+static int diaNormalizeIpText(const char *input, char *output, int maxLen)
+{
+    int parts[4] = {0, 0, 0, 0};
+    int part = 0;
+    int value = -1;
+    const char *p;
+
+    if (input == NULL || output == NULL || maxLen <= 0)
+        return 0;
+
+    for (p = input; *p != '\0'; p++) {
+        if (*p >= '0' && *p <= '9') {
+            if (value < 0)
+                value = 0;
+            value = (value * 10) + (*p - '0');
+            if (value > 255)
+                value = 255;
+        } else if (*p == '.') {
+            if (part >= 4 || value < 0)
+                return 0;
+            parts[part++] = value;
+            value = -1;
+        } else {
+            return 0;
+        }
+    }
+
+    if (part != 3 || value < 0)
+        return 0;
+
+    parts[part] = value;
+    snprintf(output, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+    return 1;
+}
+
 int diaShowIpEditor(char *text, int maxLen)
 {
     int parts[4];
-    int selected = 0;
+    int selected = 2;
     int pressAnim = 0;
     int pressDir = 0;
+    int ipPadSettings[16];
+    int ipHoldDirection = 0;
+    clock_t ipHoldStarted = 0;
 
     if (!gPS5Mode)
         return diaShowKeyb(text, maxLen, 0, "SMB Server IP");
+
+    padStoreSettings(ipPadSettings);
+    setButtonDelay(KEY_LEFT, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_RIGHT, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_UP, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_DOWN, DIA_PS5_IP_SET_SPEED_SLOW);
 
     diaParseIp(text, parts);
     rmGetScreenExtents(&screenWidth, &screenHeight);
@@ -275,6 +322,33 @@ int diaShowIpEditor(char *text, int maxLen)
 
         readPads();
 
+        {
+            int heldDirection = getKeyPressed(KEY_UP) ? -1 : (getKeyPressed(KEY_DOWN) ? 1 : 0);
+            int repeatDelay = DIA_PS5_IP_SET_SPEED_SLOW;
+
+            if (heldDirection == 0) {
+                ipHoldDirection = 0;
+                ipHoldStarted = 0;
+            } else {
+                clock_t now = clock();
+                clock_t heldFor;
+
+                if (heldDirection != ipHoldDirection) {
+                    ipHoldDirection = heldDirection;
+                    ipHoldStarted = now;
+                }
+
+                heldFor = now - ipHoldStarted;
+                if (heldFor >= 6 * CLOCKS_PER_SEC)
+                    repeatDelay = DIA_PS5_IP_SET_SPEED_FAST;
+                else if (heldFor >= 3 * CLOCKS_PER_SEC)
+                    repeatDelay = DIA_PS5_IP_SET_SPEED_MEDIUM;
+            }
+
+            setButtonDelay(KEY_UP, repeatDelay);
+            setButtonDelay(KEY_DOWN, repeatDelay);
+        }
+
         rmStartFrame();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
 
@@ -296,6 +370,7 @@ int diaShowIpEditor(char *text, int maxLen)
             }
         }
 
+        diaDrawPS5FooterIconText(TRIANGLE_ICON, "Show Keyboard", screenWidth - 360, screenHeight - 20, footerFont);
         diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 206, screenHeight - 20, footerFont);
         diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 106, screenHeight - 20, footerFont);
 
@@ -326,9 +401,27 @@ int diaShowIpEditor(char *text, int maxLen)
         } else if (getKeyOn(KEY_SQUARE)) {
             sfxPlay(SFX_CONFIRM);
             snprintf(text, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+            padRestoreSettings(ipPadSettings);
             return 1;
+        } else if (getKeyOn(KEY_TRIANGLE)) {
+            char tmp[32];
+            char normalized[16];
+
+            sfxPlay(SFX_CONFIRM);
+            snprintf(tmp, sizeof(tmp), "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Server IP")) {
+                if (diaNormalizeIpText(tmp, normalized, sizeof(normalized))) {
+                    strncpy(text, normalized, maxLen - 1);
+                    text[maxLen - 1] = '\0';
+                } else {
+                    snprintf(text, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+                }
+                padRestoreSettings(ipPadSettings);
+                return 1;
+            }
         } else if (getKeyOn(KEY_CIRCLE)) {
             sfxPlay(SFX_CANCEL);
+            padRestoreSettings(ipPadSettings);
             return 0;
         }
     }

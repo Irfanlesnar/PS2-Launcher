@@ -544,7 +544,8 @@ static void initStaticImage(const char *themePath, config_set_t *themeConfig, th
 static item_list_t *resolveThemeGameItem(void *fallbackSupport, int itemId, int *sourceId)
 {
     item_list_t *support = (item_list_t *)fallbackSupport;
-    oplResolveGameItem(itemId, support, &support, sourceId);
+    if (!oplResolveGameItem(itemId, support, &support, sourceId))
+        return NULL;
     return support;
 }
 
@@ -1374,7 +1375,7 @@ static int ps5CarouselSquareWidthForHeight(int height)
 int gPS5SettingsPage = 0; // 0 = Main Settings list, 1 = Display Settings sub-menu
 int gPS5SettingsSel = 0;
 
-#define PS5_SMB_SETTINGS_COUNT 12
+#define PS5_SMB_SETTINGS_COUNT 11
 
 int gPS5TempVMode = 0;
 int gPS5SubSel = 7;
@@ -2651,12 +2652,12 @@ static void drawPS5SmbCheckDialogOverlay(void)
     if (gPS5SmbCheckDialogState == 1) {
         GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
         int loaderSize = 14;
-        int loaderX = (dlgX + 32) * 4 / rmGetAspectWidth();
-        int loaderY = dlgY + 84;
+        int loaderX = (dlgX + dlgW - 20 - (loaderSize / 2)) * 4 / rmGetAspectWidth();
+        int loaderY = dlgY + dlgH - 20 - (loaderSize / 2);
         float angle = (float)guiFrameId * 0.08f;
         if (loader && loader->Mem)
             rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        fntRenderString(gPS5RegFont, dlgX + 58, dlgY + 72, ALIGN_LEFT, dlgW - 82, 60, gPS5SmbCheckDialogMessage, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 72, ALIGN_LEFT, dlgW - 48, 60, gPS5SmbCheckDialogMessage, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     } else {
         fntRenderString(gPS5RegFont, dlgX + 24, dlgY + 70, ALIGN_LEFT, dlgW - 48, 80, gPS5SmbCheckDialogMessage, GS_SETREG_RGBA(0xEE, 0xEE, 0xEE, 0x80));
     }
@@ -2705,6 +2706,18 @@ static void clearNetCache(void)
 void ps5ClearCoverCache(void)
 {
     clearNetCache();
+}
+
+void ps5RetryMissingCoverCache(void)
+{
+    int i;
+
+    for (i = 0; i < gNetCacheCount; i++) {
+        if (gNetCache[i].coverPath[0] != '\0' && gNetCache[i].hasTex != 1)
+            gNetCache[i].hasTex = 0;
+        if (gNetCache[i].logoPath[0] != '\0' && gNetCache[i].hasLogoTex != 1)
+            gNetCache[i].hasLogoTex = 0;
+    }
 }
 
 int gPS5AlphaIdx = 0; // Global alphabet index (starts at '#')
@@ -3382,10 +3395,6 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
                         label = "SMB cache";
                         snprintf(value, sizeof(value), "%d", gPS5TempSmbCache);
                         break;
-                    case 11:
-                        label = "Check SMB connection";
-                        snprintf(value, sizeof(value), "Check");
-                        break;
                 }
 
                 fntFitString(focused ? gPS5SemiBoldFont : gPS5RegFont, value, screenWidth / 2);
@@ -3399,11 +3408,11 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             int isToggle = (gPS5SmbSettingsSel == 0 || gPS5SmbSettingsSel == 5 || gPS5SmbSettingsSel == 7);
             u64 modifyColor = isToggle ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x20) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
-            const char *actionText = (gPS5SmbSettingsSel == 11) ? "Select" : "Modify";
-            drawPS5IconAndText(CROSS_ICON, actionText, gPS5SemiBoldFont, 50, footerY, modifyColor);
+            drawPS5IconAndText(CROSS_ICON, "Modify", gPS5SemiBoldFont, 50, footerY, modifyColor);
 
             int nextRightX = drawPS5RightIconAndText(CIRCLE_ICON, "Back", gPS5SemiBoldFont, screenWidth - 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-            drawPS5RightIconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, nextRightX - 24, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            int saveLeftX = drawPS5RightIconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, nextRightX - 24, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            drawPS5RightIconAndText(TRIANGLE_ICON, "Check Connection", gPS5SemiBoldFont, saveLeftX - 24, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
 
             if (gPS5SaveNotifyFrame && guiFrameId >= (int)gPS5SaveNotifyFrame && guiFrameId - (int)gPS5SaveNotifyFrame < 120) {
                 int toastW = 188;
@@ -4488,4 +4497,24 @@ void playPS5LaunchTransition(const char *gameTitle)
 
         guiEndFrame();
     }
+}
+
+void drawPS5LaunchLoadingFrame(unsigned int frame, int alpha)
+{
+    GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
+    int loaderSize = 14;
+    int loaderX = (screenWidth - 20 - (loaderSize / 2)) * 4 / rmGetAspectWidth();
+    int loaderY = screenHeight - 20 - (loaderSize / 2);
+    float angle = (float)frame * 0.16f;
+
+    if (alpha < 0)
+        alpha = 0;
+    else if (alpha > 0x80)
+        alpha = 0x80;
+
+    guiStartFrame();
+    rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+    if (loader != NULL && loader->Mem != NULL && alpha > 0)
+        rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, alpha));
+    guiEndFrame();
 }

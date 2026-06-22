@@ -166,7 +166,9 @@ char *thmGetFilePath(int themeID);
 
 extern int gPS5ActiveTab;
 void ps5ClearCoverCache(void);
+void ps5RetryMissingCoverCache(void);
 void playPS5LaunchTransition(const char *gameTitle);
+void drawPS5LaunchLoadingFrame(unsigned int frame, int alpha);
 int thmGetPS5TitleFont(void);
 int thmGetPS5HeaderFont(void);
 int thmGetPS5SemiBoldFont(void);

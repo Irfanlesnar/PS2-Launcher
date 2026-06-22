@@ -294,7 +294,6 @@ static int bdmNeedsUpdate(item_list_t *itemList)
 
         pDeviceData->DeferredScan = 0;
         pDeviceData->bdmScanReadyFrame = 0;
-        pDeviceData->bdmRetryCount = 0;
         pDeviceData->bdmModifiedCDPrev = 0;
         pDeviceData->bdmModifiedDVDPrev = 0;
         pDeviceData->bdmULSizePrev = -2;

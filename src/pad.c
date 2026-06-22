@@ -332,7 +332,9 @@ int readPads()
 
     // in ms.
     u32 newtime = cpu_ticks() / CLOCKS_PER_MILISEC;
-    time_since_last = newtime - curtime;
+    time_since_last = (newtime - curtime) / 2;  // slower D-pad switching
+    if (time_since_last > 250)
+        time_since_last = 250;
     curtime = newtime;
 
     int rslt = 0;

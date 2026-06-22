@@ -167,12 +167,87 @@ static char errorMessage[256];
 static opl_io_module_t list_support[MODE_COUNT];
 
 #define PS5_GAME_ITEM_FLAG 0x40000000
-#define PS5_GAME_ITEM_MODE_SHIFT 16
-#define PS5_GAME_ITEM_ID_MASK 0xFFFF
+#define PS5_GAME_ITEM_INDEX_MASK 0x3FFFFFFF
+
+typedef struct {
+    int sourceMode;
+    int sourceId;
+    char startup[GAME_STARTUP_MAX];
+    char title[128];
+} ps5_game_ref_t;
+
+static ps5_game_ref_t *gPS5GameRefs = NULL;
+static int gPS5GameRefCount = 0;
+static int gPS5GameRefCapacity = 0;
+
+static int oplEnsureGameItemRefCapacity(void)
+{
+    ps5_game_ref_t *refs;
+    int capacity;
+
+    if (gPS5GameRefCount < gPS5GameRefCapacity)
+        return 1;
+
+    capacity = gPS5GameRefCapacity > 0 ? gPS5GameRefCapacity * 2 : 64;
+    refs = realloc(gPS5GameRefs, capacity * sizeof(ps5_game_ref_t));
+    if (refs == NULL)
+        return 0;
+
+    gPS5GameRefs = refs;
+    gPS5GameRefCapacity = capacity;
+    return 1;
+}
 
 int oplMakeGameItemId(int mode, int id)
 {
-    return PS5_GAME_ITEM_FLAG | ((mode & 0xFF) << PS5_GAME_ITEM_MODE_SHIFT) | (id & PS5_GAME_ITEM_ID_MASK);
+    item_list_t *support;
+    ps5_game_ref_t *ref;
+    const char *startup;
+    const char *title;
+    int index, i;
+
+    if (mode < 0 || mode >= MODE_COUNT || id < 0)
+        return -1;
+
+    support = list_support[mode].support;
+    if (support == NULL)
+        return -1;
+
+    startup = support->itemGetStartup != NULL ? support->itemGetStartup(support, id) : NULL;
+    title = support->itemGetName != NULL ? support->itemGetName(support, id) : NULL;
+
+    index = -1;
+    for (i = 0; i < gPS5GameRefCount; i++) {
+        ref = &gPS5GameRefs[i];
+        if (ref->sourceMode != mode)
+            continue;
+        if ((startup != NULL && startup[0] != '\0' && ref->startup[0] != '\0' && strcmp(startup, ref->startup) == 0) ||
+            (title != NULL && title[0] != '\0' && ref->title[0] != '\0' && strcmp(title, ref->title) == 0)) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        if (gPS5GameRefCount > PS5_GAME_ITEM_INDEX_MASK || !oplEnsureGameItemRefCapacity())
+            return -1;
+        index = gPS5GameRefCount++;
+        memset(&gPS5GameRefs[index], 0, sizeof(gPS5GameRefs[index]));
+    }
+
+    ref = &gPS5GameRefs[index];
+    ref->sourceMode = mode;
+    ref->sourceId = id;
+    if (startup != NULL) {
+        strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+        ref->startup[sizeof(ref->startup) - 1] = '\0';
+    }
+    if (title != NULL) {
+        strncpy(ref->title, title, sizeof(ref->title) - 1);
+        ref->title[sizeof(ref->title) - 1] = '\0';
+    }
+
+    return PS5_GAME_ITEM_FLAG | index;
 }
 
 int oplIsGameItemIdEncoded(int itemId)
@@ -182,18 +257,63 @@ int oplIsGameItemIdEncoded(int itemId)
 
 int oplResolveGameItem(int itemId, item_list_t *fallback, item_list_t **support, int *sourceId)
 {
-    int mode, id;
+    int index, id, count, i;
+    item_list_t *resolvedSupport;
+    ps5_game_ref_t *ref;
+    const char *startup;
+    const char *title;
 
     if (oplIsGameItemIdEncoded(itemId)) {
-        mode = (itemId >> PS5_GAME_ITEM_MODE_SHIFT) & 0xFF;
-        id = itemId & PS5_GAME_ITEM_ID_MASK;
-        if (mode >= 0 && mode < MODE_COUNT && list_support[mode].support != NULL) {
-            if (support != NULL)
-                *support = list_support[mode].support;
-            if (sourceId != NULL)
-                *sourceId = id;
-            return 1;
+        index = itemId & PS5_GAME_ITEM_INDEX_MASK;
+        if (index < 0 || index >= gPS5GameRefCount)
+            return 0;
+
+        ref = &gPS5GameRefs[index];
+        if (ref->sourceMode < 0 || ref->sourceMode >= MODE_COUNT)
+            return 0;
+
+        resolvedSupport = list_support[ref->sourceMode].support;
+        if (resolvedSupport == NULL || !resolvedSupport->enabled || resolvedSupport->itemGetCount == NULL)
+            return 0;
+
+        count = resolvedSupport->itemGetCount(resolvedSupport);
+        id = ref->sourceId;
+        if (id >= 0 && id < count) {
+            startup = resolvedSupport->itemGetStartup != NULL ? resolvedSupport->itemGetStartup(resolvedSupport, id) : NULL;
+            title = resolvedSupport->itemGetName != NULL ? resolvedSupport->itemGetName(resolvedSupport, id) : NULL;
+            if ((ref->startup[0] != '\0' && startup != NULL && strcmp(startup, ref->startup) == 0) ||
+                (ref->title[0] != '\0' && title != NULL && strcmp(title, ref->title) == 0)) {
+                if (startup != NULL && startup[0] != '\0') {
+                    strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+                    ref->startup[sizeof(ref->startup) - 1] = '\0';
+                }
+                if (support != NULL)
+                    *support = resolvedSupport;
+                if (sourceId != NULL)
+                    *sourceId = id;
+                return 1;
+            }
         }
+
+        for (i = 0; i < count; i++) {
+            startup = resolvedSupport->itemGetStartup != NULL ? resolvedSupport->itemGetStartup(resolvedSupport, i) : NULL;
+            title = resolvedSupport->itemGetName != NULL ? resolvedSupport->itemGetName(resolvedSupport, i) : NULL;
+            if ((ref->startup[0] != '\0' && startup != NULL && strcmp(startup, ref->startup) == 0) ||
+                (ref->title[0] != '\0' && title != NULL && strcmp(title, ref->title) == 0)) {
+                ref->sourceId = i;
+                if (startup != NULL && startup[0] != '\0') {
+                    strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+                    ref->startup[sizeof(ref->startup) - 1] = '\0';
+                }
+                if (support != NULL)
+                    *support = resolvedSupport;
+                if (sourceId != NULL)
+                    *sourceId = i;
+                return 1;
+            }
+        }
+
+        return 0;
     }
 
     if (support != NULL)
@@ -234,38 +354,8 @@ static int oplResolveMenuGame(struct menu_item *curMenu, item_list_t **support, 
     resolvedSupport = *support;
     resolvedId = curMenu->current->item.id;
     encodedItem = (resolvedId & PS5_GAME_ITEM_FLAG) != 0;
-    oplResolveGameItem(resolvedId, resolvedSupport, &resolvedSupport, &resolvedId);
-
-    if (encodedItem && resolvedSupport != NULL && resolvedSupport->itemGetCount != NULL &&
-        (resolvedId < 0 || resolvedId >= resolvedSupport->itemGetCount(resolvedSupport) ||
-         (resolvedSupport->itemGetName != NULL && strcmp(resolvedSupport->itemGetName(resolvedSupport, resolvedId), selectedTitle) != 0))) {
-        int idByTitle = -1;
-
-        if (resolvedSupport->itemUpdate != NULL)
-            resolvedSupport->itemUpdate(resolvedSupport);
-
-        idByTitle = oplFindGameByTitle(resolvedSupport, selectedTitle);
-        if (idByTitle >= 0) {
-            resolvedId = idByTitle;
-        } else {
-            int mode;
-            for (mode = 0; mode < MODE_COUNT; mode++) {
-                item_list_t *candidate = list_support[mode].support;
-                if (candidate == NULL || !candidate->enabled || candidate == resolvedSupport)
-                    continue;
-
-                if (candidate->itemUpdate != NULL)
-                    candidate->itemUpdate(candidate);
-
-                idByTitle = oplFindGameByTitle(candidate, selectedTitle);
-                if (idByTitle >= 0) {
-                    resolvedSupport = candidate;
-                    resolvedId = idByTitle;
-                    break;
-                }
-            }
-        }
-    }
+    if (!oplResolveGameItem(resolvedId, resolvedSupport, &resolvedSupport, &resolvedId))
+        return 0;
 
     if (!encodedItem && ps5IsMergedGameSupport(resolvedSupport)) {
         int idByTitle;
@@ -463,6 +553,24 @@ static int isSelectedBdmHdd(int modeSelected)
     return 0;
 }
 
+static config_set_t *ps5LoadLaunchConfig(item_list_t *support, int sourceId, const char *title)
+{
+    unsigned int frame = 0;
+
+    playPS5LaunchTransition(title);
+
+    for (frame = 0; frame < 60; frame++) {
+        int alpha = frame < 45 ? 0x80 : (0x80 * (59 - frame)) / 14;
+        drawPS5LaunchLoadingFrame(frame, alpha);
+        DelayThread(16000);
+    }
+
+    if (support == NULL || support->itemGetConfig == NULL)
+        return NULL;
+
+    return support->itemGetConfig(support, sourceId);
+}
+
 static void itemExecSelect(struct menu_item *curMenu)
 {
     item_list_t *support = curMenu->userdata;
@@ -478,13 +586,10 @@ static void itemExecSelect(struct menu_item *curMenu)
                     return;
                 }
                 extern int gPS5Mode;
-                configSet = gPS5Mode ? support->itemGetConfig(support, sourceId) : menuLoadConfig();
+                configSet = gPS5Mode ? ps5LoadLaunchConfig(support, sourceId, submenuItemGetText(&curMenu->current->item)) : menuLoadConfig();
                 if (configSet == NULL) {
                     guiMsgBox("Could not load game settings.", 0, NULL);
                     return;
-                }
-                if (gPS5Mode) {
-                    playPS5LaunchTransition(submenuItemGetText(&curMenu->current->item));
                 }
                 support->itemLaunch(support, sourceId, configSet);
             }
@@ -898,6 +1003,31 @@ config_set_t *oplGetLegacyAppsInfo(char *name)
 // ----------------------------------------------------------
 static void updateMenuFromGameList(opl_io_module_t *mdl)
 {
+    int aggregateLocalGames = gPS5Mode && ps5IsMergedGameSupport(mdl->support);
+    int focusedMode = -1;
+    char focusedStartup[GAME_STARTUP_MAX] = "";
+    char focusedTitle[128] = "";
+    int mergedScanBusy = 0;
+
+    if (aggregateLocalGames && mdl->menuItem.current != NULL) {
+        item_list_t *focusedSupport = mdl->support;
+        int focusedId;
+
+        if (oplResolveGameItem(mdl->menuItem.current->item.id, focusedSupport, &focusedSupport, &focusedId) && focusedSupport != NULL) {
+            const char *startup = focusedSupport->itemGetStartup != NULL ? focusedSupport->itemGetStartup(focusedSupport, focusedId) : NULL;
+            const char *title = submenuItemGetText(&mdl->menuItem.current->item);
+            focusedMode = focusedSupport->mode;
+            if (startup != NULL) {
+                strncpy(focusedStartup, startup, sizeof(focusedStartup) - 1);
+                focusedStartup[sizeof(focusedStartup) - 1] = '\0';
+            }
+            if (title != NULL) {
+                strncpy(focusedTitle, title, sizeof(focusedTitle) - 1);
+                focusedTitle[sizeof(focusedTitle) - 1] = '\0';
+            }
+        }
+    }
+
     clearMenuGameList(mdl);
 
     const char *temp = NULL;
@@ -911,7 +1041,6 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
     // read the new game list
     struct gui_update_t *gup = NULL;
     int count = 0;
-    int aggregateLocalGames = gPS5Mode && ps5IsMergedGameSupport(mdl->support);
 
     if (!aggregateLocalGames)
         count = mdl->support->itemUpdate(mdl->support);
@@ -925,24 +1054,43 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
             if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled)
                 continue;
 
-            if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL)
+            if (sourceSupport->mode >= BDM_MODE && sourceSupport->mode < ETH_MODE && bdmIsDeviceLoading()) {
+                if (sourceSupport->itemGetCount != NULL)
+                    sourceCount = sourceSupport->itemGetCount(sourceSupport);
+                else
+                    sourceCount = 0;
+                mergedScanBusy = 1;
+            } else if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL) {
                 sourceCount = sourceSupport->itemGetCount(sourceSupport);
-            else
+            } else {
                 sourceCount = sourceSupport->itemUpdate(sourceSupport);
+            }
             if (sourceCount <= 0)
                 continue;
 
             for (i = 0; i < sourceCount; ++i) {
+                int itemId = oplMakeGameItemId(sourceSupport->mode, i);
+                if (itemId < 0)
+                    continue;
+
                 gup = guiOpCreate(GUI_OP_APPEND_MENU);
 
                 gup->menu.menu = &mdl->menuItem;
                 gup->menu.subMenu = &mdl->subMenu;
 
                 gup->submenu.icon_id = -1;
-                gup->submenu.id = oplMakeGameItemId(sourceSupport->mode, i);
+                gup->submenu.id = itemId;
                 gup->submenu.text = sourceSupport->itemGetName(sourceSupport, i);
                 gup->submenu.text_id = -1;
                 gup->submenu.selected = 0;
+
+                if (focusedMode == sourceSupport->mode) {
+                    const char *startup = sourceSupport->itemGetStartup != NULL ? sourceSupport->itemGetStartup(sourceSupport, i) : NULL;
+                    const char *title = sourceSupport->itemGetName != NULL ? sourceSupport->itemGetName(sourceSupport, i) : NULL;
+                    if ((focusedStartup[0] != '\0' && startup != NULL && strcmp(focusedStartup, startup) == 0) ||
+                        (focusedStartup[0] == '\0' && focusedTitle[0] != '\0' && title != NULL && strcmp(focusedTitle, title) == 0))
+                        gup->submenu.selected = 2;
+                }
 
                 if (gRememberLastPlayed && temp && strcmp(temp, sourceSupport->itemGetStartup(sourceSupport, i)) == 0)
                     gup->submenu.selected = 1;
@@ -975,6 +1123,10 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
 
             guiDeferUpdate(gup);
         }
+    }
+
+    if (aggregateLocalGames && count <= 0 && mergedScanBusy) {
+        return;
     }
 
     if (gAutosort && count > 0) {
@@ -1130,25 +1282,19 @@ static int checkLoadConfigHDD(int types)
     return 0;
 }
 
-static void applyAutomaticInternalHDDMode(void)
+static void applyPS5DeviceDefaults(void)
 {
-    int fsType;
-
     if (!gPS5Mode)
         return;
 
-    hddLoadModules();
-    fsType = hddDetectNonSonyFileSystem();
-    if (fsType == 0) {
-        gEnableBdmHDD = 0;
-        gHDDStartMode = START_MODE_AUTO;
-        gDefaultDevice = HDD_MODE;
-    } else if (fsType == 1) {
-        gEnableBdmHDD = 1;
-        gBDMStartMode = START_MODE_AUTO;
-        gHDDStartMode = START_MODE_DISABLED;
+    gBDMStartMode = START_MODE_AUTO;
+    gHDDStartMode = START_MODE_AUTO;
+    gAPPStartMode = START_MODE_AUTO;
+    gEnableMX4SIO = 1;
+    gEnableBdmHDD = 1;
+
+    if (gDefaultDevice >= ETH_MODE)
         gDefaultDevice = BDM_MODE;
-    }
 }
 
 // When this function is called, the current device for loading/saving config is the memory card.
@@ -1274,7 +1420,12 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_AUTOSTART_LAST, &gAutoStartLastPlayed);
             configGetInt(configOPL, CONFIG_OPL_BDM_MODE, &gBDMStartMode);
             configGetInt(configOPL, CONFIG_OPL_HDD_MODE, &gHDDStartMode);
-            configGetInt(configOPL, CONFIG_OPL_ETH_MODE, &gETHStartMode);
+            if (configGetInt(configOPL, "ps5_smb_default_set", &value)) {
+                configGetInt(configOPL, CONFIG_OPL_ETH_MODE, &gETHStartMode);
+            } else {
+                gETHStartMode = START_MODE_DISABLED;
+                configSetInt(configOPL, "ps5_smb_default_set", 1);
+            }
             configGetInt(configOPL, CONFIG_OPL_APP_MODE, &gAPPStartMode);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_ILINK, &gEnableILK);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_MX4SIO, &gEnableMX4SIO);
@@ -1289,11 +1440,6 @@ static void _loadConfig()
             if (gPS5Mode) {
                 gEnableSFX = 1;
                 gEnableBootSND = 1;
-                gBDMStartMode = START_MODE_AUTO;
-                gHDDStartMode = START_MODE_AUTO;
-                gAPPStartMode = START_MODE_AUTO;
-                if (gDefaultDevice >= ETH_MODE)
-                    gDefaultDevice = BDM_MODE;
             }
         }
     }
@@ -1334,7 +1480,7 @@ static void _loadConfig()
         }
     }
 
-    applyAutomaticInternalHDDMode();
+    applyPS5DeviceDefaults();
     applyConfig(themeID, langID, 0);
 
     lscret = result;
@@ -1446,6 +1592,7 @@ static void _saveConfig()
         configSetInt(configOPL, CONFIG_OPL_BDM_MODE, gBDMStartMode);
         configSetInt(configOPL, CONFIG_OPL_HDD_MODE, gHDDStartMode);
         configSetInt(configOPL, CONFIG_OPL_ETH_MODE, gETHStartMode);
+        configSetInt(configOPL, "ps5_smb_default_set", 1);
         configSetInt(configOPL, CONFIG_OPL_APP_MODE, gAPPStartMode);
         configSetInt(configOPL, CONFIG_OPL_BDM_CACHE, bdmCacheSize);
         configSetInt(configOPL, CONFIG_OPL_HDD_CACHE, hddCacheSize);

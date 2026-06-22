@@ -1032,11 +1032,13 @@ static void guiHandleOp(struct gui_update_t *item)
             } else if (item->submenu.selected) { // remember last played game feature
                 item->menu.menu->current = result;
                 item->menu.menu->pagestart = result;
-                item->menu.menu->remindLast = 1;
+                if (item->submenu.selected == 1 && !gPS5Mode) {
+                    item->menu.menu->remindLast = 1;
 
-                // Last Played Auto Start
-                if ((gAutoStartLastPlayed) && !(KeyPressedOnce))
-                    DisableCron = 0; // Release Auto Start Last Played counter
+                    // Last Played Auto Start
+                    if ((gAutoStartLastPlayed) && !(KeyPressedOnce))
+                        DisableCron = 0; // Release Auto Start Last Played counter
+                }
             }
 
             break;
@@ -1501,7 +1503,7 @@ static void guiDrawOverlays()
 #endif
 
     // Last Played Auto Start
-    if (!pending && DisableCron == 0 && endIntro) {
+    if (!gPS5Mode && !pending && DisableCron == 0 && endIntro) {
         if (CronStart == 0) {
             CronStart = clock() / CLOCKS_PER_SEC;
         } else {
@@ -1568,8 +1570,6 @@ static void guiShow()
 void guiIntroLoop(void)
 {
     int greetingAlpha = 0x80;
-    const int fadeFrameCount = 0x80 / 2;
-    const int fadeDuration = (fadeFrameCount * 1000) / 55; // Average between 50 and 60 fps
     clock_t tFadeDelayEnd = 0;
 
     while (!endIntro) {
