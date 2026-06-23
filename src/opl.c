@@ -1326,19 +1326,30 @@ static int checkLoadConfigHDD(int types)
     return 0;
 }
 
-static void applyPS5DeviceDefaults(void)
+static void applyAutomaticInternalHDDMode(void)
 {
+    int fsType;
+
     if (!gPS5Mode)
         return;
 
     gBDMStartMode = START_MODE_AUTO;
-    gHDDStartMode = START_MODE_AUTO;
     gAPPStartMode = START_MODE_AUTO;
     gEnableMX4SIO = 1;
-    gEnableBdmHDD = 1;
 
-    if (gDefaultDevice >= ETH_MODE)
+    hddLoadModules();
+    fsType = hddDetectNonSonyFileSystem();
+    if (fsType == 0) {
+        gEnableBdmHDD = 0;
+        gHDDStartMode = START_MODE_AUTO;
+        gDefaultDevice = HDD_MODE;
+    } else if (fsType == 1) {
+        gEnableBdmHDD = 1;
+        gHDDStartMode = START_MODE_DISABLED;
         gDefaultDevice = BDM_MODE;
+    } else if (gDefaultDevice >= ETH_MODE) {
+        gDefaultDevice = BDM_MODE;
+    }
 }
 
 // When this function is called, the current device for loading/saving config is the memory card.
@@ -1524,7 +1535,7 @@ static void _loadConfig()
         }
     }
 
-    applyPS5DeviceDefaults();
+    applyAutomaticInternalHDDMode();
     applyConfig(themeID, langID, 0);
 
     lscret = result;
