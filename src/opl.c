@@ -160,6 +160,7 @@ static int ps5IsMergedGameSupport(item_list_t *support);
 static opl_io_module_t *ps5GetMergedGameModule(void);
 static unsigned int ps5MergedSourceUpdateMask;
 static int ps5MergedHddUpdatePending;
+static int ps5MergedForceRebuildPending;
 
 // frame counter
 static unsigned int frameCounter;
@@ -1188,12 +1189,13 @@ void menuDeferredUpdate(void *data)
             }
         }
 
-        if (needsUpdate) {
+        if (needsUpdate || ps5MergedForceRebuildPending) {
             updateMenuFromGameList(mergedMod);
             ps5MergedSourceUpdateMask = 0;
             shouldAppsUpdate = 1;
         }
         ps5MergedHddUpdatePending = 0;
+        ps5MergedForceRebuildPending = 0;
         return;
     }
 
@@ -2077,6 +2079,7 @@ void oplRefreshMergedGameList(void)
     opl_io_module_t *mergedMod = ps5GetMergedGameModule();
 
     ps5MergedHddUpdatePending = 1;
+    ps5MergedForceRebuildPending = 1;
 
     for (mode = 0; mode < MODE_COUNT; mode++) {
         item_list_t *support = list_support[mode].support;
