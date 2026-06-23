@@ -77,6 +77,7 @@ static unsigned int BdmStableGeneration = 0;
 static unsigned int BdmPendingGeneration = 0;
 static int BdmPendingSinceFrame = 0;
 static int BdmOptionalLoadQueued = 0;
+static volatile int BdmUnmountPending = 0;
 extern int guiFrameId;
 
 #define BDM_EVENT_QUIET_FRAMES      180
@@ -91,8 +92,10 @@ static void bdmEventHandler(void *packet, void *opt)
     if (packet) {
         SifCmdHeader_t *header = (SifCmdHeader_t *)packet;
         if (header->opt == 0) { // BDM_EVENT_CB_UMOUNT
+            BdmUnmountPending = 1;
             gBdmDeviceLoading = 0;
         } else if (header->opt == 1) { // BDM_EVENT_CB_MOUNT
+            BdmUnmountPending = 0;
             gBdmDeviceLoading = 1;
         }
     }
@@ -107,8 +110,10 @@ int bdmIsDeviceLoading(void)
 
     for (i = 0; i < MAX_BDM_DEVICES; i++) {
         bdm_device_data_t *pDeviceData = (bdm_device_data_t *)bdmDeviceList[i].priv;
-        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0)
-            return 1;
+        if (pDeviceData != NULL && pDeviceData->DeferredScan != 0) {
+            if (pDeviceData->bdmScanReadyFrame != 0 && guiFrameId < pDeviceData->bdmScanReadyFrame)
+                return 1;
+        }
     }
 
     gBdmDeviceLoading = 0;
@@ -248,15 +253,17 @@ static int bdmNeedsUpdate(item_list_t *itemList)
             BdmPendingGeneration = BdmGeneration;
             BdmPendingSinceFrame = guiFrameId;
             gBdmDeviceLoading = 1;
-            return 0;
+            if (!BdmUnmountPending)
+                return 0;
         }
 
-        if (guiFrameId - BdmPendingSinceFrame < BDM_EVENT_QUIET_FRAMES) {
+        if (!BdmUnmountPending && guiFrameId - BdmPendingSinceFrame < BDM_EVENT_QUIET_FRAMES) {
             gBdmDeviceLoading = 1;
             return 0;
         }
 
         BdmStableGeneration = BdmGeneration;
+        BdmUnmountPending = 0;
     }
 
     if (bdmOptionalModulesNeedLoading() && !BdmOptionalLoadQueued) {

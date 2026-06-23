@@ -159,6 +159,7 @@ static int coverIsLocalGameSupport(item_list_t *support);
 static int ps5IsMergedGameSupport(item_list_t *support);
 static opl_io_module_t *ps5GetMergedGameModule(void);
 static unsigned int ps5MergedSourceUpdateMask;
+static int ps5MergedHddUpdatePending;
 
 // frame counter
 static unsigned int frameCounter;
@@ -1161,15 +1162,21 @@ void menuDeferredUpdate(void *data)
         if (mergedMod == NULL)
             return;
         if (mod != mergedMod) {
+            if (mod->support->mode == HDD_MODE)
+                ps5MergedHddUpdatePending = 1;
             ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
             return;
         }
+        if (mergedMod->support->mode == HDD_MODE)
+            ps5MergedHddUpdatePending = 1;
 
         ps5MergedSourceUpdateMask = 0;
         for (mode = BDM_MODE; mode <= HDD_MODE; mode++) {
             item_list_t *sourceSupport = list_support[mode].support;
 
             if (mode == ETH_MODE)
+                continue;
+            if (mode == HDD_MODE && !ps5MergedHddUpdatePending)
                 continue;
 
             if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled || sourceSupport->itemNeedsUpdate == NULL)
@@ -1186,6 +1193,7 @@ void menuDeferredUpdate(void *data)
             ps5MergedSourceUpdateMask = 0;
             shouldAppsUpdate = 1;
         }
+        ps5MergedHddUpdatePending = 0;
         return;
     }
 
@@ -2067,6 +2075,8 @@ void oplRefreshMergedGameList(void)
 {
     int mode;
     opl_io_module_t *mergedMod = ps5GetMergedGameModule();
+
+    ps5MergedHddUpdatePending = 1;
 
     for (mode = 0; mode < MODE_COUNT; mode++) {
         item_list_t *support = list_support[mode].support;
