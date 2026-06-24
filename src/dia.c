@@ -12,6 +12,7 @@
 #include "include/renderman.h"
 #include "include/fntsys.h"
 #include "include/themes.h"
+#include "include/textures.h"
 #include "include/util.h"
 #include "include/sound.h"
 
@@ -28,9 +29,19 @@
 #define DIA_SCROLL_SPEED  300
 // scroll speed (delay in ms!) when setting int value
 #define DIA_INT_SET_SPEED 100
+#define DIA_PS5_IP_SET_SPEED_SLOW   120
+#define DIA_PS5_IP_SET_SPEED_MEDIUM 70
+#define DIA_PS5_IP_SET_SPEED_FAST   35
 
 static int screenWidth;
 static int screenHeight;
+
+extern void *focus_png;
+extern void *roboto_bold_raw;
+extern int size_roboto_bold_raw;
+static GSTEXTURE gDiaPS5FocusTex;
+static int gDiaPS5FocusTexLoaded = 0;
+static int gDiaPS5IpFont = -1;
 
 // Utility stuff
 #define KEYB_MODE   2
@@ -46,6 +57,607 @@ static void diaDrawBoundingBox(int x, int y, int w, int h, int focus)
     color &= gColFocus;
 
     rmDrawRect(x - 5, y, w + 10, h + 10, color);
+}
+
+static void diaUpdateMask(char *mask, int maxLen, int len)
+{
+    if (mask != NULL) {
+        int maskLen = len < maxLen ? len : maxLen - 1;
+        memset(mask, '*', maskLen);
+        mask[maskLen] = '\0';
+    }
+}
+
+typedef struct
+{
+    int x;
+    int y;
+    int w;
+    int h;
+    int row;
+    char ch;
+    const char *label;
+    int action;
+} ps5_key_t;
+
+enum {
+    PS5_KEY_CHAR = 0,
+    PS5_KEY_BACKSPACE,
+    PS5_KEY_SPACE,
+    PS5_KEY_DONE,
+    PS5_KEY_CAPS
+};
+
+static int diaFindNearestKey(ps5_key_t *keys, int count, int current, int direction)
+{
+    int i;
+    int best = current;
+    int bestScore = 0x7FFFFFFF;
+    int cx = keys[current].x + keys[current].w / 2;
+    int cy = keys[current].y + keys[current].h / 2;
+
+    if (direction == KEY_LEFT || direction == KEY_RIGHT) {
+        for (i = 0; i < count; i++) {
+            int ix, dx;
+            if (i == current || keys[i].row != keys[current].row)
+                continue;
+
+            ix = keys[i].x + keys[i].w / 2;
+            dx = ix - cx;
+            if ((direction == KEY_LEFT && dx >= 0) || (direction == KEY_RIGHT && dx <= 0))
+                continue;
+            if (abs(dx) < bestScore) {
+                bestScore = abs(dx);
+                best = i;
+            }
+        }
+
+        if (best != current)
+            return best;
+
+        for (i = 0; i < count; i++) {
+            int ix;
+            if (i == current || keys[i].row != keys[current].row)
+                continue;
+
+            ix = keys[i].x + keys[i].w / 2;
+            if (best == current ||
+                (direction == KEY_RIGHT && ix < (keys[best].x + keys[best].w / 2)) ||
+                (direction == KEY_LEFT && ix > (keys[best].x + keys[best].w / 2))) {
+                best = i;
+            }
+        }
+
+        return best;
+    }
+
+    for (i = 0; i < count; i++) {
+        int ix, iy, dx, dy, score;
+        if (i == current)
+            continue;
+
+        ix = keys[i].x + keys[i].w / 2;
+        iy = keys[i].y + keys[i].h / 2;
+        dx = ix - cx;
+        dy = iy - cy;
+
+        if ((direction == KEY_LEFT && dx >= 0) || (direction == KEY_RIGHT && dx <= 0) ||
+            (direction == KEY_UP && dy >= 0) || (direction == KEY_DOWN && dy <= 0))
+            continue;
+
+        if (direction == KEY_LEFT || direction == KEY_RIGHT)
+            score = (abs(dx) * 8) + abs(dy);
+        else
+            score = (abs(dy) * 8) + abs(dx);
+
+        if (score < bestScore) {
+            bestScore = score;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
+static void diaDrawPS5Triangle(int cx, int cy, int size, int up, u64 color)
+{
+    int row;
+
+    for (row = 0; row < size; row++) {
+        int width = (row * 2) + 1;
+        int y = up ? cy + row : cy - row;
+        rmDrawRect(cx - row, y, width, 1, color);
+    }
+}
+
+static void diaDrawPS5FocusArrow(int cx, int cy, int size, int up)
+{
+    GSTEXTURE *focus = thmGetTexture(FOCUS_ICON);
+    float angle = up ? -1.5707963f : 1.5707963f;
+
+    if ((focus == NULL || focus->Mem == NULL) && !gDiaPS5FocusTexLoaded) {
+        memset(&gDiaPS5FocusTex, 0, sizeof(GSTEXTURE));
+        gDiaPS5FocusTexLoaded = texLoadMem(&gDiaPS5FocusTex, &focus_png) >= 0 ? 1 : -1;
+    }
+    if (focus == NULL || focus->Mem == NULL)
+        focus = gDiaPS5FocusTexLoaded == 1 ? &gDiaPS5FocusTex : NULL;
+
+    if (focus != NULL && focus->Mem != NULL)
+        rmDrawRotatedPixmap(focus, cx, cy, size, size, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    else
+        diaDrawPS5Triangle(cx, cy - (up ? 0 : size / 2), size / 2, up, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+}
+
+static void diaDrawPS5FooterIconText(int iconId, const char *text, int x, int y, int font)
+{
+    GSTEXTURE *icon = thmGetTexture(iconId);
+    int iconSize = 14;
+    int gap = 6;
+
+    if (icon != NULL && icon->Mem != NULL)
+        rmDrawPixmap(icon, x, y, ALIGN_LEFT | ALIGN_VCENTER, iconSize, iconSize, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+    fntRenderString(font, x + iconSize + gap, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, text, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+}
+
+static int diaParseIp(const char *text, int *parts)
+{
+    int a = 192, b = 168, c = 0, d = 0;
+
+    if (text == NULL || sscanf(text, "%d.%d.%d.%d", &a, &b, &c, &d) != 4) {
+        a = 192;
+        b = 168;
+        c = 0;
+        d = 0;
+    }
+
+    parts[0] = a < 0 ? 0 : (a > 255 ? 255 : a);
+    parts[1] = b < 0 ? 0 : (b > 255 ? 255 : b);
+    parts[2] = c < 0 ? 0 : (c > 255 ? 255 : c);
+    parts[3] = d < 0 ? 0 : (d > 255 ? 255 : d);
+    return 0;
+}
+
+static int diaNormalizeIpText(const char *input, char *output, int maxLen)
+{
+    int parts[4] = {0, 0, 0, 0};
+    int part = 0;
+    int value = -1;
+    const char *p;
+
+    if (input == NULL || output == NULL || maxLen <= 0)
+        return 0;
+
+    for (p = input; *p != '\0'; p++) {
+        if (*p >= '0' && *p <= '9') {
+            if (value < 0)
+                value = 0;
+            value = (value * 10) + (*p - '0');
+            if (value > 255)
+                value = 255;
+        } else if (*p == '.') {
+            if (part >= 4 || value < 0)
+                return 0;
+            parts[part++] = value;
+            value = -1;
+        } else {
+            return 0;
+        }
+    }
+
+    if (part != 3 || value < 0)
+        return 0;
+
+    parts[part] = value;
+    snprintf(output, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+    return 1;
+}
+
+int diaShowIpEditor(char *text, int maxLen)
+{
+    int parts[4];
+    int selected = 2;
+    int pressAnim = 0;
+    int pressDir = 0;
+    int ipPadSettings[16];
+    int ipHoldDirection = 0;
+    clock_t ipHoldStarted = 0;
+
+    if (!gPS5Mode)
+        return diaShowKeyb(text, maxLen, 0, "SMB Server IP");
+
+    padStoreSettings(ipPadSettings);
+    setButtonDelay(KEY_LEFT, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_RIGHT, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_UP, DIA_PS5_IP_SET_SPEED_SLOW);
+    setButtonDelay(KEY_DOWN, DIA_PS5_IP_SET_SPEED_SLOW);
+
+    diaParseIp(text, parts);
+    rmGetScreenExtents(&screenWidth, &screenHeight);
+    if (gDiaPS5IpFont < 0)
+        gDiaPS5IpFont = fntLoadFileMem(&roboto_bold_raw, size_roboto_bold_raw, 48);
+
+    while (1) {
+        int font = gDiaPS5IpFont >= 0 ? gDiaPS5IpFont : thmGetPS5TitleFont();
+        int footerFont = thmGetPS5SemiBoldFont();
+        int centerY = screenHeight / 2;
+        int arrowSize = 27;
+        int tapOffset = pressAnim > 0 ? (pressAnim * 2) : 0;
+        int arrowX;
+        int segCenter[4];
+        int segW[4];
+        int i;
+        char values[4][8];
+        int dotW;
+        int dotPad = 0;  // pixels of padding on each side of the dot
+        int numPad = 0;  // minimal padding around each number
+        int totalW;
+        int curX;
+
+        // Measure the dot width
+        dotW = rmUnScaleX(fntCalcDimensions(font, "."));
+
+        // Format and measure each octet
+        for (i = 0; i < 4; i++) {
+            snprintf(values[i], sizeof(values[i]), "%d", parts[i]);
+            segW[i] = rmUnScaleX(fntCalcDimensions(font, values[i])) + numPad * 2;
+        }
+
+        // Calculate total width: all segments + dots between them
+        totalW = 0;
+        for (i = 0; i < 4; i++)
+            totalW += segW[i];
+        totalW += 3 * (dotW + dotPad * 2); // 3 dots with padding
+
+        curX = (screenWidth - totalW) / 2;
+
+        // Calculate center positions for each segment and dot
+        for (i = 0; i < 4; i++) {
+            segCenter[i] = curX + segW[i] / 2;
+            curX += segW[i];
+            if (i < 3) {
+                curX += dotPad;
+                curX += dotW + dotPad;
+            }
+        }
+
+        readPads();
+
+        {
+            int heldDirection = getKeyPressed(KEY_UP) ? -1 : (getKeyPressed(KEY_DOWN) ? 1 : 0);
+            int repeatDelay = DIA_PS5_IP_SET_SPEED_SLOW;
+
+            if (heldDirection == 0) {
+                ipHoldDirection = 0;
+                ipHoldStarted = 0;
+            } else {
+                clock_t now = clock();
+                clock_t heldFor;
+
+                if (heldDirection != ipHoldDirection) {
+                    ipHoldDirection = heldDirection;
+                    ipHoldStarted = now;
+                }
+
+                heldFor = now - ipHoldStarted;
+                if (heldFor >= 6 * CLOCKS_PER_SEC)
+                    repeatDelay = DIA_PS5_IP_SET_SPEED_FAST;
+                else if (heldFor >= 3 * CLOCKS_PER_SEC)
+                    repeatDelay = DIA_PS5_IP_SET_SPEED_MEDIUM;
+            }
+
+            setButtonDelay(KEY_UP, repeatDelay);
+            setButtonDelay(KEY_DOWN, repeatDelay);
+        }
+
+        rmStartFrame();
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+
+        arrowX = segCenter[selected];
+        diaDrawPS5FocusArrow(arrowX, centerY - 32 + (pressDir < 0 ? tapOffset : 0), arrowSize, 1);
+        diaDrawPS5FocusArrow(arrowX, centerY + 38 - (pressDir > 0 ? tapOffset : 0), arrowSize, 0);
+
+        // Re-walk the layout to draw numbers and dots
+        curX = (screenWidth - totalW) / 2;
+        for (i = 0; i < 4; i++) {
+            int cx = curX + segW[i] / 2;
+            fntRenderString(font, cx, centerY, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, values[i], GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            curX += segW[i];
+            if (i < 3) {
+                curX += dotPad;
+                int dotX = curX + dotW / 2;
+                fntRenderString(font, dotX, centerY + 6, ALIGN_HCENTER | ALIGN_VCENTER, 0, 0, ".", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+                curX += dotW + dotPad;
+            }
+        }
+
+        diaDrawPS5FooterIconText(TRIANGLE_ICON, "Show Keyboard", screenWidth - 360, screenHeight - 20, footerFont);
+        diaDrawPS5FooterIconText(SQUARE_ICON, "Save", screenWidth - 206, screenHeight - 20, footerFont);
+        diaDrawPS5FooterIconText(CIRCLE_ICON, "Cancel", screenWidth - 106, screenHeight - 20, footerFont);
+
+        rmEndFrame();
+        if (pressAnim > 0)
+            pressAnim--;
+
+        if (getKey(KEY_LEFT)) {
+            sfxPlay(SFX_CURSOR);
+            selected = selected > 0 ? selected - 1 : 3;
+        } else if (getKey(KEY_RIGHT)) {
+            sfxPlay(SFX_CURSOR);
+            selected = selected < 3 ? selected + 1 : 0;
+        } else if (getKey(KEY_UP)) {
+            sfxPlay(SFX_CURSOR);
+            if (parts[selected] < 255) {
+                parts[selected]++;
+                pressAnim = 4;
+                pressDir = -1;
+            }
+        } else if (getKey(KEY_DOWN)) {
+            sfxPlay(SFX_CURSOR);
+            if (parts[selected] > 0) {
+                parts[selected]--;
+                pressAnim = 4;
+                pressDir = 1;
+            }
+        } else if (getKeyOn(KEY_SQUARE)) {
+            sfxPlay(SFX_CONFIRM);
+            snprintf(text, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+            padRestoreSettings(ipPadSettings);
+            return 1;
+        } else if (getKeyOn(KEY_TRIANGLE)) {
+            char tmp[32];
+            char normalized[16];
+
+            sfxPlay(SFX_CONFIRM);
+            snprintf(tmp, sizeof(tmp), "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+            if (diaShowKeyb(tmp, sizeof(tmp), 0, "SMB Server IP")) {
+                if (diaNormalizeIpText(tmp, normalized, sizeof(normalized))) {
+                    strncpy(text, normalized, maxLen - 1);
+                    text[maxLen - 1] = '\0';
+                } else {
+                    snprintf(text, maxLen, "%d.%d.%d.%d", parts[0], parts[1], parts[2], parts[3]);
+                }
+                padRestoreSettings(ipPadSettings);
+                return 1;
+            }
+        } else if (getKeyOn(KEY_CIRCLE)) {
+            sfxPlay(SFX_CANCEL);
+            padRestoreSettings(ipPadSettings);
+            return 0;
+        }
+    }
+}
+
+static int diaShowPS5Keyb(char *text, int maxLen, int hide_text, const char *title)
+{
+    int shift = 0;
+    int len = strlen(text);
+    int selected = 0;
+    char *mask = NULL;
+
+    if (hide_text) {
+        mask = malloc(maxLen);
+        if (mask == NULL)
+            return 0;
+        diaUpdateMask(mask, maxLen, len);
+    }
+
+    rmGetScreenExtents(&screenWidth, &screenHeight);
+
+    while (1) {
+        ps5_key_t keys[80];
+        int keyCount = 0;
+        int i, keyW, keyH, gap, startX, titleY, inputY, startY, footerY;
+        int unitW, wideW, doneX, spaceX, spaceW;
+        const char *display = hide_text ? mask : text;
+        int titleFont = thmGetPS5TitleFont();
+        int semiFont = thmGetPS5SemiBoldFont();
+        int headerFont = thmGetPS5HeaderFont();
+        GSTEXTURE *circleIcon;
+
+        readPads();
+
+        rmStartFrame();
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+
+        startX = screenWidth * 75 / 1000;
+        gap = screenWidth >= 960 ? screenWidth * 5 / 1920 : 2;
+        if (gap < 2)
+            gap = 2;
+        keyW = (screenWidth - (startX * 2) - (gap * 15)) / 16;
+        keyH = keyW;
+        unitW = keyW + gap;
+        wideW = (keyW * 2) + gap;
+        titleY = screenHeight * 62 / 1000;
+        inputY = screenHeight * 258 / 1000;
+        startY = screenHeight * 327 / 1000;
+        footerY = screenHeight - 20;
+
+#define ADD_KEY(_row, _x, _y, _w, _label, _action, _ch) \
+        do { \
+            keys[keyCount].x = (_x); \
+            keys[keyCount].y = (_y); \
+            keys[keyCount].w = (_w); \
+            keys[keyCount].h = keyH; \
+            keys[keyCount].row = (_row); \
+            keys[keyCount].label = (_label); \
+            keys[keyCount].action = (_action); \
+            keys[keyCount].ch = (_ch); \
+            keyCount++; \
+        } while (0)
+
+#define KEY_X(_col) (startX + (_col) * unitW)
+#define KEY_Y(_row) (startY + (_row) * (keyH + gap))
+#define KEY_W(_cols) ((keyW * (_cols)) + (gap * ((_cols) - 1)))
+
+        for (i = 0; i < 10; i++) {
+            static const char row0[] = "1234567890";
+            ADD_KEY(0, KEY_X(i), KEY_Y(0), keyW, NULL, PS5_KEY_CHAR, row0[i]);
+        }
+        ADD_KEY(0, KEY_X(10), KEY_Y(0), keyW, NULL, PS5_KEY_CHAR, '+');
+        ADD_KEY(0, KEY_X(11), KEY_Y(0), KEY_W(5), "Backspace", PS5_KEY_BACKSPACE, 0);
+
+        for (i = 0; i < 8; i++) {
+            static const char row1[] = "!@#$%^&(";
+            ADD_KEY(1, KEY_X(i), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, row1[i]);
+        }
+        ADD_KEY(1, KEY_X(8), KEY_Y(1), KEY_W(2), ")", PS5_KEY_CHAR, ')');
+        ADD_KEY(1, KEY_X(10), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '-');
+        ADD_KEY(1, KEY_X(11), KEY_Y(1), KEY_W(2), "_", PS5_KEY_CHAR, '_');
+        ADD_KEY(1, KEY_X(13), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '{');
+        ADD_KEY(1, KEY_X(14), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '}');
+        ADD_KEY(1, KEY_X(15), KEY_Y(1), keyW, NULL, PS5_KEY_CHAR, '/');
+
+        ADD_KEY(2, KEY_X(0), KEY_Y(2), KEY_W(2), "?", PS5_KEY_CHAR, '?');
+        for (i = 0; i < 10; i++) {
+            static const char row2[] = "qwertyuiop";
+            ADD_KEY(2, KEY_X(i + 2), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, row2[i]);
+        }
+        ADD_KEY(2, KEY_X(12), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, '[');
+        ADD_KEY(2, KEY_X(13), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, ']');
+        ADD_KEY(2, KEY_X(14), KEY_Y(2), keyW, NULL, PS5_KEY_CHAR, '\\');
+        ADD_KEY(2, KEY_X(15), KEY_Y(2), keyW, "\"", PS5_KEY_CHAR, '"');
+
+        ADD_KEY(3, KEY_X(0), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '<');
+        ADD_KEY(3, KEY_X(1), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '>');
+        for (i = 0; i < 9; i++) {
+            static const char row3[] = "asdfghjkl";
+            ADD_KEY(3, KEY_X(i + 2), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, row3[i]);
+        }
+        ADD_KEY(3, KEY_X(11), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, ':');
+        ADD_KEY(3, KEY_X(12), KEY_Y(3), KEY_W(2), ";", PS5_KEY_CHAR, ';');
+        ADD_KEY(3, KEY_X(14), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, ',');
+        ADD_KEY(3, KEY_X(15), KEY_Y(3), keyW, NULL, PS5_KEY_CHAR, '.');
+
+        ADD_KEY(4, KEY_X(0), KEY_Y(4), KEY_W(2), "Caps", PS5_KEY_CAPS, 0);
+
+        for (i = 0; i < 7; i++) {
+            static const char row3[] = "zxcvbnm";
+            ADD_KEY(4, KEY_X(i + 2), KEY_Y(4), keyW, NULL, PS5_KEY_CHAR, row3[i]);
+        }
+
+        doneX = KEY_X(14);
+        spaceX = KEY_X(9);
+        spaceW = doneX - gap - spaceX;
+        ADD_KEY(4, spaceX, KEY_Y(4), spaceW, "Spacebar", PS5_KEY_SPACE, 0);
+        ADD_KEY(4, doneX, KEY_Y(4), wideW, "Done", PS5_KEY_DONE, 0);
+
+#undef KEY_W
+#undef KEY_Y
+#undef KEY_X
+#undef ADD_KEY
+
+        if (selected >= keyCount)
+            selected = keyCount - 1;
+
+        fntRenderString(titleFont, startX, titleY, ALIGN_LEFT, 0, 0, title != NULL ? title : "Keyboard", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(headerFont, startX + keyW / 25, inputY, ALIGN_LEFT, 0, 0, display, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        for (i = 0; i < keyCount; i++) {
+            int focused = i == selected;
+            char label[16];
+            const char *displayLabel = keys[i].label;
+            u64 keyColor = focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x1C, 0x1C, 0x1C, 0x80);
+            u64 textColor = focused ? GS_SETREG_RGBA(0, 0, 0, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
+
+            if (displayLabel == NULL) {
+                label[0] = keys[i].ch;
+                if (shift && label[0] >= 'a' && label[0] <= 'z')
+                    label[0] -= 32;
+                label[1] = '\0';
+                displayLabel = label;
+            }
+
+            rmDrawRoundedRect(keys[i].x, keys[i].y, keys[i].w, keys[i].h, 2, keyColor);
+            fntRenderString(semiFont, keys[i].x + keys[i].w / 2, keys[i].y + keys[i].h / 2, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, displayLabel, textColor);
+        }
+
+        circleIcon = thmGetTexture(CIRCLE_ICON);
+        if (circleIcon && circleIcon->Mem)
+            rmDrawPixmap(circleIcon, screenWidth - startX - 52, footerY, ALIGN_LEFT | ALIGN_VCENTER, 14, 14, 1, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(semiFont, screenWidth - startX - 32, footerY, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, "Cancel", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        rmEndFrame();
+
+        if (getKey(KEY_LEFT)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_LEFT);
+            sfxPlay(SFX_CURSOR);
+            selected = next != selected ? next : selected;
+        } else if (getKey(KEY_RIGHT)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_RIGHT);
+            sfxPlay(SFX_CURSOR);
+            selected = next != selected ? next : selected;
+        } else if (getKey(KEY_UP)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_UP);
+            sfxPlay(SFX_CURSOR);
+            selected = next != selected ? next : selected;
+        } else if (getKey(KEY_DOWN)) {
+            int next = diaFindNearestKey(keys, keyCount, selected, KEY_DOWN);
+            sfxPlay(SFX_CURSOR);
+            selected = next != selected ? next : selected;
+        } else if (getKeyOn(gSelectButton)) {
+            if (keys[selected].action == PS5_KEY_CHAR) {
+                if (len < maxLen - 1) {
+                    char c = keys[selected].ch;
+                    if (shift && c >= 'a' && c <= 'z')
+                        c -= 32;
+                    text[len++] = c;
+                    text[len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                    sfxPlay(SFX_CONFIRM);
+                }
+            } else if (keys[selected].action == PS5_KEY_BACKSPACE) {
+                if (len > 0) {
+                    text[--len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                }
+                sfxPlay(SFX_CANCEL);
+            } else if (keys[selected].action == PS5_KEY_SPACE) {
+                if (len < maxLen - 1) {
+                    text[len++] = ' ';
+                    text[len] = '\0';
+                    diaUpdateMask(mask, maxLen, len);
+                }
+                sfxPlay(SFX_CONFIRM);
+            } else if (keys[selected].action == PS5_KEY_DONE) {
+                sfxPlay(SFX_CONFIRM);
+                if (mask != NULL)
+                    free(mask);
+                return 1;
+            } else if (keys[selected].action == PS5_KEY_CAPS) {
+                shift = !shift;
+                sfxPlay(SFX_CONFIRM);
+            }
+        } else if (getKey(KEY_SQUARE)) {
+            if (len > 0) {
+                text[--len] = '\0';
+                diaUpdateMask(mask, maxLen, len);
+            }
+            sfxPlay(SFX_CANCEL);
+        } else if (getKey(KEY_TRIANGLE)) {
+            if (len < maxLen - 1) {
+                text[len++] = ' ';
+                text[len] = '\0';
+                diaUpdateMask(mask, maxLen, len);
+            }
+            sfxPlay(SFX_CONFIRM);
+        } else if (getKeyOn(KEY_SELECT)) {
+            shift = !shift;
+            sfxPlay(SFX_CONFIRM);
+        } else if (getKeyOn(KEY_START)) {
+            sfxPlay(SFX_CONFIRM);
+            if (mask != NULL)
+                free(mask);
+            return 1;
+        } else if (getKey(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE)) {
+            sfxPlay(SFX_CANCEL);
+            break;
+        }
+    }
+
+    if (mask != NULL)
+        free(mask);
+
+    return 0;
 }
 
 int diaShowKeyb(char *text, int maxLen, int hide_text, const char *title)
@@ -72,6 +684,9 @@ int diaShowKeyb(char *text, int maxLen, int hide_text, const char *title)
     cmdicons[1] = thmGetTexture(TRIANGLE_ICON);
     cmdicons[2] = thmGetTexture(START_ICON);
     cmdicons[3] = thmGetTexture(SELECT_ICON);
+
+    if (gPS5Mode)
+        return diaShowPS5Keyb(text, maxLen, hide_text, title);
 
     rmGetScreenExtents(&screenWidth, &screenHeight);
 

@@ -42,6 +42,7 @@ static int (*scePad2CreateSocket)(pad2socketparam_t *SocketParam, void *addr);
 
 /* Monitored pad data */
 static paddata_t Pad_Data;
+static int Select_Hold_VBlank_Count;
 
 /* Monitored power button data */
 static powerbuttondata_t Power_Button;
@@ -294,6 +295,13 @@ static int IGR_Intc_Handler(int cause)
                 Pad_Data.vb_count = 0;
             }
 
+            if (pad_pos_combo1 == IGR_COMBO_NONE && pad_pos_combo2 == IGR_COMBO_SELECT) {
+                if (++Select_Hold_VBlank_Count >= IGR_SELECT_HOLD_VBLANKS)
+                    Pad_Data.combo_type = IGR_COMBO_START_SELECT;
+            } else {
+                Select_Hold_VBlank_Count = 0;
+            }
+
             // Combo R1 + L1 + R2 + L2
             if (pad_pos_combo1 == IGR_COMBO_R1_L1_R2_L2) {
                 // Combo Start + Select, R3 + L3 or UP
@@ -435,6 +443,7 @@ void Install_IGR(void)
     Pad_Data.vb_count = 0;
     Pad_Data.combo_type = 0x00;
     Pad_Data.prev_frame = 0x00;
+    Select_Hold_VBlank_Count = 0;
 
     // Do not install the IGR thread or interrupt handler more than once.
     if (IGR_Thread_ID < 0) {

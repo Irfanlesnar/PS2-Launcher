@@ -1,6 +1,6 @@
 void _funcret(void);
 
-DECLARE_EXPORT_TABLE(httpc, 1, 1)
+DECLARE_EXPORT_TABLE(ps2h10, 1, 1)
 	DECLARE_EXPORT(_start)
 	DECLARE_EXPORT(_exit)
 	DECLARE_EXPORT(_funcret)
@@ -8,6 +8,8 @@ DECLARE_EXPORT_TABLE(httpc, 1, 1)
 	DECLARE_EXPORT(HttpEstabConnection)
 	DECLARE_EXPORT(HttpCloseConnection)
 	DECLARE_EXPORT(HttpSendGetRequest)
+	DECLARE_EXPORT(HttpSendGetRequestRange)
+	DECLARE_EXPORT(HttpSendPostJsonRequest)
 END_EXPORT_TABLE
 
 void _funcret(void) {}

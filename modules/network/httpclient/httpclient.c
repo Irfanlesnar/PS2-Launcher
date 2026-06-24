@@ -5,8 +5,17 @@
 #include <errno.h>
 #include <sysclib.h>
 #include <ps2ip.h>
+#include <thbase.h>
 
 #include "httpclient.h"
+
+#define HTTP_CONNECT_TIMEOUT_SEC 15
+
+static int LastRequestLength;
+static int LastSendLength;
+static int LastSelectResult;
+static int LastRecvResult;
+static int LastSocketError;
 
 void HttpCloseConnection(s32 HttpSocket)
 {
@@ -18,15 +27,73 @@ static int EstablishConnection(struct in_addr *server, unsigned short int port)
 {
     struct sockaddr_in SockAddr;
     int HostSocket;
+    int result;
+    int error;
+    int lastError;
+    int elapsed;
+    int stableZero;
+    int connectRetry;
+    socklen_t errorLength;
+    unsigned long nonBlocking;
 
     HostSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (HostSocket < 0)
+        return -ENOTSOCK;
 
+    memset(&SockAddr, 0, sizeof(SockAddr));
     SockAddr.sin_family = AF_INET;
     SockAddr.sin_addr.s_addr = server->s_addr;
     SockAddr.sin_port = htons(port);
-    if (connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr)) != 0) {
+
+    nonBlocking = 1;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    result = connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr));
+    if (result != 0) {
+        result = -ETIMEDOUT;
+        lastError = 0;
+        stableZero = 0;
+        for (elapsed = 0; elapsed < HTTP_CONNECT_TIMEOUT_SEC * 10; elapsed++) {
+            DelayThread(100000);
+
+            connectRetry = connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr));
+            LastRecvResult = connectRetry;
+            if (connectRetry == 0 || connectRetry == EISCONN || connectRetry == -EISCONN) {
+                result = 0;
+                break;
+            }
+
+            error = -1;
+            errorLength = sizeof(error);
+            if (getsockopt(HostSocket, SOL_SOCKET, SO_ERROR, &error, &errorLength) == 0) {
+                LastSocketError = error;
+                if (error == EISCONN || error == -EISCONN) {
+                    result = 0;
+                    break;
+                } else if (error == 0) {
+                    if (++stableZero >= 1) {
+                        result = 0;
+                        break;
+                    }
+                    continue;
+                }
+                stableZero = 0;
+                lastError = error;
+            }
+        }
+
+        if (result != 0 && lastError != 0)
+            result = -(1000 + lastError);
+    }
+
+    nonBlocking = 0;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    if (result != 0) {
         HttpCloseConnection(HostSocket);
         HostSocket = -1;
+    } else {
+        DelayThread(20000);
     }
 
     return HostSocket;
@@ -35,11 +102,29 @@ static int EstablishConnection(struct in_addr *server, unsigned short int port)
 static int SendData(int socket, char *buffer, int length)
 {
     char *pointer;
-    int remaining, result;
+    int remaining, result, retries;
 
-    for (remaining = length, pointer = buffer; remaining > 0; remaining -= result, pointer += result) {
-        if ((result = send(socket, pointer, remaining, 0)) < 1)
-            break;
+    LastRequestLength = length;
+    LastSendLength = 0;
+    LastSelectResult = -2;
+    for (remaining = length, pointer = buffer, retries = 0; remaining > 0;) {
+        if ((result = send(socket, pointer, remaining, 0)) < 1) {
+            int socketError = -9999;
+            socklen_t socketErrorLength = sizeof(socketError);
+            if (getsockopt(socket, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0)
+                LastSocketError = socketError;
+            else
+                LastSocketError = -9998;
+            LastRecvResult = result;
+            if (++retries >= 8)
+                break;
+            DelayThread(50000);
+            continue;
+        }
+        retries = 0;
+        LastSendLength += result;
+        remaining -= result;
+        pointer += result;
     }
 
     return length - remaining;
@@ -60,22 +145,24 @@ static int GetData(int socket, char *buffer, int length)
         timeout.tv_usec = 0;
         FD_ZERO(&readfds);
         FD_SET(socket, &readfds);
-        if (select(socket + 1, &readfds, NULL, NULL, &timeout) <= 0) {
+        LastSelectResult = select(socket + 1, &readfds, NULL, NULL, &timeout);
+        if (LastSelectResult <= 0) {
+            LastRecvResult = LastSelectResult;
             break;
         }
 
-        if ((result = recv(socket, pointer, ToRead, 0)) < 1)
+        result = recv(socket, pointer, ToRead, 0);
+        LastRecvResult = result;
+        if (result < 1)
             break;
         remaining -= result;
         pointer += result;
-        if (result != ToRead) // No further data at the moment.
-            break;
     }
 
     return length - remaining;
 }
 
-#define HTTP_WORK_BUFFER_SIZE 256 // Not a really great design, but this must be long enough for the longest line in the HTTP entity.
+#define HTTP_WORK_BUFFER_SIZE 1024 // Must be long enough for real-world proxy/CDN header lines.
 
 enum TRANFER_ENCODING {
     TRANFER_ENCODING_PLAIN,
@@ -83,14 +170,64 @@ enum TRANFER_ENCODING {
 };
 
 static int ContentLength;
-static short int StatusCode;
+static int StatusCode;
 static unsigned short int HeaderLineNumber;
 // static char TransferEncoding;
 static char ConnectionMode;
+static int LastStatusCode;
+static int LastContentLength;
+
+int HttpGetLastStatusCode(void)
+{
+    return LastStatusCode;
+}
+
+int HttpGetLastContentLength(void)
+{
+    return LastContentLength;
+}
+
+int HttpGetLastRequestLength(void)
+{
+    return LastRequestLength;
+}
+
+int HttpGetLastSendLength(void)
+{
+    return LastSendLength;
+}
+
+int HttpGetLastSelectResult(void)
+{
+    return LastSelectResult;
+}
+
+int HttpGetLastRecvResult(void)
+{
+    return LastRecvResult;
+}
+
+int HttpGetLastSocketError(void)
+{
+    return LastSocketError;
+}
+
+static int HttpHeaderEquals(const char *line, const char *name)
+{
+    unsigned int i;
+
+    for (i = 0; name[i] != '\0'; i++) {
+        if (tolower(line[i]) != name[i])
+            return 0;
+    }
+
+    return line[i] == ':';
+}
 
 static void HttpParseEntityLine(const char *line)
 {
     char *pColon;
+    char *value;
 
     if ((pColon = strchr(line, ':')) != NULL) {
         for (pColon++; *pColon != '\0'; pColon++) {
@@ -101,11 +238,15 @@ static void HttpParseEntityLine(const char *line)
 
     // printf("%u\t%s\n", HeaderLineNumber, line);
 
-    if (HeaderLineNumber == 0 && strncmp(line, "HTTP/1.1 ", 9) == 0)
+    if (HeaderLineNumber == 0 && (strncmp(line, "HTTP/1.1 ", 9) == 0 || strncmp(line, "HTTP/1.0 ", 9) == 0))
         StatusCode = strtoul(line + 9, NULL, 10);
 
-    if (strncmp(line, "Content-Length: ", 16) == 0)
-        ContentLength = strtoul(line + 15, NULL, 10);
+    if (HttpHeaderEquals(line, "content-length")) {
+        value = (char *)line + 15;
+        while (*value == ' ' || *value == '\t')
+            value++;
+        ContentLength = strtoul(value, NULL, 10);
+    }
     /*
     if (strncmp(line, "Transfer-Encoding: ", 19) == 0) {
         ContentLength = -1;
@@ -113,7 +254,7 @@ static void HttpParseEntityLine(const char *line)
             TransferEncoding = TRANFER_ENCODING_CHUNKED;
     }
     */
-    if (strcmp(line, "Connection: close") == 0)
+    if (HttpHeaderEquals(line, "connection") && strstr(line, "close") != NULL)
         ConnectionMode = HTTP_CMODE_CLOSED;
 
     HeaderLineNumber++;
@@ -128,6 +269,13 @@ static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
     ConnectionMode = *mode;
     ContentLength = -1;
     StatusCode = -1;
+    LastStatusCode = -1;
+    LastContentLength = -1;
+    LastRequestLength = 0;
+    LastSendLength = 0;
+    LastSelectResult = 0;
+    LastRecvResult = 0;
+    LastSocketError = 0;
     HeaderLineNumber = 0;
     PayloadPtr = buffer;
     PayloadAmount = 0;
@@ -178,7 +326,10 @@ static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
         PayloadAmount = DataAvailable;
     }
 
-    if (ContentLength < 0 || PayloadAmount < ContentLength) {
+    if (ContentLength < 0)
+        ContentLength = *length;
+
+    if (PayloadAmount < ContentLength) {
         if (ContentLength > *length)
             ContentLength = *length;
         if ((result = GetData(socket, PayloadPtr, ContentLength - PayloadAmount)) > 0)
@@ -188,21 +339,58 @@ static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
     } else
         *length = PayloadAmount;
 
+    if (StatusCode < 0 && PayloadAmount == 0 && DataAvailable == 0) {
+        LastStatusCode = -1;
+        LastContentLength = 0;
+        *length = 0;
+        *mode = ConnectionMode;
+        return HTTP_CLIENT_ERR_NO_RESPONSE;
+    }
+
     result = StatusCode;
     if (ContentLength > 0 && ContentLength > *length) {
         result = -EPIPE; // Incomplete transfer.
                          // printf("Pipe broken: %d/%d\n", *length, ContentLength);
     }
 
+    LastStatusCode = StatusCode;
+    LastContentLength = ContentLength;
     *mode = ConnectionMode;
 
     return result;
+}
+
+static int ParseIPv4Address(char *hostname, struct in_addr *ip)
+{
+    const char *p = hostname;
+    char *end;
+    unsigned int octets[4];
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        octets[i] = strtoul(p, &end, 10);
+        if (end == p || octets[i] > 255)
+            return 0;
+        if (i < 3) {
+            if (*end != '.')
+                return 0;
+            p = end + 1;
+        } else if (*end != '\0') {
+            return 0;
+        }
+    }
+
+    ip->s_addr = htonl((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]);
+    return 1;
 }
 
 static int ResolveHostname(char *hostname, struct in_addr *ip)
 {
     struct hostent *HostEntry;
     struct in_addr **addr_list;
+
+    if (ParseIPv4Address(hostname, ip))
+        return 0;
 
     if ((HostEntry = gethostbyname(hostname)) == NULL)
         return 1;
@@ -268,14 +456,17 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
     char buffer[512];
     int result, length;
 
-    sprintf(buffer, "GET %s HTTP/1.1\r\n"
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
                     "Accept: text/html, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
                     "User-Agent: %s\r\n"
                     "Host: %s\r\n",
-            uri, UserAgent, host);
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host);
 
     if (*mode == HTTP_CMODE_PERSISTENT)
         strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
     if (mtime != NULL)
         sprintf(&buffer[strlen(buffer)], "If-Modified-Since: %s, %02u %s %04u %02u:%02u:%02u GMT\r\n", GetDayInWeek(mtime), mtime[2] + 1, months[mtime[1]], 2000 + mtime[0], mtime[3], mtime[4], mtime[5]);
     strcat(buffer, "\r\n");
@@ -286,6 +477,71 @@ int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, 
         result = HttpGetResponse(HttpSocket, mode, output, out_len);
     } else {
         result = -1;
+        *out_len = 0;
+    }
+
+    return result;
+}
+
+int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
+                    "Accept: image/png, image/jpeg, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Range: bytes=%lu-%lu\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, rangeStart, rangeEnd);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else
+    {
+        result = -EPIPE;
+        *out_len = 0;
+    }
+
+    return result;
+}
+
+int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, const char *body, u16 body_len, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "POST %s HTTP/1.%d\r\n"
+                    "Accept: application/json, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
+                    "Content-Type: application/json\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Content-Length: %u\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, body_len);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length && SendData(HttpSocket, (char *)body, body_len) == body_len) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else {
+        result = -1;
+        *out_len = 0;
     }
 
     return result;

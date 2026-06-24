@@ -77,25 +77,26 @@ FRONTEND_OBJS = pad.o xparam.o fntsys.o renderman.o menusys.o OSDHistory.o syste
 
 IOP_OBJS =	iomanx.o filexio.o ps2fs.o usbd.o bdmevent.o \
 		bdm.o bdmfs_fatfs.o usbmass_bd.o iLinkman.o IEEE1394_bd.o mx4sio_bd.o \
-		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o \
-		ps2dev9.o smsutils.o \
+		ps2atad.o hdpro_atad.o poweroff.o ps2hdd.o xhdd.o genvmc.o lwnbdsvr.o \
+		ps2dev9.o smsutils.o ps2ip.o smap.o httpclient-iop.o netman.o ps2ips.o nbns-iop.o \
 		isofs.o \
 		sio2man.o padman.o mcman.o mcserv.o \
-		bdm_mcemu.o hdd_mcemu.o \
+		bdm_mcemu.o hdd_mcemu.o smb_mcemu.o \
 		iremsndpatch.o apemodpatch.o f2techioppatch.o cleareffects.o resetspu.o \
 		libsd.o audsrv.o
 
 EECORE_OBJS = ee_core.o ioprp.o util.o \
 		udnl.o imgdrv.o eesync.o \
-		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o \
-		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o
+		bdm_cdvdman.o bdm_ata_cdvdman.o IOPRP_img.o smb_cdvdman.o \
+		hdd_cdvdman.o hdd_hdpro_cdvdman.o cdvdfsv.o \
+		ingame_smstcpip.o smap_ingame.o smbman.o smbinit.o
 
-PNG_ASSETS = loader Instagram_icon logo square cross
+PNG_ASSETS = loader Instagram_icon logo square cross circle triangle focus
 	# unused icons - up down l1 l2 l3 r1 r2 r3
 
 COVER_ASSETS = $(basename $(notdir $(wildcard covers/*.png)))
 
-GFX_OBJS = $(PNG_ASSETS:%=%_png.o) $(COVER_ASSETS:%=%_png.o) ps5_cover_assets.o poeveticanew.o roboto_regular.o roboto_bold.o icon_sys.o icon_icn.o
+GFX_OBJS = $(PNG_ASSETS:%=%_png.o) $(COVER_ASSETS:%=%_png.o) ps5_cover_assets.o roboto_regular.o roboto_bold.o roboto_semi_bold.o icon_sys.o icon_icn.o
 
 AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connect.o bd_disconnect.o game_launch.o
 
@@ -118,7 +119,7 @@ PNG_ASSETS_DIR = gfx/
 MAPFILE = opl.map
 EE_LDFLAGS += -Wl,-Map,$(MAPFILE)
 
-EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
+EE_LIBS = -L$(PS2SDK)/ports/lib -L$(GSKIT)/lib -L./lib -lgskit -ldmakit -lpoweroff -lfileXio -lpatches -lpng -lz -lmc -lfreetype -lvux -lcdvd -lnetman -lps2ips -laudsrv -lvorbisfile -lvorbis -logg -lpadx -lelf-loader-nocolour
 EE_INCS += -I$(PS2SDK)/ports/include -I$(PS2SDK)/ports/include/freetype2 -I$(GSKIT)/include -I$(GSKIT)/ee/dma/include -I$(GSKIT)/ee/gs/include -Imodules/iopcore/common -Imodules/network/common -Imodules/hdd/common -Iinclude
 BIN2C = $(PS2SDK)/bin/bin2c
 
@@ -695,21 +696,13 @@ $(EE_ASM_DIR)mcman.c: $(PS2SDK)/iop/irx/mcman.irx | $(EE_ASM_DIR)
 $(EE_ASM_DIR)mcserv.c: $(PS2SDK)/iop/irx/mcserv.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
-thirdparty/roboto_regular.ttf: fonts/roboto_regular.ttf
-	@mkdir -p thirdparty
-	cp $< $@
-
-thirdparty/roboto_bold.ttf: fonts/roboto_bold.ttf
-	@mkdir -p thirdparty
-	cp $< $@
-
-$(EE_ASM_DIR)poeveticanew.c: thirdparty/PoeVeticaNew.ttf | $(EE_ASM_DIR)
-	$(BIN2C) $< $@ $(*F)_raw
-
 $(EE_ASM_DIR)roboto_regular.c: thirdparty/roboto_regular.ttf | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_raw
 
 $(EE_ASM_DIR)roboto_bold.c: thirdparty/roboto_bold.ttf | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(*F)_raw
+
+$(EE_ASM_DIR)roboto_semi_bold.c: thirdparty/roboto_semi_bold.ttf | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_raw
 
 $(EE_ASM_DIR)icon_sys.c: gfx/icon.sys | $(EE_ASM_DIR)
@@ -811,13 +804,13 @@ LANG_COMPILER = lang_compiler.py
 languages: $(ENGLISH_TEMPLATE_YML) $(TRANSLATIONS_YML) $(ENGLISH_LNG) $(TRANSLATIONS_LNG) $(INTERNAL_LANGUAGE_C) $(INTERNAL_LANGUAGE_H)
 
 download_lng:
-	./download_lng.sh
+	-[ -f ./download_lng.sh ] && ./download_lng.sh || true
 
 download_lwNBD:
-	./download_lwNBD.sh
+	-[ -f ./download_lwNBD.sh ] && ./download_lwNBD.sh || true
 
 download_cfla:
-	./download_cfla.sh
+	-[ -f ./download_cfla.sh ] && ./download_cfla.sh || true
 
 $(TRANSLATIONS_LNG): $(LNG_DIR)lang_%.lng: $(LNG_SRC_DIR)%.yml $(BASE_LANGUAGE) $(LANG_COMPILER)
 	python3 $(LANG_COMPILER) --make_lng --base $(BASE_LANGUAGE) --translation $< $@

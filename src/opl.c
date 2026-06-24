@@ -35,6 +35,11 @@
 #include "include/sound.h"
 #include "include/xparam.h"
 
+#include <errno.h>
+#include <sys/stat.h>
+#include <stdarg.h>
+#include <delaythread.h>
+
 // FIXME: We should not need this function.
 //        Use newlib's 'stat' to get GMT time.
 #define NEWLIB_PORT_AWARE
@@ -75,9 +80,55 @@ static unsigned char shouldAppsUpdate;
 
 // Network support stuff.
 #define HTTP_IOBUF_SIZE 512
+#define COVER_IMAGE_IOBUF_SIZE_MAX 60000
+#define COVER_IMAGE_IOBUF_SIZE_8K  8192
+#define COVER_IMAGE_IOBUF_SIZE_4K  4096
+#define COVER_IMAGE_IOBUF_SIZE_2K  2048
+#define COVER_IMAGE_IOBUF_SIZE_FULL 60000
+#define COVER_IMAGE_MAX_SIZE (4 * 1024 * 1024)
+#define COVER_HTTP_HOST "ps2api.appdadz.com"
+#define COVER_HTTP_CONNECT_HOST "88.222.215.247"
+#define COVER_HTTP_PORT 80
+#define COVER_TEST_THREAD_STACK_SIZE (32 * 1024)
+#define COVER_DOWNLOAD_RETRIES 3
+#define COVER_RETRY_DELAY_US 250000
+
 static unsigned int CompatUpdateComplete, CompatUpdateTotal;
 static unsigned char CompatUpdateStopFlag, CompatUpdateFlags;
 static short int CompatUpdateStatus;
+
+int gPS5CoverTotalGames;
+int gPS5CoverMissingGames;
+int gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_IDLE;
+int gPS5CoverDownloadCancel;
+int gPS5CoverDownloadCurrent;
+int gPS5CoverDownloadTotal;
+int gPS5CoverDownloadFailures;
+int gPS5CoverDownloadPercent;
+int gPS5CoverDownloadMode = PS5_COVER_DOWNLOAD_MISSING;
+char gPS5CoverDownloadTitle[96];
+char gPS5CoverDownloadUrl[768];
+static int gPS5CoverStatsDirty = 1;
+static item_list_t *gPS5CoverActiveSupport;
+static u8 gCoverTestThreadStack[COVER_TEST_THREAD_STACK_SIZE] ALIGNED(16);
+static ee_thread_t gCoverTestThread;
+static int gCoverTestThreadId;
+static int gCoverLastHttpResult;
+static int gCoverLastChunkLen;
+static int gCoverLastConnMode;
+static int gCoverLastUsedDns;
+static u32 gCoverLastOffset;
+static int gCoverLastStatusCode;
+static int gCoverLastContentLength;
+static u8 gCoverLastFirstBytes[8];
+static int gCoverLastRequestLength;
+static int gCoverLastSendLength;
+static int gCoverLastSelectResult;
+static int gCoverLastRecvResult;
+static int gCoverLastSocketError;
+static volatile int gCoverTestThreadRunning;
+
+extern void *_gp;
 
 static void clearIOModuleT(opl_io_module_t *mod)
 {
@@ -101,9 +152,15 @@ static void clearIOModuleT(opl_io_module_t *mod)
 
 // forward decl
 static void clearMenuGameList(opl_io_module_t *mdl);
-static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected);
+static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected, int selectedBdmHdd);
 static void reset(void);
 static void deferredAudioInit(void);
+static int coverIsLocalGameSupport(item_list_t *support);
+static int ps5IsMergedGameSupport(item_list_t *support);
+static opl_io_module_t *ps5GetMergedGameModule(void);
+static unsigned int ps5MergedSourceUpdateMask;
+static int ps5MergedHddUpdatePending;
+static int ps5MergedForceRebuildPending;
 
 // frame counter
 static unsigned int frameCounter;
@@ -111,6 +168,231 @@ static unsigned int frameCounter;
 static char errorMessage[256];
 
 static opl_io_module_t list_support[MODE_COUNT];
+
+#define PS5_GAME_ITEM_FLAG 0x40000000
+#define PS5_GAME_ITEM_INDEX_MASK 0x3FFFFFFF
+
+typedef struct {
+    int sourceMode;
+    int sourceId;
+    char startup[GAME_STARTUP_MAX];
+    char title[128];
+} ps5_game_ref_t;
+
+static ps5_game_ref_t *gPS5GameRefs = NULL;
+static int gPS5GameRefCount = 0;
+static int gPS5GameRefCapacity = 0;
+
+static int oplEnsureGameItemRefCapacity(void)
+{
+    ps5_game_ref_t *refs;
+    int capacity;
+
+    if (gPS5GameRefCount < gPS5GameRefCapacity)
+        return 1;
+
+    capacity = gPS5GameRefCapacity > 0 ? gPS5GameRefCapacity * 2 : 64;
+    refs = realloc(gPS5GameRefs, capacity * sizeof(ps5_game_ref_t));
+    if (refs == NULL)
+        return 0;
+
+    gPS5GameRefs = refs;
+    gPS5GameRefCapacity = capacity;
+    return 1;
+}
+
+int oplMakeGameItemId(int mode, int id)
+{
+    item_list_t *support;
+    ps5_game_ref_t *ref;
+    const char *startup;
+    const char *title;
+    int index, i;
+
+    if (mode < 0 || mode >= MODE_COUNT || id < 0)
+        return -1;
+
+    support = list_support[mode].support;
+    if (support == NULL)
+        return -1;
+
+    startup = support->itemGetStartup != NULL ? support->itemGetStartup(support, id) : NULL;
+    title = support->itemGetName != NULL ? support->itemGetName(support, id) : NULL;
+
+    index = -1;
+    for (i = 0; i < gPS5GameRefCount; i++) {
+        ref = &gPS5GameRefs[i];
+        if (ref->sourceMode != mode)
+            continue;
+        if ((startup != NULL && startup[0] != '\0' && ref->startup[0] != '\0' && strcmp(startup, ref->startup) == 0) ||
+            (title != NULL && title[0] != '\0' && ref->title[0] != '\0' && strcmp(title, ref->title) == 0)) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        if (gPS5GameRefCount > PS5_GAME_ITEM_INDEX_MASK || !oplEnsureGameItemRefCapacity())
+            return -1;
+        index = gPS5GameRefCount++;
+        memset(&gPS5GameRefs[index], 0, sizeof(gPS5GameRefs[index]));
+    }
+
+    ref = &gPS5GameRefs[index];
+    ref->sourceMode = mode;
+    ref->sourceId = id;
+    if (startup != NULL) {
+        strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+        ref->startup[sizeof(ref->startup) - 1] = '\0';
+    }
+    if (title != NULL) {
+        strncpy(ref->title, title, sizeof(ref->title) - 1);
+        ref->title[sizeof(ref->title) - 1] = '\0';
+    }
+
+    return PS5_GAME_ITEM_FLAG | index;
+}
+
+int oplIsGameItemIdEncoded(int itemId)
+{
+    return (itemId & PS5_GAME_ITEM_FLAG) != 0;
+}
+
+int oplResolveGameItem(int itemId, item_list_t *fallback, item_list_t **support, int *sourceId)
+{
+    int index, id, count, i;
+    item_list_t *resolvedSupport;
+    ps5_game_ref_t *ref;
+    const char *startup;
+    const char *title;
+
+    if (oplIsGameItemIdEncoded(itemId)) {
+        index = itemId & PS5_GAME_ITEM_INDEX_MASK;
+        if (index < 0 || index >= gPS5GameRefCount)
+            return 0;
+
+        ref = &gPS5GameRefs[index];
+        if (ref->sourceMode < 0 || ref->sourceMode >= MODE_COUNT)
+            return 0;
+
+        resolvedSupport = list_support[ref->sourceMode].support;
+        if (resolvedSupport == NULL || !resolvedSupport->enabled || resolvedSupport->itemGetCount == NULL)
+            return 0;
+
+        count = resolvedSupport->itemGetCount(resolvedSupport);
+        id = ref->sourceId;
+        if (id >= 0 && id < count) {
+            startup = resolvedSupport->itemGetStartup != NULL ? resolvedSupport->itemGetStartup(resolvedSupport, id) : NULL;
+            title = resolvedSupport->itemGetName != NULL ? resolvedSupport->itemGetName(resolvedSupport, id) : NULL;
+            if ((ref->startup[0] != '\0' && startup != NULL && strcmp(startup, ref->startup) == 0) ||
+                (ref->title[0] != '\0' && title != NULL && strcmp(title, ref->title) == 0)) {
+                if (startup != NULL && startup[0] != '\0') {
+                    strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+                    ref->startup[sizeof(ref->startup) - 1] = '\0';
+                }
+                if (support != NULL)
+                    *support = resolvedSupport;
+                if (sourceId != NULL)
+                    *sourceId = id;
+                return 1;
+            }
+        }
+
+        for (i = 0; i < count; i++) {
+            startup = resolvedSupport->itemGetStartup != NULL ? resolvedSupport->itemGetStartup(resolvedSupport, i) : NULL;
+            title = resolvedSupport->itemGetName != NULL ? resolvedSupport->itemGetName(resolvedSupport, i) : NULL;
+            if ((ref->startup[0] != '\0' && startup != NULL && strcmp(startup, ref->startup) == 0) ||
+                (ref->title[0] != '\0' && title != NULL && strcmp(title, ref->title) == 0)) {
+                ref->sourceId = i;
+                if (startup != NULL && startup[0] != '\0') {
+                    strncpy(ref->startup, startup, sizeof(ref->startup) - 1);
+                    ref->startup[sizeof(ref->startup) - 1] = '\0';
+                }
+                if (support != NULL)
+                    *support = resolvedSupport;
+                if (sourceId != NULL)
+                    *sourceId = i;
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    if (support != NULL)
+        *support = fallback;
+    if (sourceId != NULL)
+        *sourceId = itemId;
+    return fallback != NULL;
+}
+
+static int oplFindGameByTitle(item_list_t *support, const char *title)
+{
+    int count, i;
+
+    if (support == NULL || title == NULL || support->itemGetCount == NULL || support->itemGetName == NULL)
+        return -1;
+
+    count = support->itemGetCount(support);
+    for (i = 0; i < count; i++) {
+        char *name = support->itemGetName(support, i);
+        if (name != NULL && strcmp(name, title) == 0)
+            return i;
+    }
+
+    return -1;
+}
+
+static int oplResolveMenuGame(struct menu_item *curMenu, item_list_t **support, int *sourceId)
+{
+    item_list_t *resolvedSupport;
+    int resolvedId;
+    const char *selectedTitle;
+    int encodedItem;
+
+    if (curMenu == NULL || curMenu->current == NULL || support == NULL || *support == NULL || sourceId == NULL)
+        return 0;
+
+    selectedTitle = submenuItemGetText(&curMenu->current->item);
+    resolvedSupport = *support;
+    resolvedId = curMenu->current->item.id;
+    encodedItem = (resolvedId & PS5_GAME_ITEM_FLAG) != 0;
+    if (!oplResolveGameItem(resolvedId, resolvedSupport, &resolvedSupport, &resolvedId))
+        return 0;
+
+    if (!encodedItem && ps5IsMergedGameSupport(resolvedSupport)) {
+        int idByTitle;
+
+        if (resolvedSupport->itemUpdate != NULL)
+            resolvedSupport->itemUpdate(resolvedSupport);
+
+        idByTitle = oplFindGameByTitle(resolvedSupport, selectedTitle);
+        if (idByTitle < 0) {
+            int mode;
+            for (mode = 0; mode < MODE_COUNT; mode++) {
+                item_list_t *candidate = list_support[mode].support;
+                if (!ps5IsMergedGameSupport(candidate) || !candidate->enabled)
+                    continue;
+
+                if (candidate->itemUpdate != NULL)
+                    candidate->itemUpdate(candidate);
+
+                idByTitle = oplFindGameByTitle(candidate, selectedTitle);
+                if (idByTitle >= 0) {
+                    resolvedSupport = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (idByTitle >= 0)
+            resolvedId = idByTitle;
+    }
+
+    *support = resolvedSupport;
+    *sourceId = resolvedId;
+    return resolvedSupport != NULL;
+}
 
 // Global data
 char *gBaseMCDir;
@@ -144,8 +426,11 @@ int gAutoRefresh;
 int gEnableNotifications;
 int gEnableArt;
 int gPS5Mode = 1;
-int gPS5ShowTime = 1;
+extern int gPS5ActiveTab;
 int gPS5UISound = 1;
+int gPS5ShowCoverImages = 1;
+int gPS5ShowGamesLogo = 1;
+int gPS5SortMode = 1;
 int gWideScreen;
 int gVMode; // 0 - Auto, 1 - PAL, 2 - NTSC
 int gXOff;
@@ -261,20 +546,55 @@ static void itemInitSupport(item_list_t *support)
         ioPutRequest(IO_MENU_UPDATE_DEFFERED, &support->mode);
 }
 
+static int isSelectedBdmHdd(int modeSelected)
+{
+    if (modeSelected >= BDM_MODE && modeSelected < ETH_MODE && list_support[modeSelected].support != NULL) {
+        bdm_device_data_t *bdmData = (bdm_device_data_t *)list_support[modeSelected].support->priv;
+        return bdmData != NULL && bdmData->bdmDeviceType == BDM_TYPE_ATA;
+    }
+
+    return 0;
+}
+
+static config_set_t *ps5LoadLaunchConfig(item_list_t *support, int sourceId, const char *title)
+{
+    unsigned int frame = 0;
+
+    playPS5LaunchTransition(title);
+
+    for (frame = 0; frame < 60; frame++) {
+        int alpha = frame < 45 ? 0x80 : (0x80 * (59 - frame)) / 14;
+        drawPS5LaunchLoadingFrame(frame, alpha);
+        DelayThread(16000);
+    }
+
+    if (support == NULL || support->itemGetConfig == NULL)
+        return NULL;
+
+    return support->itemGetConfig(support, sourceId);
+}
+
 static void itemExecSelect(struct menu_item *curMenu)
 {
     item_list_t *support = curMenu->userdata;
+    int sourceId;
+    config_set_t *configSet;
     sfxPlay(SFX_CONFIRM);
 
     if (support) {
         if (support->enabled) {
             if (curMenu->current) {
-                extern int gPS5Mode;
-                if (gPS5Mode) {
-                    playPS5LaunchTransition(submenuItemGetText(&curMenu->current->item));
+                if (!oplResolveMenuGame(curMenu, &support, &sourceId)) {
+                    guiMsgBox("Could not resolve selected game.", 0, NULL);
+                    return;
                 }
-                config_set_t *configSet = menuLoadConfig();
-                support->itemLaunch(support, curMenu->current->item.id, configSet);
+                extern int gPS5Mode;
+                configSet = gPS5Mode ? ps5LoadLaunchConfig(support, sourceId, submenuItemGetText(&curMenu->current->item)) : menuLoadConfig();
+                if (configSet == NULL) {
+                    guiMsgBox("Could not load game settings.", 0, NULL);
+                    return;
+                }
+                support->itemLaunch(support, sourceId, configSet);
             }
         } else {
             // If we're trying to enable BDM support we need to enable it for all BDM menu slots.
@@ -298,6 +618,12 @@ static void itemExecRefresh(struct menu_item *curMenu)
     item_list_t *support = curMenu->userdata;
 
     if (support && support->enabled) {
+        if (gPS5Mode && support->mode != APP_MODE) {
+            oplRefreshMergedGameList();
+            sfxPlay(SFX_CONFIRM);
+            return;
+        }
+
         if (support->mode >= BDM_MODE && support->mode <= BDM_MODE4) {
             bdm_device_data_t *pDeviceData = (bdm_device_data_t *)support->priv;
             if (pDeviceData != NULL)
@@ -332,8 +658,11 @@ static void itemExecTriangle(struct menu_item *curMenu)
         return;
 
     item_list_t *support = curMenu->userdata;
+    int sourceId;
 
     if (support) {
+        if (!oplResolveMenuGame(curMenu, &support, &sourceId))
+            return;
         if (!(support->flags & MODE_FLAG_NO_COMPAT)) {
             if (menuCheckParentalLock() == 0) {
                 menuInitGameMenu();
@@ -419,7 +748,9 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
     else if (mode == APP_MODE)
         startMode = gAPPStartMode;
 
-    if (gPS5Mode && startMode == START_MODE_DISABLED) {
+    if (gPS5Mode && mode == ETH_MODE && startMode != START_MODE_DISABLED) {
+        startMode = START_MODE_MANUAL;
+    } else if (gPS5Mode && startMode == START_MODE_DISABLED && !(mode == HDD_MODE && gEnableBdmHDD)) {
         startMode = START_MODE_MANUAL;
     }
 
@@ -444,22 +775,6 @@ void initSupport(item_list_t *itemList, int mode, int force_reinit)
 
 static void initAllSupport(int force_reinit)
 {
-    // Auto-detect internal HDD format to dynamically enable traditional APA vs BDM exFAT modes
-    hddLoadModules();
-    int fsType = hddDetectNonSonyFileSystem();
-    if (fsType == 1) { // MBR/GPT (exFAT) drive detected
-        LOG("initAllSupport: exFAT GPT/MBR HDD detected. Enabling BDM HDD, disabling traditional HDD.\n");
-        gHDDStartMode = START_MODE_DISABLED;
-        gEnableBdmHDD = 1;
-    } else if (fsType == 0) { // APA (Sony PS2 format) drive detected
-        LOG("initAllSupport: APA PS2 HDD detected. Enabling traditional HDD, disabling BDM HDD.\n");
-        gHDDStartMode = START_MODE_AUTO;
-        gEnableBdmHDD = 0;
-    } else {
-        LOG("initAllSupport: No internal HDD or unrecognized filesystem (%d). Disabling traditional HDD.\n", fsType);
-        gHDDStartMode = START_MODE_DISABLED;
-    }
-
     bdmEnumerateDevices();
     initSupport(ethGetObject(0), ETH_MODE, force_reinit || (gNetworkStartup >= ERROR_ETH_SMB_CONN));
     initSupport(hddGetObject(0), HDD_MODE, force_reinit);
@@ -468,9 +783,11 @@ static void initAllSupport(int force_reinit)
 
 static void deinitAllSupport(int exception, int modeSelected)
 {
+    int selectedBdmHdd = isSelectedBdmHdd(modeSelected);
+
     for (int i = 0; i < MODE_COUNT; i++) {
         if (list_support[i].support != NULL)
-            moduleCleanup(&list_support[i], exception, modeSelected);
+            moduleCleanup(&list_support[i], exception, modeSelected, selectedBdmHdd);
     }
 }
 
@@ -689,7 +1006,30 @@ config_set_t *oplGetLegacyAppsInfo(char *name)
 // ----------------------------------------------------------
 static void updateMenuFromGameList(opl_io_module_t *mdl)
 {
-    guiExecDeferredOps();
+    int aggregateLocalGames = gPS5Mode && ps5IsMergedGameSupport(mdl->support);
+    int focusedMode = -1;
+    char focusedStartup[GAME_STARTUP_MAX] = "";
+    char focusedTitle[128] = "";
+
+    if (aggregateLocalGames && mdl->menuItem.current != NULL) {
+        item_list_t *focusedSupport = mdl->support;
+        int focusedId;
+
+        if (oplResolveGameItem(mdl->menuItem.current->item.id, focusedSupport, &focusedSupport, &focusedId) && focusedSupport != NULL) {
+            const char *startup = focusedSupport->itemGetStartup != NULL ? focusedSupport->itemGetStartup(focusedSupport, focusedId) : NULL;
+            const char *title = submenuItemGetText(&mdl->menuItem.current->item);
+            focusedMode = focusedSupport->mode;
+            if (startup != NULL) {
+                strncpy(focusedStartup, startup, sizeof(focusedStartup) - 1);
+                focusedStartup[sizeof(focusedStartup) - 1] = '\0';
+            }
+            if (title != NULL) {
+                strncpy(focusedTitle, title, sizeof(focusedTitle) - 1);
+                focusedTitle[sizeof(focusedTitle) - 1] = '\0';
+            }
+        }
+    }
+
     clearMenuGameList(mdl);
 
     const char *temp = NULL;
@@ -702,11 +1042,69 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
 
     // read the new game list
     struct gui_update_t *gup = NULL;
-    int count = mdl->support->itemUpdate(mdl->support);
+    int count = 0;
+
+    if (!aggregateLocalGames)
+        count = mdl->support->itemUpdate(mdl->support);
+
+    if (aggregateLocalGames) {
+        int mode;
+        for (mode = 0; mode < MODE_COUNT; mode++) {
+            item_list_t *sourceSupport = list_support[mode].support;
+            int sourceCount, i;
+
+            if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled)
+                continue;
+
+            if (sourceSupport->mode == ETH_MODE && sourceSupport->itemGetCount != NULL) {
+                sourceCount = sourceSupport->itemGetCount(sourceSupport);
+            } else if ((ps5MergedSourceUpdateMask & (1u << sourceSupport->mode)) != 0) {
+                sourceCount = sourceSupport->itemUpdate(sourceSupport);
+            } else if (sourceSupport->itemGetCount != NULL) {
+                sourceCount = sourceSupport->itemGetCount(sourceSupport);
+            } else {
+                sourceCount = 0;
+            }
+            if (sourceCount <= 0)
+                continue;
+
+            for (i = 0; i < sourceCount; ++i) {
+                int itemId = oplMakeGameItemId(sourceSupport->mode, i);
+                if (itemId < 0)
+                    continue;
+
+                gup = guiOpCreate(GUI_OP_APPEND_MENU);
+
+                gup->menu.menu = &mdl->menuItem;
+                gup->menu.subMenu = &mdl->subMenu;
+
+                gup->submenu.icon_id = -1;
+                gup->submenu.id = itemId;
+                gup->submenu.text = sourceSupport->itemGetName(sourceSupport, i);
+                gup->submenu.text_id = -1;
+                gup->submenu.selected = 0;
+
+                if (focusedMode == sourceSupport->mode) {
+                    const char *startup = sourceSupport->itemGetStartup != NULL ? sourceSupport->itemGetStartup(sourceSupport, i) : NULL;
+                    const char *title = sourceSupport->itemGetName != NULL ? sourceSupport->itemGetName(sourceSupport, i) : NULL;
+                    if ((focusedStartup[0] != '\0' && startup != NULL && strcmp(focusedStartup, startup) == 0) ||
+                        (focusedStartup[0] == '\0' && focusedTitle[0] != '\0' && title != NULL && strcmp(focusedTitle, title) == 0))
+                        gup->submenu.selected = 2;
+                }
+
+                if (gRememberLastPlayed && temp && strcmp(temp, sourceSupport->itemGetStartup(sourceSupport, i)) == 0)
+                    gup->submenu.selected = 1;
+
+                guiDeferUpdate(gup);
+                count++;
+            }
+        }
+    }
+
     if (count > 0) {
         int i;
 
-        for (i = 0; i < count; ++i) {
+        for (i = 0; !aggregateLocalGames && i < count; ++i) {
 
             gup = guiOpCreate(GUI_OP_APPEND_MENU);
 
@@ -740,6 +1138,9 @@ static void updateMenuFromGameList(opl_io_module_t *mdl)
         gup->menu.subMenu = &mdl->subMenu;
         guiDeferUpdate(gup);
     }
+
+    if (coverIsLocalGameSupport(mdl->support))
+        oplMarkGameCoverStatsDirty();
 }
 
 void menuDeferredUpdate(void *data)
@@ -747,8 +1148,56 @@ void menuDeferredUpdate(void *data)
     short int *mode = data;
 
     opl_io_module_t *mod = &list_support[*mode];
+    opl_io_module_t *mergedMod;
     if (!mod->support)
         return;
+
+    if (gPS5Mode && gPS5ActiveTab == 1 && mod->support->mode >= BDM_MODE && mod->support->mode < ETH_MODE)
+        return;
+
+    if (gPS5Mode && ps5IsMergedGameSupport(mod->support)) {
+        int mode;
+        int needsUpdate = 0;
+
+        mergedMod = ps5GetMergedGameModule();
+        if (mergedMod == NULL)
+            return;
+        if (mod != mergedMod) {
+            if (mod->support->mode == HDD_MODE)
+                ps5MergedHddUpdatePending = 1;
+            ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
+            return;
+        }
+        if (mergedMod->support->mode == HDD_MODE)
+            ps5MergedHddUpdatePending = 1;
+
+        ps5MergedSourceUpdateMask = 0;
+        for (mode = BDM_MODE; mode <= HDD_MODE; mode++) {
+            item_list_t *sourceSupport = list_support[mode].support;
+
+            if (mode == ETH_MODE)
+                continue;
+            if (mode == HDD_MODE && !ps5MergedHddUpdatePending)
+                continue;
+
+            if (!ps5IsMergedGameSupport(sourceSupport) || !sourceSupport->enabled || sourceSupport->itemNeedsUpdate == NULL)
+                continue;
+
+            if (sourceSupport->itemNeedsUpdate(sourceSupport)) {
+                ps5MergedSourceUpdateMask |= 1u << sourceSupport->mode;
+                needsUpdate = 1;
+            }
+        }
+
+        if (needsUpdate || ps5MergedForceRebuildPending) {
+            updateMenuFromGameList(mergedMod);
+            ps5MergedSourceUpdateMask = 0;
+            shouldAppsUpdate = 1;
+        }
+        ps5MergedHddUpdatePending = 0;
+        ps5MergedForceRebuildPending = 0;
+        return;
+    }
 
     // see if we have to update
     if (mod->support->itemNeedsUpdate(mod->support)) {
@@ -772,6 +1221,15 @@ static void menuUpdateHook()
     // schedule updates of all the list handlers
     if (gAutoRefresh) {
         for (i = 0; i < MODE_COUNT; i++) {
+            opl_io_module_t *mergedMod;
+
+            if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
+                continue;
+            if (gPS5Mode && list_support[i].support != NULL && ps5IsMergedGameSupport(list_support[i].support)) {
+                mergedMod = ps5GetMergedGameModule();
+                if (mergedMod != NULL && &list_support[i] != mergedMod)
+                    continue;
+            }
             if ((list_support[i].support && list_support[i].support->enabled) && ((list_support[i].support->updateDelay > 0) && (frameCounter % list_support[i].support->updateDelay == 0)))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
@@ -780,6 +1238,15 @@ static void menuUpdateHook()
     // Schedule updates of all list handlers that are to run every frame, regardless of whether auto refresh is active or not.
     if (frameCounter % MENU_GENERAL_UPDATE_DELAY == 0) {
         for (i = 0; i < MODE_COUNT; i++) {
+            opl_io_module_t *mergedMod;
+
+            if (gPS5Mode && gPS5ActiveTab == 1 && i >= BDM_MODE && i < ETH_MODE)
+                continue;
+            if (gPS5Mode && list_support[i].support != NULL && ps5IsMergedGameSupport(list_support[i].support)) {
+                mergedMod = ps5GetMergedGameModule();
+                if (mergedMod != NULL && &list_support[i] != mergedMod)
+                    continue;
+            }
             if ((list_support[i].support && list_support[i].support->enabled) && (list_support[i].support->updateDelay == 0))
                 ioPutRequest(IO_MENU_UPDATE_DEFFERED, &list_support[i].support->mode);
         }
@@ -859,6 +1326,32 @@ static int checkLoadConfigHDD(int types)
     return 0;
 }
 
+static void applyAutomaticInternalHDDMode(void)
+{
+    int fsType;
+
+    if (!gPS5Mode)
+        return;
+
+    gBDMStartMode = START_MODE_AUTO;
+    gAPPStartMode = START_MODE_AUTO;
+    gEnableMX4SIO = 1;
+
+    hddLoadModules();
+    fsType = hddDetectNonSonyFileSystem();
+    if (fsType == 0) {
+        gEnableBdmHDD = 0;
+        gHDDStartMode = START_MODE_AUTO;
+        gDefaultDevice = HDD_MODE;
+    } else if (fsType == 1) {
+        gEnableBdmHDD = 1;
+        gHDDStartMode = START_MODE_DISABLED;
+        gDefaultDevice = BDM_MODE;
+    } else if (gDefaultDevice >= ETH_MODE) {
+        gDefaultDevice = BDM_MODE;
+    }
+}
+
 // When this function is called, the current device for loading/saving config is the memory card.
 static int tryAlternateDevice(int types)
 {
@@ -935,8 +1428,10 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_ENABLE_NOTIFICATIONS, &gEnableNotifications);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_COVERART, &gEnableArt);
             configGetInt(configOPL, CONFIG_OPL_WIDESCREEN, &gWideScreen);
-            configGetInt(configOPL, "ps5_show_time", &gPS5ShowTime);
             configGetInt(configOPL, "ps5_ui_sound", &gPS5UISound);
+            configGetInt(configOPL, "ps5_show_cover_images", &gPS5ShowCoverImages);
+            configGetInt(configOPL, "ps5_show_games_logo", &gPS5ShowGamesLogo);
+            configGetInt(configOPL, "ps5_sort_mode", &gPS5SortMode);
 
             if (!(getKeyPressed(KEY_TRIANGLE) && getKeyPressed(KEY_CROSS))) {
                 configGetInt(configOPL, CONFIG_OPL_VMODE, &gVMode);
@@ -980,7 +1475,12 @@ static void _loadConfig()
             configGetInt(configOPL, CONFIG_OPL_AUTOSTART_LAST, &gAutoStartLastPlayed);
             configGetInt(configOPL, CONFIG_OPL_BDM_MODE, &gBDMStartMode);
             configGetInt(configOPL, CONFIG_OPL_HDD_MODE, &gHDDStartMode);
-            configGetInt(configOPL, CONFIG_OPL_ETH_MODE, &gETHStartMode);
+            if (configGetInt(configOPL, "ps5_smb_default_set", &value)) {
+                configGetInt(configOPL, CONFIG_OPL_ETH_MODE, &gETHStartMode);
+            } else {
+                gETHStartMode = START_MODE_DISABLED;
+                configSetInt(configOPL, "ps5_smb_default_set", 1);
+            }
             configGetInt(configOPL, CONFIG_OPL_APP_MODE, &gAPPStartMode);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_ILINK, &gEnableILK);
             configGetInt(configOPL, CONFIG_OPL_ENABLE_MX4SIO, &gEnableMX4SIO);
@@ -995,12 +1495,6 @@ static void _loadConfig()
             if (gPS5Mode) {
                 gEnableSFX = 1;
                 gEnableBootSND = 1;
-                gBDMStartMode = START_MODE_AUTO;
-                gHDDStartMode = START_MODE_AUTO;
-                gETHStartMode = START_MODE_AUTO;
-                gAPPStartMode = START_MODE_AUTO;
-                if (gDefaultDevice >= ETH_MODE)
-                    gDefaultDevice = BDM_MODE;
             }
         }
     }
@@ -1041,6 +1535,7 @@ static void _loadConfig()
         }
     }
 
+    applyAutomaticInternalHDDMode();
     applyConfig(themeID, langID, 0);
 
     lscret = result;
@@ -1128,8 +1623,10 @@ static void _saveConfig()
         configSetInt(configOPL, CONFIG_OPL_ENABLE_NOTIFICATIONS, gEnableNotifications);
         configSetInt(configOPL, CONFIG_OPL_ENABLE_COVERART, gEnableArt);
         configSetInt(configOPL, CONFIG_OPL_WIDESCREEN, gWideScreen);
-        configSetInt(configOPL, "ps5_show_time", gPS5ShowTime);
         configSetInt(configOPL, "ps5_ui_sound", gPS5UISound);
+        configSetInt(configOPL, "ps5_show_cover_images", gPS5ShowCoverImages);
+        configSetInt(configOPL, "ps5_show_games_logo", gPS5ShowGamesLogo);
+        configSetInt(configOPL, "ps5_sort_mode", gPS5SortMode);
         configSetInt(configOPL, CONFIG_OPL_VMODE, gVMode);
         configSetInt(configOPL, CONFIG_OPL_XOFF, gXOff);
         configSetInt(configOPL, CONFIG_OPL_YOFF, gYOff);
@@ -1150,6 +1647,7 @@ static void _saveConfig()
         configSetInt(configOPL, CONFIG_OPL_BDM_MODE, gBDMStartMode);
         configSetInt(configOPL, CONFIG_OPL_HDD_MODE, gHDDStartMode);
         configSetInt(configOPL, CONFIG_OPL_ETH_MODE, gETHStartMode);
+        configSetInt(configOPL, "ps5_smb_default_set", 1);
         configSetInt(configOPL, CONFIG_OPL_APP_MODE, gAPPStartMode);
         configSetInt(configOPL, CONFIG_OPL_BDM_CACHE, bdmCacheSize);
         configSetInt(configOPL, CONFIG_OPL_HDD_CACHE, hddCacheSize);
@@ -1284,6 +1782,14 @@ int saveConfig(int types, int showUI)
             guiMsgBox(_l(_STR_ERROR_SAVING_SETTINGS), 0, NULL);
     }
 
+    return lscret;
+}
+
+int saveConfigQuiet(int types)
+{
+    lscstatus = types;
+    lscret = 0;
+    _saveConfig();
     return lscret;
 }
 
@@ -1541,6 +2047,799 @@ int oplUpdateGameCompatSingle(int id, item_list_t *support, config_set_t *config
     return CompatUpdateStatus;
 }
 
+static int coverIsLocalGameSupport(item_list_t *support)
+{
+    if (support == NULL || !support->enabled)
+        return 0;
+
+    if (support->mode >= BDM_MODE && support->mode <= BDM_MODE4)
+        return support->priv != NULL;
+
+    return support->mode == HDD_MODE || support->mode == ETH_MODE;
+}
+
+static int ps5IsMergedGameSupport(item_list_t *support)
+{
+    if (coverIsLocalGameSupport(support))
+        return 1;
+
+    return support != NULL && support->enabled && support->mode == ETH_MODE;
+}
+
+static opl_io_module_t *ps5GetMergedGameModule(void)
+{
+    int mode;
+
+    for (mode = BDM_MODE; mode <= BDM_MODE4; mode++) {
+        if (list_support[mode].support != NULL && list_support[mode].support->enabled)
+            return &list_support[mode];
+    }
+
+    if (list_support[HDD_MODE].support != NULL && list_support[HDD_MODE].support->enabled)
+        return &list_support[HDD_MODE];
+
+    if (list_support[ETH_MODE].support != NULL && list_support[ETH_MODE].support->enabled)
+        return &list_support[ETH_MODE];
+
+    return NULL;
+}
+
+void oplRefreshMergedGameList(void)
+{
+    int mode;
+    opl_io_module_t *mergedMod = ps5GetMergedGameModule();
+
+    ps5MergedHddUpdatePending = 1;
+    ps5MergedForceRebuildPending = 1;
+
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        item_list_t *support = list_support[mode].support;
+        if (support != NULL && support->mode >= BDM_MODE && support->mode <= BDM_MODE4) {
+            bdm_device_data_t *pDeviceData = (bdm_device_data_t *)support->priv;
+            if (pDeviceData != NULL)
+                pDeviceData->ForceRefresh = 1;
+        }
+    }
+
+    if (mergedMod != NULL)
+        ioPutRequest(IO_MENU_UPDATE_DEFFERED, &mergedMod->support->mode);
+}
+
+static void coverDebugLog(const char *format, ...)
+{
+    (void)format;
+}
+
+static void coverNormalizePrefix(const char *prefix, char *out, int outSize)
+{
+    int len;
+
+    if (prefix == NULL || prefix[0] == '\0')
+        prefix = "mass0:";
+
+    strncpy(out, prefix, outSize - 1);
+    out[outSize - 1] = '\0';
+
+    len = strlen(out);
+    if (len > 0 && out[len - 1] == '/')
+        out[len - 1] = '\0';
+}
+
+static int coverIsSmbPrefix(const char *prefix)
+{
+    return prefix != NULL && !strncmp(prefix, "smb", 3);
+}
+
+static void coverBuildFolderPath(char *path, int pathSize, const char *prefix, const char *folder)
+{
+    char cleanPrefix[64];
+    int len;
+
+    coverNormalizePrefix(prefix, cleanPrefix, sizeof(cleanPrefix));
+    len = strlen(cleanPrefix);
+    while (len > 0 && (cleanPrefix[len - 1] == '/' || cleanPrefix[len - 1] == '\\')) {
+        cleanPrefix[--len] = '\0';
+    }
+
+    if (coverIsSmbPrefix(cleanPrefix)) {
+        if (len > 0 && cleanPrefix[len - 1] == ':')
+            snprintf(path, pathSize, "%s%s", cleanPrefix, folder);
+        else
+            snprintf(path, pathSize, "%s\\%s", cleanPrefix, folder);
+    } else {
+        snprintf(path, pathSize, "%s/%s", cleanPrefix, folder);
+    }
+}
+
+static void coverBuildAssetPath(char *path, int pathSize, const char *prefix, const char *folder, const char *startup, const char *suffix, const char *ext)
+{
+    char folderPath[128];
+
+    coverBuildFolderPath(folderPath, sizeof(folderPath), prefix, folder);
+    if (coverIsSmbPrefix(folderPath))
+        snprintf(path, pathSize, "%s\\%s_%s.%s", folderPath, startup, suffix, ext);
+    else
+        snprintf(path, pathSize, "%s/%s_%s.%s", folderPath, startup, suffix, ext);
+}
+
+static int coverFileExists(const char *path)
+{
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    int fd = open(path, O_RDONLY);
+    unsigned char sig[8];
+    const char *ext;
+    int size;
+    int valid = 0;
+
+    if (fd >= 0) {
+        size = lseek(fd, 0, SEEK_END);
+        lseek(fd, 0, SEEK_SET);
+        memset(sig, 0, sizeof(sig));
+        read(fd, sig, sizeof(sig));
+        close(fd);
+
+        ext = strrchr(path, '.');
+        if (ext != NULL && !strcasecmp(ext, ".png"))
+            valid = size > 1024 && memcmp(sig, pngSig, sizeof(pngSig)) == 0;
+        else if (ext != NULL && !strcasecmp(ext, ".jpg"))
+            valid = size > 1024 && sig[0] == 0xFF && sig[1] == 0xD8;
+
+        return valid;
+    }
+
+    return 0;
+}
+
+static int coverHasAsset(const char *prefix, const char *folder, const char *startup, const char *suffix)
+{
+    char path[256];
+
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "png");
+    if (coverFileExists(path))
+        return 1;
+
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "jpg");
+    if (coverFileExists(path))
+        return 1;
+
+    return 0;
+}
+
+static int coverEnsureFolder(const char *prefix, const char *folder)
+{
+    char path[128];
+    DIR *dir;
+
+    coverBuildFolderPath(path, sizeof(path), prefix, folder);
+
+    coverDebugLog("COVERSAVE mkdir check path='%s'", path);
+    dir = opendir(path);
+    if (dir != NULL) {
+        closedir(dir);
+        coverDebugLog("COVERSAVE mkdir exists path='%s'", path);
+        return 0;
+    }
+
+    {
+        int result = mkdir(path, 0777);
+        coverDebugLog("COVERSAVE mkdir result=%d path='%s'", result, path);
+        return result;
+    }
+}
+
+static int coverParseHttpUrl(const char *url, char *host, int hostSize, char *uri, int uriSize)
+{
+    const char *p;
+    const char *slash;
+    int hostLen;
+
+    if (url == NULL || strncmp(url, "http://", 7) != 0)
+        return -EINVAL;
+
+    p = url + 7;
+    slash = strchr(p, '/');
+    if (slash == NULL || slash == p)
+        return -EINVAL;
+
+    hostLen = slash - p;
+    if (hostLen >= hostSize)
+        hostLen = hostSize - 1;
+    memcpy(host, p, hostLen);
+    host[hostLen] = '\0';
+
+    strncpy(uri, slash, uriSize - 1);
+    uri[uriSize - 1] = '\0';
+    return 0;
+}
+
+static int coverWriteAll(int fd, const char *buffer, int size)
+{
+    int written = 0;
+
+    while (written < size) {
+        int result = write(fd, buffer + written, size - written);
+        if (result <= 0)
+            return -EIO;
+        written += result;
+    }
+
+    return 0;
+}
+
+static void coverSetShortTitle(const char *title)
+{
+    int len;
+
+    if (title == NULL || title[0] == '\0')
+        title = "Game";
+
+    len = strlen(title);
+    if (len > 40) {
+        memcpy(gPS5CoverDownloadTitle, title, 40);
+        strcpy(&gPS5CoverDownloadTitle[40], "...");
+    } else {
+        strncpy(gPS5CoverDownloadTitle, title, sizeof(gPS5CoverDownloadTitle) - 1);
+        gPS5CoverDownloadTitle[sizeof(gPS5CoverDownloadTitle) - 1] = '\0';
+    }
+}
+
+static int coverDownloadImageToDisk(const char *url, const char *prefix, const char *folder, const char *startup, const char *suffix, int chunkSize, int useDns, int fullGet)
+{
+    static const unsigned char pngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    char host[HTTP_CLIENT_SERVER_NAME_MAX];
+    char uri[HTTP_CLIENT_URI_MAX];
+    char connectHost[HTTP_CLIENT_SERVER_NAME_MAX];
+    char path[256];
+    char *buffer;
+    u32 offset;
+    u16 length;
+    s8 connMode;
+    int result, socket, fd;
+
+    if (chunkSize <= 0 || chunkSize > COVER_IMAGE_IOBUF_SIZE_MAX)
+        chunkSize = COVER_IMAGE_IOBUF_SIZE_MAX;
+
+    gCoverLastHttpResult = 0;
+    gCoverLastChunkLen = 0;
+    gCoverLastConnMode = 0;
+    gCoverLastUsedDns = useDns;
+    gCoverLastOffset = 0;
+    gCoverLastStatusCode = 0;
+    gCoverLastContentLength = 0;
+    memset(gCoverLastFirstBytes, 0, sizeof(gCoverLastFirstBytes));
+    gCoverLastRequestLength = 0;
+    gCoverLastSendLength = 0;
+    gCoverLastSelectResult = 0;
+    gCoverLastRecvResult = 0;
+    gCoverLastSocketError = 0;
+
+    result = coverParseHttpUrl(url, host, sizeof(host), uri, sizeof(uri));
+    if (result < 0) {
+        coverDebugLog("COVERSAVE parse failed result=%d url='%s'", result, url != NULL ? url : "(null)");
+        return result;
+    }
+
+    if (coverEnsureFolder(prefix, folder) < 0) {
+        coverDebugLog("COVERSAVE folder failed prefix='%s' folder='%s'", prefix != NULL ? prefix : "(null)", folder);
+        return -EIO;
+    }
+
+    coverBuildAssetPath(path, sizeof(path), prefix, folder, startup, suffix, "png");
+    coverDebugLog("COVERSAVE begin host='%s' uri='%s' path='%s'", host, uri, path);
+
+    buffer = memalign(64, chunkSize);
+    if (buffer == NULL) {
+        coverDebugLog("COVERSAVE alloc failed size=%d", chunkSize);
+        return -ENOMEM;
+    }
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) {
+        coverDebugLog("COVERSAVE open failed fd=%d path='%s'", fd, path);
+        free(buffer);
+        return fd;
+    }
+
+    result = 0;
+    offset = 0;
+    while (!gPS5CoverDownloadCancel && offset < COVER_IMAGE_MAX_SIZE) {
+        if (useDns)
+            strncpy(connectHost, host, sizeof(connectHost) - 1);
+        else
+            strncpy(connectHost, COVER_HTTP_CONNECT_HOST, sizeof(connectHost) - 1);
+        connectHost[sizeof(connectHost) - 1] = '\0';
+        socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
+        if (socket < 0 && !useDns) {
+            int directResult = socket;
+
+            strncpy(connectHost, host, sizeof(connectHost) - 1);
+            connectHost[sizeof(connectHost) - 1] = '\0';
+            socket = HttpEstabConnection(connectHost, COVER_HTTP_PORT);
+            if (socket < 0) {
+                coverDebugLog("COVERSAVE connect failed direct=%d dns=%d host='%s' uri='%s'", directResult, socket, host, uri);
+                gCoverLastHttpResult = socket;
+                gCoverLastChunkLen = 0;
+                gCoverLastConnMode = 0;
+                gCoverLastOffset = offset;
+                gCoverLastUsedDns = 1;
+                gCoverLastStatusCode = 0;
+                gCoverLastContentLength = 0;
+                result = socket;
+                break;
+            }
+            coverDebugLog("COVERSAVE direct connect failed=%d, dns connect ok host='%s'", directResult, host);
+            gCoverLastUsedDns = 1;
+        } else if (socket < 0) {
+            coverDebugLog("COVERSAVE dns connect failed dns=%d host='%s' uri='%s'", socket, host, uri);
+            gCoverLastHttpResult = socket;
+            gCoverLastOffset = offset;
+            gCoverLastStatusCode = 0;
+            gCoverLastContentLength = 0;
+            result = socket;
+            break;
+        }
+
+        connMode = HTTP_CMODE_CLOSED;
+        length = chunkSize;
+        if (fullGet)
+            result = HttpSendGetRequest(socket, OPL_USER_AGENT, host, &connMode, NULL, uri, buffer, &length);
+        else
+            result = HttpSendGetRequestRange(socket, OPL_USER_AGENT, host, &connMode, uri, offset, offset + chunkSize - 1, buffer, &length);
+        HttpCloseConnection(socket);
+        gCoverLastHttpResult = result;
+        gCoverLastChunkLen = length;
+        gCoverLastConnMode = connMode;
+        gCoverLastOffset = offset;
+        gCoverLastStatusCode = HttpGetLastStatusCode();
+        gCoverLastContentLength = HttpGetLastContentLength();
+        gCoverLastRequestLength = HttpGetLastRequestLength();
+        gCoverLastSendLength = HttpGetLastSendLength();
+        gCoverLastSelectResult = HttpGetLastSelectResult();
+        gCoverLastRecvResult = HttpGetLastRecvResult();
+        gCoverLastSocketError = HttpGetLastSocketError();
+        memset(gCoverLastFirstBytes, 0, sizeof(gCoverLastFirstBytes));
+        if (length > 0)
+            memcpy(gCoverLastFirstBytes, buffer, length < sizeof(gCoverLastFirstBytes) ? length : sizeof(gCoverLastFirstBytes));
+        if (offset == 0)
+            coverDebugLog("COVERSAVE first chunk http=%d status=%d content=%d len=%u mode=%d", result, gCoverLastStatusCode, gCoverLastContentLength, length, connMode);
+
+        if (!fullGet && result == -EPIPE && length > 0) {
+            coverDebugLog("COVERSAVE accepting partial range chunk offset=%lu len=%u", offset, length);
+            result = 206;
+        }
+        if (result == 416 && offset > 0) {
+            result = 0;
+            break;
+        }
+        if (gCoverLastStatusCode == 404 || gCoverLastStatusCode == 403) {
+            result = -ENOENT;
+            break;
+        }
+        if (fullGet && result == 200 && length > 0) {
+            if (length < sizeof(pngSig) || memcmp(buffer, pngSig, sizeof(pngSig)) != 0) {
+                coverDebugLog("COVERSAVE invalid full png sig len=%u first=%02x%02x%02x%02x", length, length > 0 ? (unsigned char)buffer[0] : 0, length > 1 ? (unsigned char)buffer[1] : 0, length > 2 ? (unsigned char)buffer[2] : 0, length > 3 ? (unsigned char)buffer[3] : 0);
+                result = (length > 0 && buffer[0] == '<') ? -ENOENT : -EIO;
+                break;
+            }
+            result = coverWriteAll(fd, buffer, length);
+            if (result < 0)
+                coverDebugLog("COVERSAVE full write failed result=%d len=%u", result, length);
+            else
+                offset += length;
+            break;
+        }
+        if (result == 200 && offset == 0 && length >= chunkSize) {
+            coverDebugLog("COVERSAVE full response too large for chunk chunk=%d len=%u", chunkSize, length);
+            result = -EPIPE;
+            break;
+        }
+        if (!((result == 206 || (result == 200 && offset == 0)) && length > 0)) {
+            coverDebugLog("COVERSAVE bad chunk offset=%lu http=%d len=%u", offset, result, length);
+            result = result < 0 ? result : -EIO;
+            break;
+        }
+        if (offset == 0 && (length < sizeof(pngSig) || memcmp(buffer, pngSig, sizeof(pngSig)) != 0)) {
+            coverDebugLog("COVERSAVE invalid png sig len=%u first=%02x%02x%02x%02x", length, length > 0 ? (unsigned char)buffer[0] : 0, length > 1 ? (unsigned char)buffer[1] : 0, length > 2 ? (unsigned char)buffer[2] : 0, length > 3 ? (unsigned char)buffer[3] : 0);
+            result = (length > 0 && buffer[0] == '<') ? -ENOENT : -EIO;
+            break;
+        }
+
+        result = coverWriteAll(fd, buffer, length);
+        if (result < 0) {
+            coverDebugLog("COVERSAVE write failed result=%d offset=%lu len=%u", result, offset, length);
+            break;
+        }
+
+        offset += length;
+        if (result == 200 || length < chunkSize)
+            break;
+    }
+
+    if (gPS5CoverDownloadCancel)
+        result = -ECANCELED;
+    else if (offset >= COVER_IMAGE_MAX_SIZE) {
+        coverDebugLog("COVERSAVE max size reached bytes=%lu", offset);
+        result = -EFBIG;
+    }
+
+    close(fd);
+    free(buffer);
+
+    if (result == 0 && offset > 1024) {
+        coverDebugLog("COVERSAVE success bytes=%lu path='%s'", offset, path);
+        oplMarkGameCoverStatsDirty();
+    } else {
+        int removeResult = remove(path);
+        coverDebugLog("COVERSAVE failed result=%d bytes=%lu remove=%d path='%s'", result, offset, removeResult, path);
+        if (result == 0)
+            result = -EIO;
+    }
+
+    return result;
+}
+
+static int coverHasAsset(const char *prefix, const char *folder, const char *startup, const char *suffix);
+
+static int coverDownloadImageToDiskRetry(const char *url, const char *prefix, const char *folder, const char *startup, const char *suffix)
+{
+    static const struct {
+        int chunkSize;
+        const char *label;
+        int useDns;
+        int fullGet;
+    } attempts[] = {
+        {COVER_IMAGE_IOBUF_SIZE_FULL, "IP", 0, 1},
+        {COVER_IMAGE_IOBUF_SIZE_FULL, "DNS", 1, 1},
+    };
+    int i;
+    int result = -EIO;
+
+    for (i = 0; i < (int)(sizeof(attempts) / sizeof(attempts[0])) && !gPS5CoverDownloadCancel; i++) {
+        result = coverDownloadImageToDisk(url, prefix, folder, startup, suffix, attempts[i].chunkSize, attempts[i].useDns, attempts[i].fullGet);
+        if (result >= 0 && coverHasAsset(prefix, folder, startup, suffix)) {
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Image Saved...");
+            return 0;
+        }
+        if (result == -ECANCELED || result == -ENOENT)
+            return result;
+
+        DelayThread(COVER_RETRY_DELAY_US);
+    }
+
+    return result < 0 ? result : -EIO;
+}
+
+static void coverSetDownloadErrorMessage(int errorCode)
+{
+    if (errorCode == -1)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "You need to allow write permission on your shared folder to download covers.");
+    else
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Error code: %d", errorCode);
+}
+
+static int coverGameNeedsDownload(item_list_t *support, int id)
+{
+    char *prefix = support->itemGetPrefix != NULL ? support->itemGetPrefix(support) : NULL;
+    char *startup = support->itemGetStartup(support, id);
+
+    if (startup == NULL || startup[0] == '\0')
+        return 0;
+
+    return !(coverHasAsset(prefix, "ART", startup, "COV") && coverHasAsset(prefix, "LOGO", startup, "LOGO"));
+}
+
+void oplMarkGameCoverStatsDirty(void)
+{
+    gPS5CoverStatsDirty = 1;
+}
+
+void oplRefreshGameCoverStats(void)
+{
+    int mode, id, count, modeMissing;
+    item_list_t *support;
+
+    gPS5CoverTotalGames = 0;
+    gPS5CoverMissingGames = 0;
+    coverDebugLog("COVERDBG stats refresh begin");
+
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        support = list_support[mode].support;
+        if (!coverIsLocalGameSupport(support)) {
+            coverDebugLog("COVERDBG stats mode=%d skipped support=%p enabled=%d", mode, support, support != NULL ? support->enabled : -1);
+            continue;
+        }
+
+        count = support->itemGetCount(support);
+        modeMissing = 0;
+        gPS5CoverTotalGames += count;
+
+        for (id = 0; id < count; id++) {
+            if (coverGameNeedsDownload(support, id)) {
+                gPS5CoverMissingGames++;
+                modeMissing++;
+            }
+        }
+
+        coverDebugLog("COVERDBG stats mode=%d count=%d missing=%d", support->mode, count, modeMissing);
+    }
+
+    coverDebugLog("COVERDBG stats refresh end total=%d missing=%d", gPS5CoverTotalGames, gPS5CoverMissingGames);
+    gPS5CoverStatsDirty = 0;
+}
+
+void oplRefreshGameCoverStatsForSupport(item_list_t *support)
+{
+    gPS5CoverActiveSupport = support;
+
+    coverDebugLog("COVERDBG active stats refresh begin support=%p mode=%d enabled=%d priv=%p",
+        support, support != NULL ? support->mode : -1, support != NULL ? support->enabled : -1, support != NULL ? support->priv : NULL);
+
+    oplRefreshGameCoverStats();
+
+    coverDebugLog("COVERDBG active stats end total=%d queued=%d", gPS5CoverTotalGames, gPS5CoverMissingGames);
+}
+
+void oplRefreshGameCoverStatsIfNeeded(item_list_t *support)
+{
+    if (gPS5CoverStatsDirty)
+        oplRefreshGameCoverStatsForSupport(support);
+}
+
+void oplSetGameCoverActiveSupport(item_list_t *support)
+{
+    gPS5CoverActiveSupport = support;
+    gPS5CoverTotalGames = 0;
+    gPS5CoverMissingGames = 0;
+    gPS5CoverStatsDirty = 1;
+}
+
+static void oplDownloadMissingGameCovers(void)
+{
+    item_list_t *support;
+    int mode, id, count, queued, current, artResult, logoResult;
+    int downloaded = 0, saveFailed = 0, lastErrorCode = 0;
+    char *startup, *title, *prefix;
+    char artUrl[256] = {0}, logoUrl[256] = {0};
+
+    queued = 0;
+    gPS5CoverTotalGames = 0;
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        support = list_support[mode].support;
+        if (!coverIsLocalGameSupport(support) || !support->enabled)
+            continue;
+
+        count = support->itemGetCount(support);
+        gPS5CoverTotalGames += count;
+        for (id = 0; id < count; id++) {
+            if (gPS5CoverDownloadMode == PS5_COVER_DOWNLOAD_FULL || coverGameNeedsDownload(support, id))
+                queued++;
+        }
+    }
+    gPS5CoverMissingGames = queued;
+
+    gPS5CoverDownloadFailures = 0;
+    gPS5CoverDownloadCurrent = 0;
+    gPS5CoverDownloadTotal = queued;
+    gPS5CoverDownloadPercent = 0;
+    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d games need covers", queued);
+    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
+
+    if (queued <= 0) {
+        gPS5CoverDownloadPercent = 100;
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Game covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "All game covers are up to date");
+        return;
+    }
+
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Preparing Network...");
+    {
+        int netInitResult = ethLoadInitModules();
+        if (netInitResult != 0 && !ethHasUsableConfig()) {
+            gPS5CoverDownloadPercent = 100;
+            gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+            snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "PS2 has no internet connection.");
+            return;
+        }
+    }
+
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading...");
+
+    current = 0;
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        support = list_support[mode].support;
+        if (!coverIsLocalGameSupport(support) || !support->enabled)
+            continue;
+
+        count = support->itemGetCount(support);
+        for (id = 0; id < count; id++) {
+            if (gPS5CoverDownloadMode != PS5_COVER_DOWNLOAD_FULL && !coverGameNeedsDownload(support, id))
+                continue;
+
+            if (gPS5CoverDownloadCancel) {
+                gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
+                return;
+            }
+
+            startup = support->itemGetStartup(support, id);
+            title = support->itemGetName != NULL ? support->itemGetName(support, id) : startup;
+            if (startup == NULL || startup[0] == '\0')
+                continue;
+            if (title == NULL || title[0] == '\0')
+                title = startup;
+
+            prefix = support->itemGetPrefix != NULL ? support->itemGetPrefix(support) : NULL;
+            {
+                int needArt = (gPS5CoverDownloadMode == PS5_COVER_DOWNLOAD_FULL) || !coverHasAsset(prefix, "ART", startup, "COV");
+                int needLogo = (gPS5CoverDownloadMode == PS5_COVER_DOWNLOAD_FULL) || !coverHasAsset(prefix, "LOGO", startup, "LOGO");
+
+                if (!needArt && !needLogo)
+                    continue;
+            }
+
+            current++;
+            gPS5CoverDownloadCurrent = current;
+            gPS5CoverDownloadPercent = (current - 1) * 100 / queued;
+            coverSetShortTitle(title);
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading...");
+
+            artUrl[0] = '\0';
+            logoUrl[0] = '\0';
+            if (gPS5CoverDownloadCancel) {
+                gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
+                return;
+            }
+
+            snprintf(artUrl, sizeof(artUrl), "http://%s/art/%s_COV.png", COVER_HTTP_HOST, startup);
+            snprintf(logoUrl, sizeof(logoUrl), "http://%s/logo/%s_LOGO.png", COVER_HTTP_HOST, startup);
+
+            if (gPS5CoverDownloadMode == PS5_COVER_DOWNLOAD_FULL || !coverHasAsset(prefix, "ART", startup, "COV")) {
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading...");
+                artResult = coverDownloadImageToDiskRetry(artUrl, prefix, "ART", startup, "COV");
+                if (artResult == -ECANCELED || gPS5CoverDownloadCancel) {
+                    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
+                    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
+                    return;
+                }
+
+                if (artResult < 0 || !coverHasAsset(prefix, "ART", startup, "COV")) {
+                    gPS5CoverDownloadFailures++;
+                    saveFailed++;
+                    lastErrorCode = artResult;
+                    coverSetDownloadErrorMessage(artResult);
+                    continue;
+                }
+            }
+
+            if (gPS5CoverDownloadMode == PS5_COVER_DOWNLOAD_FULL || !coverHasAsset(prefix, "LOGO", startup, "LOGO")) {
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Downloading...");
+                logoResult = coverDownloadImageToDiskRetry(logoUrl, prefix, "LOGO", startup, "LOGO");
+                if (logoResult == -ECANCELED || gPS5CoverDownloadCancel) {
+                    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
+                    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
+                    return;
+                }
+            }
+
+            if (coverHasAsset(prefix, "ART", startup, "COV")) {
+                downloaded++;
+                snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Image Saved...");
+            }
+        }
+    }
+
+    if (downloaded > 0)
+        ps5ClearCoverCache();
+
+    gPS5CoverDownloadPercent = 100;
+    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_DONE;
+    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download complete");
+    if (saveFailed > 0 && downloaded == 0) {
+        if (lastErrorCode == -1)
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "No covers downloaded\nYou need to allow write permission on your shared folder to download covers.");
+        else
+            snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "No covers downloaded\nError code: %d", lastErrorCode);
+    }
+    else if (saveFailed > 0)
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded\n%d covers are not available. Request them on Instagram @irfanmatheena",
+            downloaded, queued, saveFailed);
+    else
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "%d/%d covers downloaded", downloaded, queued);
+}
+
+static void oplCoverDownloadThread(void *arg)
+{
+    (void)arg;
+
+    oplDownloadMissingGameCovers();
+    gCoverTestThreadRunning = 0;
+    gCoverTestThreadId = 0;
+    ExitDeleteThread();
+}
+
+void oplStartGameCoverDownload(int downloadMode)
+{
+    int result, mode, hasLocalSupport = 0;
+
+    if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP || gCoverTestThreadRunning)
+        return;
+
+    gPS5CoverDownloadCancel = 0;
+    gPS5CoverDownloadCurrent = 0;
+    gPS5CoverDownloadTotal = 0;
+    gPS5CoverDownloadPercent = 0;
+    gPS5CoverDownloadFailures = 0;
+    gPS5CoverDownloadMode = downloadMode;
+
+    for (mode = 0; mode < MODE_COUNT; mode++) {
+        item_list_t *support = list_support[mode].support;
+        if (coverIsLocalGameSupport(support) && support->enabled) {
+            hasLocalSupport = 1;
+            break;
+        }
+    }
+
+    if (!hasLocalSupport) {
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        gPS5CoverDownloadTotal = 0;
+        snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Open a local game list first");
+        return;
+    }
+
+    gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_WIP;
+    snprintf(gPS5CoverDownloadTitle, sizeof(gPS5CoverDownloadTitle), "Download Covers");
+    snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Scanning games...");
+
+    gCoverTestThread.attr = 0;
+    gCoverTestThread.stack_size = COVER_TEST_THREAD_STACK_SIZE;
+    gCoverTestThread.gp_reg = &_gp;
+    gCoverTestThread.func = &oplCoverDownloadThread;
+    gCoverTestThread.stack = gCoverTestThreadStack;
+    gCoverTestThread.initial_priority = 32;
+    gCoverTestThread.option = 0;
+
+    gCoverTestThreadRunning = 1;
+    result = CreateThread(&gCoverTestThread);
+    if (result < 0) {
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        gPS5CoverDownloadFailures = 1;
+        gCoverTestThreadRunning = 0;
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not start download");
+        return;
+    }
+
+    gCoverTestThreadId = result;
+    result = StartThread(gCoverTestThreadId, NULL);
+    if (result < 0) {
+        DeleteThread(gCoverTestThreadId);
+        gCoverTestThreadId = 0;
+        gCoverTestThreadRunning = 0;
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_FAIL;
+        gPS5CoverDownloadFailures = 1;
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Could not start download");
+    }
+}
+
+void oplAbortGameCoverDownload(void)
+{
+    if (gPS5CoverDownloadStatus == PS5_COVER_DOWNLOAD_WIP) {
+        gPS5CoverDownloadCancel = 1;
+        gPS5CoverDownloadStatus = PS5_COVER_DOWNLOAD_CANCELLED;
+        snprintf(gPS5CoverDownloadUrl, sizeof(gPS5CoverDownloadUrl), "Download cancelled");
+        if (gCoverTestThreadRunning && gCoverTestThreadId > 0) {
+            TerminateThread(gCoverTestThreadId);
+            DeleteThread(gCoverTestThreadId);
+            gCoverTestThreadId = 0;
+            gCoverTestThreadRunning = 0;
+        }
+    }
+}
+
 // ----------------------------------------------------------
 // -------------------- NBD SRV Support ---------------------
 // ----------------------------------------------------------
@@ -1561,7 +2860,6 @@ static int loadLwnbdSvr(void)
 
     // block all io ops, wait for the ones still running to finish
     ioBlockOps(1);
-    guiExecDeferredOps();
 
     // Deinitialize all support without shutting down the HDD unit.
     deinitAllSupport(NO_EXCEPTION, IO_MODE_SELECTED_ALL);
@@ -1658,14 +2956,20 @@ static void reset(void)
     mcInit(MC_TYPE_XMC);
 }
 
-static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected)
+static void moduleCleanup(opl_io_module_t *mod, int exception, int modeSelected, int selectedBdmHdd)
 {
     if (!mod->support)
         return;
 
     // Shutdown if not required anymore.
     if ((mod->support->mode != modeSelected) && (modeSelected != IO_MODE_SELECTED_ALL)) {
-        if (mod->support->itemShutdown)
+        if ((modeSelected >= BDM_MODE && modeSelected < ETH_MODE) && (mod->support->mode >= BDM_MODE && mod->support->mode < ETH_MODE)) {
+            if (mod->support->itemCleanUp)
+                mod->support->itemCleanUp(mod->support, exception);
+        } else if (mod->support->mode == HDD_MODE && selectedBdmHdd) {
+            if (mod->support->itemCleanUp)
+                mod->support->itemCleanUp(mod->support, exception);
+        } else if (mod->support->itemShutdown)
             mod->support->itemShutdown(mod->support);
     } else {
         if (mod->support->itemCleanUp)
@@ -1679,7 +2983,6 @@ void deinit(int exception, int modeSelected)
 {
     // block all io ops, wait for the ones still running to finish
     ioBlockOps(1);
-    guiExecDeferredOps();
 
 #ifdef PADEMU
     ds34usb_reset();
@@ -1736,7 +3039,7 @@ static void setDefaults(void)
 
     ps2_ip_use_dhcp = 1;
     gETHOpMode = ETH_OP_MODE_AUTO;
-    gPCShareAddressIsNetBIOS = 1;
+    gPCShareAddressIsNetBIOS = 0;
     gPCShareNBAddress[0] = '\0';
     ps2_ip[0] = 192;
     ps2_ip[1] = 168;
@@ -1793,7 +3096,7 @@ static void setDefaults(void)
 
     gBDMStartMode = START_MODE_AUTO;
     gHDDStartMode = START_MODE_AUTO;
-    gETHStartMode = START_MODE_AUTO;
+    gETHStartMode = START_MODE_DISABLED;
     gAPPStartMode = START_MODE_AUTO;
 
     gEnableILK = 0;
@@ -1878,7 +3181,7 @@ static void deferredInit(void)
         }
     }
 
-    if (list_support[device].support && list_support[device].menuItem.current) {
+    if (list_support[device].support && (list_support[device].menuItem.current || gPS5Mode)) {
         id = guiOpCreate(GUI_OP_SELECT_MENU);
         id->menu.menu = &list_support[device].menuItem;
         guiDeferUpdate(id);

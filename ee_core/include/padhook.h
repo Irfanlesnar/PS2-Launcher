@@ -87,9 +87,13 @@ typedef struct
 #define IGR_PAD_STABLE_V2 0x01
 
 #define IGR_COMBO_R1_L1_R2_L2  0xF0
+#define IGR_COMBO_NONE         0xFF
+#define IGR_COMBO_SELECT       0xFE
 #define IGR_COMBO_START_SELECT 0xF6
 #define IGR_COMBO_R3_L3        0xF9
 #define IGR_COMBO_UP           0xEF
+
+#define IGR_SELECT_HOLD_VBLANKS 250
 
 #define NB_PADOPEN_PATTERN 7
 

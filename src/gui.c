@@ -974,6 +974,15 @@ int guiGetOpCompleted(int opid)
 
 int guiDeferUpdate(struct gui_update_t *op)
 {
+    if (op != NULL && op->type == GUI_OP_APPEND_MENU && op->submenu.text != NULL) {
+        char *textCopy = (char *)malloc(strlen(op->submenu.text) + 1);
+        if (textCopy != NULL) {
+            strcpy(textCopy, op->submenu.text);
+            op->submenu.text = textCopy;
+        } else
+            op->submenu.text = NULL;
+    }
+
     WaitSema(gSemaId);
 
     struct gui_update_list_t *up = (struct gui_update_list_t *)malloc(sizeof(struct gui_update_list_t));
@@ -1012,6 +1021,8 @@ static void guiHandleOp(struct gui_update_t *item)
             wasEmpty = !item->menu.menu->submenu;
             result = submenuAppendItem(item->menu.subMenu, item->submenu.icon_id,
                                        item->submenu.text, item->submenu.id, item->submenu.text_id);
+            free(item->submenu.text);
+            item->submenu.text = NULL;
 
             item->menu.menu->submenu = *item->menu.subMenu;
 
@@ -1021,18 +1032,20 @@ static void guiHandleOp(struct gui_update_t *item)
             } else if (item->submenu.selected) { // remember last played game feature
                 item->menu.menu->current = result;
                 item->menu.menu->pagestart = result;
-                item->menu.menu->remindLast = 1;
+                if (item->submenu.selected == 1 && !gPS5Mode) {
+                    item->menu.menu->remindLast = 1;
 
-                // Last Played Auto Start
-                if ((gAutoStartLastPlayed) && !(KeyPressedOnce))
-                    DisableCron = 0; // Release Auto Start Last Played counter
+                    // Last Played Auto Start
+                    if ((gAutoStartLastPlayed) && !(KeyPressedOnce))
+                        DisableCron = 0; // Release Auto Start Last Played counter
+                }
             }
 
             break;
 
         case GUI_OP_SELECT_MENU:
             list = item->menu.menu ? item->menu.menu->userdata : NULL;
-            if (list && list->mode != APP_MODE && !item->menu.menu->current)
+            if (!gPS5Mode && list && list->mode != APP_MODE && !item->menu.menu->current)
                 break;
 
             menuSetSelectedItem(item->menu.menu);
@@ -1109,12 +1122,12 @@ static void guiDrawBusy(int alpha)
             int w = gTheme->loadingIcon->width;
             int h = gTheme->loadingIcon->height;
             if (gPS5Mode) {
-                w = w * 0.65f;
-                h = h * 0.65f;
+                w = 14;
+                h = 14;
                 // Position loader spinner exactly at bottom-right with 20px margin using dynamic screen width and height
                 // Since rmDrawRotatedPixmap scales cx with iAspectWidth / 4, we multiply by 4 / rmGetAspectWidth() to keep it perfectly at the edge in widescreen!
                 cx = (screenWidth - 20 - (w / 2)) * 4 / rmGetAspectWidth();
-                cy = screenHeight - 20 - (h / 2);
+                cy = screenHeight - 20;
             }
             rmDrawRotatedPixmap(texture, cx, cy, w, h, angle, mycolor);
         }
@@ -1293,9 +1306,9 @@ static int cdirection(unsigned char a, unsigned char b)
         return 1;
 }
 
-u8 gPS5BgColorR = 16;
-u8 gPS5BgColorG = 16;
-u8 gPS5BgColorB = 16;
+u8 gPS5BgColorR = 0;
+u8 gPS5BgColorG = 0;
+u8 gPS5BgColorB = 0;
 
 void guiDrawBGPlasma()
 {
@@ -1351,7 +1364,7 @@ int guiDrawIconAndText(int iconId, int textId, int font, int x, int y, u64 color
     int w = 0;
     int h = 20;
 
-    if (iconTex) {
+    if (iconTex && iconTex->Height > 0) {
         w = (iconTex->Width * 20) / iconTex->Height;
     }
 
@@ -1376,10 +1389,11 @@ int guiAlignMenuHints(menu_hint_item_t *hint, int font, int width)
 
     for (; hint; hint = hint->next) {
         GSTEXTURE *iconTex = thmGetTexture(hint->icon_id);
-        w = (iconTex->Width * 20) / iconTex->Height;
+        w = (iconTex && iconTex->Height > 0) ? (iconTex->Width * 20) / iconTex->Height : 0;
         char *text = _l(hint->text_id);
 
-        x -= rmWideScale(w) + 2;
+        if (w > 0)
+            x -= rmWideScale(w) + 2;
         x -= rmUnScaleX(fntCalcDimensions(font, text));
         if (hint->next != NULL)
             x -= width;
@@ -1398,10 +1412,11 @@ int guiAlignSubMenuHints(int hintCount, int *textID, int *iconID, int font, int 
 
     for (i = 0; i < hintCount; i++) {
         GSTEXTURE *iconTex = thmGetTexture(iconID[i]);
-        w = (iconTex->Width * 20) / iconTex->Height;
+        w = (iconTex && iconTex->Height > 0) ? (iconTex->Width * 20) / iconTex->Height : 0;
         char *text = _l(textID[i]);
 
-        x -= rmWideScale(w) + 2;
+        if (w > 0)
+            x -= rmWideScale(w) + 2;
         x -= rmUnScaleX(fntCalcDimensions(font, text));
         if (i != (hintCount - 1))
             x -= width;
@@ -1488,7 +1503,7 @@ static void guiDrawOverlays()
 #endif
 
     // Last Played Auto Start
-    if (!pending && DisableCron == 0 && endIntro) {
+    if (!gPS5Mode && !pending && DisableCron == 0 && endIntro) {
         if (CronStart == 0) {
             CronStart = clock() / CLOCKS_PER_SEC;
         } else {
@@ -1555,8 +1570,6 @@ static void guiShow()
 void guiIntroLoop(void)
 {
     int greetingAlpha = 0x80;
-    const int fadeFrameCount = 0x80 / 2;
-    const int fadeDuration = (fadeFrameCount * 1000) / 55; // Average between 50 and 60 fps
     clock_t tFadeDelayEnd = 0;
 
     while (!endIntro) {
@@ -1570,7 +1583,7 @@ void guiIntroLoop(void)
 
         // Initialize boot sound (Disabled to keep boot silent and fast)
         if (gInitComplete && !tFadeDelayEnd) {
-            tFadeDelayEnd = clock();
+            tFadeDelayEnd = clock() + (CLOCKS_PER_SEC * 2);
         }
 
         if (gInitComplete && clock() >= tFadeDelayEnd)
@@ -1678,6 +1691,7 @@ void guiUpdateScreenScale(void)
 int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
 {
     int terminate = 0;
+    int ps5ConfirmFocus = 1; // 1 = Yes, 0 = No
 
     sfxPlay(SFX_MESSAGE);
 
@@ -1688,8 +1702,16 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
 
         extern int gPS5Mode;
         if (gPS5Mode) {
-            if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE))
+            if (addAccept) {
+                if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT))
+                    ps5ConfirmFocus = !ps5ConfirmFocus;
+                if (getKeyOn(gSelectButton))
+                    terminate = ps5ConfirmFocus ? 2 : 1;
+                else if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE))
+                    terminate = 1;
+            } else if (getKeyOn(KEY_CROSS) || getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE)) {
                 terminate = 1;
+            }
         } else {
             if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
                 terminate = 1;
@@ -1703,72 +1725,53 @@ int guiMsgBox(const char *text, int addAccept, struct UIItem *ui)
             guiShow();
 
         if (gPS5Mode) {
-            // Draw stunning modern Material Design modal dialog!
-            // 1. Semi-transparent dark overlay for background focus
             rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
 
-            // 2. Dialog box: W=320, H=110, Center X=160, Y=185
-            int dlgW = 320;
-            int dlgH = 110;
-            int dlgX = (screenWidth - dlgW) / 2;
-            int dlgY = (screenHeight - dlgH) / 2;
-
-            // Premium #0E0E0E extremely dark grey rounded background card with 5px corner radius
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
-
-            // 3. Message Text inside the card
-            // If the message is the save notification, we display "Save Successful"!
             const char *displayMsg = text;
             if (strstr(text, "saved") != NULL || strstr(text, "Saved") != NULL) {
                 displayMsg = "Save Successful";
             }
-            
-            // Wrap text into multiple lines (up to 4 lines, max 38 chars each) to prevent overflow
-            char lines[4][64];
-            int lineCount = 0;
-            memset(lines, 0, sizeof(lines));
 
-            const char *src = displayMsg;
-            int srcLen = strlen(src);
-            int start = 0;
+            int dlgW = screenWidth - 96;
+            if (dlgW > 420)
+                dlgW = 420;
+            if (dlgW < 280)
+                dlgW = screenWidth - 24;
+            int textW = dlgW - 48;
+            char bodyText[256];
+            strncpy(bodyText, displayMsg, sizeof(bodyText) - 1);
+            bodyText[sizeof(bodyText) - 1] = '\0';
+            fntFitString(gTheme->fonts[0], bodyText, textW);
 
-            while (start < srcLen && lineCount < 4) {
-                int end = start + 38;
-                if (end >= srcLen) {
-                    end = srcLen;
-                } else {
-                    // Backtrack to the last space to avoid breaking words
-                    int lastSpace = end;
-                    while (lastSpace > start && src[lastSpace] != ' ') {
-                        lastSpace--;
-                    }
-                    if (lastSpace > start) {
-                        end = lastSpace;
-                    }
-                }
-
-                // Copy chunk
-                int chunkLen = end - start;
-                if (chunkLen > 63) chunkLen = 63;
-                strncpy(lines[lineCount], &src[start], chunkLen);
-                lines[lineCount][chunkLen] = '\0';
-                lineCount++;
-
-                // Skip spaces
-                start = end;
-                while (start < srcLen && src[start] == ' ') {
-                    start++;
-                }
+            int bodyLines = 1;
+            char *linePtr;
+            for (linePtr = bodyText; *linePtr; linePtr++) {
+                if (*linePtr == '\n')
+                    bodyLines++;
             }
 
-            // Render wrapped text line-by-line, left-aligned at dlgX + 25 (shifted up)
-            int j;
-            for (j = 0; j < lineCount; j++) {
-                fntRenderString(gTheme->fonts[0], dlgX + 25, dlgY + 25 + (j * 18), ALIGN_LEFT, 0.70f, 0.70f, lines[j], GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-            }
+            int topPad = 28;
+            int actionGap = 42;
+            int bottomPad = 30;
+            int dlgH = topPad + bodyLines * MENU_ITEM_HEIGHT + actionGap + bottomPad;
+            int dlgX = (screenWidth - dlgW) / 2;
+            int dlgY = (screenHeight - dlgH) / 2;
+            int textX = dlgX + 24;
+            int bodyY = dlgY + topPad;
+            int buttonY = dlgY + dlgH - bottomPad;
 
-            // 4. White Close Text at the right bottom (no button)
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 25, dlgY + dlgH - 25, ALIGN_RIGHT | ALIGN_VCENTER, 0.70f, 0.70f, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
+
+            fntRenderString(gTheme->fonts[0], textX, bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            if (addAccept) {
+                int yesX = dlgX + dlgW - 152;
+                int noX = dlgX + dlgW - 76;
+                fntRenderString(ps5ConfirmFocus ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], yesX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+                fntRenderString(!ps5ConfirmFocus ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], noX, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", !ps5ConfirmFocus ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x70));
+            } else {
+                fntRenderString(thmGetPS5SemiBoldFont(), dlgX + dlgW - 42, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Close", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            }
 
         } else {
             rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
@@ -1822,8 +1825,11 @@ void guiRenderTextScreen(const char *message)
     guiStartFrame();
 
     if (gPS5Mode) {
-        // Stay in a pure solid pitch-black screen without showing any loading message or overlays
+        int waitFont = thmGetPS5SemiBoldFont();
         rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0xFF));
+        rmDrawRoundedRect((screenWidth - 360) / 2 - 1, (screenHeight - 120) / 2 - 1, 362, 122, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+        rmDrawRoundedRect((screenWidth - 360) / 2, (screenHeight - 120) / 2, 360, 120, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
+        fntRenderString(waitFont, screenWidth >> 1, screenHeight >> 1, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, message, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
     } else {
         guiShow();
         rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
@@ -1850,6 +1856,105 @@ void guiWarning(const char *text, int count)
     guiEndFrame();
 
     delay(count);
+}
+
+int guiConfirmVideoModeChange(void)
+{
+    int terminate = 0;
+    int focusYes = 0;
+
+    sfxPlay(SFX_MESSAGE);
+
+    while (!terminate) {
+        guiStartFrame();
+
+        readPads();
+
+        extern int gPS5Mode;
+        if (gPS5Mode) {
+            if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                focusYes = !focusYes;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                terminate = focusYes ? 2 : 1;
+            } else if (getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_TRIANGLE)) {
+                terminate = 1;
+            }
+        } else {
+            if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE))
+                terminate = 1;
+            else if (getKeyOn(gSelectButton))
+                terminate = 2;
+        }
+
+        guiShow();
+
+        if (gPS5Mode) {
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
+
+            int dlgW = screenWidth - 96;
+            if (dlgW > 420)
+                dlgW = 420;
+            if (dlgW < 280)
+                dlgW = screenWidth - 24;
+            int textW = dlgW - 48;
+            char bodyText[96] = "If the screen goes black, wait 10 seconds and it will revert.";
+            fntFitString(gTheme->fonts[0], bodyText, textW);
+
+            int bodyLines = 1;
+            char *linePtr;
+            for (linePtr = bodyText; *linePtr; linePtr++) {
+                if (*linePtr == '\n')
+                    bodyLines++;
+            }
+
+            int topPad = 28;
+            int titleY = topPad;
+            int bodyY = titleY + MENU_ITEM_HEIGHT + 10;
+            int actionGap = 42;
+            int bottomPad = 30;
+            int dlgH = bodyY + bodyLines * MENU_ITEM_HEIGHT + actionGap + bottomPad;
+            int dlgX = (screenWidth - dlgW) / 2;
+            int dlgY = (screenHeight - dlgH) / 2;
+            int textX = dlgX + 24;
+            int buttonY = dlgY + dlgH - bottomPad;
+
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
+
+            fntRenderString(gTheme->fonts[0], textX, dlgY + titleY, ALIGN_LEFT, 0, 0, "Change video output now?", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x60));
+
+            u64 yesColor = focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
+            u64 cancelColor = !focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
+
+            fntRenderString(focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
+            fntRenderString(!focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Cancel", cancelColor);
+        } else {
+            rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+
+            rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
+            rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, (gTheme->usedHeight >> 1) - 24, ALIGN_CENTER, 0, 0, "Change video output now?", gTheme->textColor);
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, gTheme->usedHeight >> 1, ALIGN_CENTER, 0, 0, "If the screen goes black,", gTheme->textColor);
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, (gTheme->usedHeight >> 1) + 24, ALIGN_CENTER, 0, 0, "wait 10 seconds to revert.", gTheme->textColor);
+            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
+            guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+        }
+
+        guiEndFrame();
+    }
+
+    if (terminate == 1)
+        sfxPlay(SFX_CANCEL);
+    else
+        sfxPlay(SFX_CONFIRM);
+
+    readPads();
+
+    return terminate - 1;
 }
 
 int guiConfirmVideoMode(void)
@@ -1895,35 +2000,53 @@ int guiConfirmVideoMode(void)
         guiShow();
 
         if (gPS5Mode) {
-            // Draw stunning modern Material Design modal dialog!
-            // 1. Semi-transparent dark overlay for background focus
             rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x60));
 
-            // 2. Dialog box: W=320, H=115, Center X=160, Y=182
-            int dlgW = 320;
-            int dlgH = 115;
+            int dlgW = screenWidth - 96;
+            if (dlgW > 420)
+                dlgW = 420;
+            if (dlgW < 280)
+                dlgW = screenWidth - 24;
+            int textW = dlgW - 48;
+            char bodyText[96] = "If you can see this dialog, select Yes.";
+            fntFitString(gTheme->fonts[0], bodyText, textW);
+
+            int bodyLines = 1;
+            char *linePtr;
+            for (linePtr = bodyText; *linePtr; linePtr++) {
+                if (*linePtr == '\n')
+                    bodyLines++;
+            }
+
+            char timerStr[64];
+            int secondsLeft = (int)((timeEnd - clock()) / CLOCKS_PER_SEC + 1);
+            if (secondsLeft < 0)
+                secondsLeft = 0;
+            snprintf(timerStr, sizeof(timerStr), "Reverting in %d seconds...", secondsLeft);
+
+            int topPad = 28;
+            int timerGap = 10;
+            int actionGap = 42;
+            int bottomPad = 30;
+            int bodyY = topPad;
+            int timerY = bodyY + bodyLines * MENU_ITEM_HEIGHT + timerGap;
+            int dlgH = timerY + MENU_ITEM_HEIGHT + actionGap + bottomPad;
             int dlgX = (screenWidth - dlgW) / 2;
             int dlgY = (screenHeight - dlgH) / 2;
+            int textX = dlgX + 24;
+            int buttonY = dlgY + dlgH - bottomPad;
 
-            // Premium #0E0E0E extremely dark grey rounded background card
-            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 5, GS_SETREG_RGBA(0x0E, 0x0E, 0x0E, 0x7A));
+            rmDrawRoundedRect(dlgX - 1, dlgY - 1, dlgW + 2, dlgH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(dlgX, dlgY, dlgW, dlgH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
 
-            // 3. Message Text inside the card (balanced top padding)
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW / 2, dlgY + 25, ALIGN_CENTER, 0.70f, 0.70f, "If you can see this dialog tap Yes.", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gTheme->fonts[0], textX, dlgY + bodyY, ALIGN_LEFT, textW, bodyLines * MENU_ITEM_HEIGHT, bodyText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gTheme->fonts[0], textX, dlgY + timerY, ALIGN_LEFT, textW, MENU_ITEM_HEIGHT, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));
 
-            // 4. Timer/revert countdown message
-            int secondsLeft = (int)((timeEnd - clock()) / CLOCKS_PER_SEC + 1);
-            if (secondsLeft < 0) secondsLeft = 0;
-            char timerStr[64];
-            snprintf(timerStr, sizeof(timerStr), "Reverting in %d seconds...", secondsLeft);
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW / 2, dlgY + 50, ALIGN_CENTER, 0.65f, 0.65f, timerStr, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x3C));
-
-            // 5. Render YES / NO options at bottom of card
             u64 yesColor = focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
             u64 noColor = !focusYes ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x24);
 
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 85, dlgY + 88, ALIGN_CENTER | ALIGN_VCENTER, 0.75f, 0.75f, "Yes", yesColor);
-            fntRenderString(gTheme->fonts[0], dlgX + dlgW - 35, dlgY + 88, ALIGN_CENTER | ALIGN_VCENTER, 0.75f, 0.75f, "No", noColor);
+            fntRenderString(focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 140, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "Yes", yesColor);
+            fntRenderString(!focusYes ? thmGetPS5SemiBoldFont() : gTheme->fonts[0], dlgX + dlgW - 62, buttonY, ALIGN_CENTER | ALIGN_VCENTER, 0, 0, "No", noColor);
 
         } else {
             rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);

@@ -22,6 +22,10 @@ void ethDisplayErrorStatus(void);    // Displays the current error status (if an
 int ethGetNetConfig(u8 *ip_address, u8 *netmask, u8 *gateway);
 int ethApplyConfig(void);
 int ethGetDHCPStatus(void);
+int ethCheckInternet(void);
+int ethHasUsableConfig(void);
+int ethIsNetworkLinkUp(void);
+void ethClearGameList(void);
 item_list_t *ethGetObject(int initOnly);
 
 #endif
