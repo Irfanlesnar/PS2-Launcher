@@ -814,8 +814,14 @@ void sysLaunchLoaderElf(const char *filename, const char *mode_str, int size_cdv
     ethGetNetConfig(local_ip_address, local_netmask, local_gateway);
     // AddHistoryRecordUsingFullPath is now called in launch functions before deinit() to avoid Sif/fileXio RPC shutdown crashes!
 
-    if (gExitPath[0] == '\0')
-        strncpy(gExitPath, "Browser", sizeof(gExitPath));
+    if (gExitPath[0] == '\0' || !strncmp(gExitPath, "Browser", sizeof(gExitPath))) {
+        if (gBootPath[0] != '\0') {
+            strncpy(gExitPath, gBootPath, sizeof(gExitPath) - 1);
+            gExitPath[sizeof(gExitPath) - 1] = '\0';
+        } else {
+            strncpy(gExitPath, "Browser", sizeof(gExitPath));
+        }
+    }
 
     // Disable sound effects via libsd, to prevent some games with improper initialization from inadvertently using digital effect settings from other software.
     LOG("[CLEAREFFECTS]:\n");

@@ -184,6 +184,7 @@ extern int gPadMacroSettings;
 extern int gScrollSpeed;
 // Exit path
 extern char gExitPath[256];
+extern char gBootPath[256];
 // Enable Debug Colors
 extern int gEnableDebug;
 

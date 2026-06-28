@@ -459,6 +459,7 @@ int gPadMacroSettings;
 #endif
 int gScrollSpeed;
 char gExitPath[256];
+char gBootPath[256];
 int gEnableDebug;
 int gPS2Logo;
 int gDefaultDevice;
@@ -3383,6 +3384,11 @@ int main(int argc, char *argv[])
     PREINIT_LOG("OPL GUI start!\n");
 
     ChangeThreadPriority(GetThreadId(), 31);
+
+    if (argc > 0 && argv[0] != NULL && argv[0][0] != '\0') {
+        strncpy(gBootPath, argv[0], sizeof(gBootPath) - 1);
+        gBootPath[sizeof(gBootPath) - 1] = '\0';
+    }
 
     // reset, load modules
     reset();
