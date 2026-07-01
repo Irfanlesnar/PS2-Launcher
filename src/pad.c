@@ -7,6 +7,7 @@
 #include "include/opl.h"
 #include "include/pad.h"
 #include "include/ioman.h"
+#include "include/guigame.h"
 #include <libpad.h>
 #include <timer.h>
 #include <time.h>
@@ -47,6 +48,14 @@ static int xboxusb_init(void)
 
 static int xboxusb_get_data(u8 *data)
 {
+    memset(xboxusb_rpcbuf, 0, sizeof(xboxusb_rpcbuf));
+    xboxusb_rpcbuf[0] = 0xFF;
+    xboxusb_rpcbuf[1] = 0xFF;
+    xboxusb_rpcbuf[2] = 0x7F;
+    xboxusb_rpcbuf[3] = 0x7F;
+    xboxusb_rpcbuf[4] = 0x7F;
+    xboxusb_rpcbuf[5] = 0x7F;
+
     if (!xboxusb_init())
         return 0;
 
@@ -326,6 +335,9 @@ static int readXboxPad(void)
 {
     struct padButtonStatus buttons;
     u32 newpdata;
+
+    if (guiGameGetPadEmuGlobalController() != 3)
+        return 0;
 
     if (!xboxusb_get_data((u8 *)&buttons.btns))
         return 0;
