@@ -16,4 +16,5 @@ int ds34usb_set_bdaddr(int port, u8 *bdaddr);
 int ds34usb_set_rumble(int port, u8 lrum, u8 rrum);
 int ds34usb_set_led(int port, u8 led);
 int ds34usb_get_data(int port, u8 *data);
+int ds34usb_get_raw_report(int port, u8 *data);
 int ds34usb_reset();

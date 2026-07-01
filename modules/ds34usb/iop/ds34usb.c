@@ -92,6 +92,9 @@ int usb_probe(int devId)
     if (device->idVendor == DS34_VID && (device->idProduct == DS3_PID || device->idProduct == DS4_PID || device->idProduct == DS4_PID_SLIM))
         return 1;
 
+    if (device->idVendor == XBOX_VID && device->idProduct == XBOX_ONE_PID)
+        return 1;
+
     return 0;
 }
 
@@ -127,7 +130,17 @@ int usb_connect(int devId)
     config = (UsbConfigDescriptor *)UsbGetDeviceStaticDescriptor(devId, device, USB_DT_CONFIG);
     interface = (UsbInterfaceDescriptor *)((char *)config + config->bLength);
 
-    if (device->idProduct == DS3_PID) {
+    ds34pad[pad].vid = device->idVendor;
+    ds34pad[pad].pid = device->idProduct;
+    ds34pad[pad].raw_report_len = 0;
+    ds34pad[pad].raw_ep_addr = 0;
+    ds34pad[pad].raw_packet_size = 0;
+    mips_memset(ds34pad[pad].raw_data, 0, sizeof(ds34pad[pad].raw_data));
+
+    if (device->idVendor == XBOX_VID && device->idProduct == XBOX_ONE_PID) {
+        ds34pad[pad].type = XBOX;
+        epCount = interface->bNumEndpoints ? interface->bNumEndpoints - 1 : 20;
+    } else if (device->idProduct == DS3_PID) {
         ds34pad[pad].type = DS3;
         epCount = interface->bNumEndpoints - 1;
     } else {
@@ -141,6 +154,8 @@ int usb_connect(int devId)
         if (endpoint->bmAttributes == USB_ENDPOINT_XFER_INT) {
             if ((endpoint->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_IN && ds34pad[pad].interruptEndp < 0) {
                 ds34pad[pad].interruptEndp = UsbOpenEndpointAligned(devId, endpoint);
+                ds34pad[pad].raw_ep_addr = endpoint->bEndpointAddress;
+                ds34pad[pad].raw_packet_size = (unsigned short int)endpoint->wMaxPacketSizeHB << 8 | endpoint->wMaxPacketSizeLB;
                 DPRINTF("DS34USB: register Event endpoint id =%i addr=%02X packetSize=%i\n", ds34pad[pad].interruptEndp, endpoint->bEndpointAddress, (unsigned short int)endpoint->wMaxPacketSizeHB << 8 | endpoint->wMaxPacketSizeLB);
             }
             if ((endpoint->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_OUT && ds34pad[pad].outEndp < 0) {
@@ -153,7 +168,7 @@ int usb_connect(int devId)
 
     } while (epCount--);
 
-    if (ds34pad[pad].interruptEndp < 0 || ds34pad[pad].outEndp < 0) {
+    if (ds34pad[pad].interruptEndp < 0 || (ds34pad[pad].type != XBOX && ds34pad[pad].outEndp < 0)) {
         usb_release(pad);
         return 1;
     }
@@ -233,7 +248,11 @@ static void usb_config_set(int result, int count, void *arg)
 
     ds34pad[pad].status |= DS34USB_STATE_CONFIGURED;
 
-    if (ds34pad[pad].type == DS3) {
+    if (ds34pad[pad].type == XBOX) {
+        ds34pad[pad].status |= DS34USB_STATE_RUNNING;
+        SignalSema(ds34pad[pad].sema);
+        return;
+    } else if (ds34pad[pad].type == DS3) {
         DS3USB_init(pad);
         DelayThread(10000);
         led[0] = led_patterns[pad][1];
@@ -409,6 +428,9 @@ static int LEDRumble(u8 *led, u8 lrum, u8 rrum, int pad)
 {
     int ret = 0;
 
+    if (ds34pad[pad].type == XBOX)
+        return 0;
+
     PollSema(ds34pad[pad].cmd_sema);
 
     mips_memset(usb_buf, 0, sizeof(usb_buf));
@@ -542,8 +564,12 @@ void ds34usb_get_data(char *dst, int size, int port)
 
     if (ret == USB_RC_OK) {
         TransferWait(ds34pad[port].sema);
-        if (!usb_resulCode)
-            readReport(usb_buf, port);
+        if (!usb_resulCode) {
+            ds34pad[port].raw_report_len = MAX_BUFFER_SIZE;
+            mips_memcpy(ds34pad[port].raw_data, usb_buf, MAX_BUFFER_SIZE);
+            if (ds34pad[port].type != XBOX)
+                readReport(usb_buf, port);
+        }
 
         usb_resulCode = 1;
     } else {
@@ -551,6 +577,46 @@ void ds34usb_get_data(char *dst, int size, int port)
     }
 
     mips_memcpy(dst, ds34pad[port].data, size);
+
+    SignalSema(ds34pad[port].sema);
+}
+
+void ds34usb_get_raw_report(char *dst, int size, int port)
+{
+    int ret;
+    u8 *out = (u8 *)dst;
+
+    if (size < 72)
+        return;
+
+    mips_memset(dst, 0, size);
+
+    if (port >= MAX_PADS)
+        return;
+
+    WaitSema(ds34pad[port].sema);
+
+    if (ds34pad[port].interruptEndp >= 0) {
+        ret = UsbInterruptTransfer(ds34pad[port].interruptEndp, usb_buf, MAX_BUFFER_SIZE, usb_data_cb, (void *)port);
+        if (ret == USB_RC_OK) {
+            TransferWait(ds34pad[port].sema);
+            if (!usb_resulCode) {
+                ds34pad[port].raw_report_len = MAX_BUFFER_SIZE;
+                mips_memcpy(ds34pad[port].raw_data, usb_buf, MAX_BUFFER_SIZE);
+            }
+            usb_resulCode = 1;
+        }
+    }
+
+    out[0] = (u8)(ds34pad[port].vid & 0xFF);
+    out[1] = (u8)((ds34pad[port].vid >> 8) & 0xFF);
+    out[2] = (u8)(ds34pad[port].pid & 0xFF);
+    out[3] = (u8)((ds34pad[port].pid >> 8) & 0xFF);
+    out[4] = ds34pad[port].status;
+    out[5] = ds34pad[port].raw_report_len;
+    out[6] = ds34pad[port].raw_ep_addr;
+    out[7] = ds34pad[port].raw_packet_size;
+    mips_memcpy(out + 8, ds34pad[port].raw_data, MAX_BUFFER_SIZE);
 
     SignalSema(ds34pad[port].sema);
 }
@@ -695,6 +761,7 @@ static int rpc_buf[64] __attribute((aligned(16)));
 #define DS34USB_SET_LED    6
 #define DS34USB_GET_DATA   7
 #define DS34USB_RESET      8
+#define DS34USB_GET_RAW    9
 
 #define DS34USB_BIND_RPC_ID 0x18E3878E
 
@@ -730,6 +797,9 @@ void *rpc_sf(int cmd, void *data, int size)
         case DS34USB_GET_DATA:
             ds34usb_get_data((char *)data, 18, *(u8 *)data);
             break;
+        case DS34USB_GET_RAW:
+            ds34usb_get_raw_report((char *)data, 72, *(u8 *)data);
+            break;
         case DS34USB_RESET:
             ds34usb_reset();
             break;
@@ -759,6 +829,11 @@ int _start(int argc, char *argv[])
         ds34pad[pad].lrum = 0;
         ds34pad[pad].rrum = 0;
         ds34pad[pad].update_rum = 1;
+        ds34pad[pad].vid = 0;
+        ds34pad[pad].pid = 0;
+        ds34pad[pad].raw_report_len = 0;
+        ds34pad[pad].raw_ep_addr = 0;
+        ds34pad[pad].raw_packet_size = 0;
         ds34pad[pad].sema = -1;
         ds34pad[pad].cmd_sema = -1;
         ds34pad[pad].controlEndp = -1;
@@ -772,6 +847,7 @@ int _start(int argc, char *argv[])
 
         mips_memset(&ds34pad[pad].data[2], 0x7F, 4);
         mips_memset(&ds34pad[pad].data[6], 0x00, 12);
+        mips_memset(ds34pad[pad].raw_data, 0, sizeof(ds34pad[pad].raw_data));
 
         ds34pad[pad].sema = CreateMutex(IOP_MUTEX_UNLOCKED);
         ds34pad[pad].cmd_sema = CreateMutex(IOP_MUTEX_UNLOCKED);

@@ -22,6 +22,13 @@
 #include "include/ethsupport.h"
 #include "include/config.h"
 #include <assert.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#ifdef PADEMU
+#include <libds34usb.h>
+#endif
 
 enum MENU_IDs {
     MENU_SETTINGS = 0,
@@ -1194,6 +1201,13 @@ int gPS5SavedSelectButton = -1;
 int gPS5TempSelectButton = KEY_CIRCLE;
 int gPS5SavedControllerType = -1;
 int gPS5TempControllerType = 0;
+int gPS5ControllerLogVisible = 0;
+int gPS5ControllerLogStep = 0;
+int gPS5ControllerLogCaptured = 0;
+char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
+char gPS5ControllerLogLatest[192] = "Latest: no report";
+char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Circle: close";
+char gPS5ControllerLogLines[20][192];
 int gPS5SmbSettingsSel = 0;
 int gPS5TempEthEnabled = 0;
 int gPS5TempSmbAddressType = 0;
@@ -1225,6 +1239,136 @@ char gPS5SmbCheckDialogMessage[256] = "";
 
 static void ps5LoadSmbGamesTask(void);
 extern int bdmIsDeviceLoading(void);
+
+static const char *ps5ControllerLogSteps[] = {
+    "IDLE",
+    "DPAD_UP",
+    "DPAD_DOWN",
+    "DPAD_LEFT",
+    "DPAD_RIGHT",
+    "A_OR_CROSS",
+    "B_OR_CIRCLE",
+    "X_OR_SQUARE",
+    "Y_OR_TRIANGLE",
+    "LB_L1",
+    "RB_R1",
+    "LT_L2",
+    "RT_R2",
+    "VIEW_SELECT",
+    "MENU_START",
+    "L3",
+    "R3",
+    "LEFT_STICK_MOVE",
+    "RIGHT_STICK_MOVE",
+    NULL};
+
+static void ps5FormatControllerBytes(char *dst, int dstSize, const u8 *data, int len)
+{
+    int i;
+    int pos = 0;
+
+    dst[0] = '\0';
+    if (len > 64)
+        len = 64;
+
+    for (i = 0; i < len && pos < dstSize - 4; i++)
+        pos += snprintf(dst + pos, dstSize - pos, "%02X%s", data[i], i == len - 1 ? "" : " ");
+}
+
+static int ps5ReadControllerRaw(u8 *raw)
+{
+#ifdef PADEMU
+    if (ds34usb_get_raw_report(0, raw)) {
+        unsigned int vid = raw[0] | (raw[1] << 8);
+        unsigned int pid = raw[2] | (raw[3] << 8);
+        unsigned int status = raw[4];
+        unsigned int reportLen = raw[5];
+        unsigned int ep = raw[6];
+        unsigned int packet = raw[7];
+        char bytes[170];
+
+        ps5FormatControllerBytes(bytes, sizeof(bytes), raw + 8, reportLen ? reportLen : 64);
+
+        if (vid || pid)
+            snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE VID=%04X PID=%04X STATUS=%02X EP_IN=%02X PACKET=%u REPORT_LEN=%u", vid, pid, status, ep, packet, reportLen);
+        else
+            snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE: not detected");
+
+        snprintf(gPS5ControllerLogLatest, sizeof(gPS5ControllerLogLatest), "Latest: %s", bytes[0] ? bytes : "no report");
+        return vid || pid || reportLen;
+    }
+#endif
+    memset(raw, 0, 72);
+    snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE: DS34 USB RPC not ready");
+    snprintf(gPS5ControllerLogLatest, sizeof(gPS5ControllerLogLatest), "Latest: no report");
+    return 0;
+}
+
+static void ps5CaptureControllerLogStep(void)
+{
+    u8 raw[72];
+    unsigned int vid, pid, reportLen;
+    char bytes[170];
+
+    ps5ReadControllerRaw(raw);
+    vid = raw[0] | (raw[1] << 8);
+    pid = raw[2] | (raw[3] << 8);
+    reportLen = raw[5] ? raw[5] : 64;
+    ps5FormatControllerBytes(bytes, sizeof(bytes), raw + 8, reportLen);
+
+    snprintf(gPS5ControllerLogLines[gPS5ControllerLogStep], sizeof(gPS5ControllerLogLines[gPS5ControllerLogStep]),
+             "%s:\nVID=%04X PID=%04X LEN=%u\n%s",
+             ps5ControllerLogSteps[gPS5ControllerLogStep], vid, pid, reportLen, bytes);
+
+    if (gPS5ControllerLogStep + 1 > gPS5ControllerLogCaptured)
+        gPS5ControllerLogCaptured = gPS5ControllerLogStep + 1;
+
+    if (ps5ControllerLogSteps[gPS5ControllerLogStep + 1] != NULL)
+        gPS5ControllerLogStep++;
+
+    snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Captured. Cross: next  Square: save  Circle: close");
+}
+
+static int ps5WriteControllerLogPath(const char *path)
+{
+    int fd;
+    int i;
+    char line[256];
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return 0;
+
+    snprintf(line, sizeof(line), "PS2L Controller Raw Log\n%s\n\n", gPS5ControllerLogDevice);
+    write(fd, line, strlen(line));
+
+    for (i = 0; ps5ControllerLogSteps[i] != NULL; i++) {
+        if (gPS5ControllerLogLines[i][0]) {
+            write(fd, gPS5ControllerLogLines[i], strlen(gPS5ControllerLogLines[i]));
+            write(fd, "\n\n", 2);
+        }
+    }
+
+    close(fd);
+    return 1;
+}
+
+static void ps5SaveControllerLog(void)
+{
+    mkdir("mc0:/PS2L", 0777);
+    if (ps5WriteControllerLogPath("mc0:/PS2L/CTRL_LOG.TXT")) {
+        snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Saved: mc0:/PS2L/CTRL_LOG.TXT");
+        return;
+    }
+
+    mkdir("mc1:/PS2L", 0777);
+    if (ps5WriteControllerLogPath("mc1:/PS2L/CTRL_LOG.TXT")) {
+        snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Saved: mc1:/PS2L/CTRL_LOG.TXT");
+        return;
+    }
+
+    snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Save failed. Check memory card.");
+}
 
 static void ps5LoadSmbGamesTask(void)
 {
@@ -1685,6 +1829,39 @@ void menuHandleInputMenu()
         if (gPS5SubSel > 8)
             gPS5SubSel = 8;
 
+        if (gPS5ControllerLogVisible) {
+            u8 raw[72];
+            ps5ReadControllerRaw(raw);
+
+            if (getKeyOn(KEY_CIRCLE)) {
+                sfxPlay(SFX_CANCEL);
+                gPS5ControllerLogVisible = 0;
+                return;
+            }
+            if (getKeyOn(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5ControllerLogStep = gPS5ControllerLogStep > 0 ? gPS5ControllerLogStep - 1 : gPS5ControllerLogStep;
+                return;
+            }
+            if (getKeyOn(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                if (ps5ControllerLogSteps[gPS5ControllerLogStep + 1] != NULL)
+                    gPS5ControllerLogStep++;
+                return;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                sfxPlay(SFX_CONFIRM);
+                ps5CaptureControllerLogStep();
+                return;
+            }
+            if (getKeyOn(KEY_SQUARE)) {
+                sfxPlay(SFX_CONFIRM);
+                ps5SaveControllerLog();
+                return;
+            }
+            return;
+        }
+
         if (ps5HandleSmbDialogInput()) {
             return;
         }
@@ -1977,6 +2154,16 @@ void menuHandleInputMenu()
             if (getKeyOn(KEY_RIGHT)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5TempControllerType = gPS5TempControllerType < 2 ? gPS5TempControllerType + 1 : 0;
+            }
+            if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
+                int i;
+                sfxPlay(SFX_CONFIRM);
+                gPS5ControllerLogVisible = 1;
+                gPS5ControllerLogStep = 0;
+                gPS5ControllerLogCaptured = 0;
+                for (i = 0; i < 20; i++)
+                    gPS5ControllerLogLines[i][0] = '\0';
+                snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Cross: capture  Square: save  Circle: close");
             }
             if (getKey(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);

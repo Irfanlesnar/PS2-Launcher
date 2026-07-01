@@ -3293,6 +3293,13 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5SettingsSel;
         extern int gPS5SettingsPage;
         extern int gPS5SmbSettingsSel;
+        extern int gPS5ControllerLogVisible;
+        extern int gPS5ControllerLogStep;
+        extern int gPS5ControllerLogCaptured;
+        extern char gPS5ControllerLogDevice[96];
+        extern char gPS5ControllerLogLatest[192];
+        extern char gPS5ControllerLogStatus[96];
+        extern char gPS5ControllerLogLines[20][192];
         extern int gPS5TempEthEnabled;
         extern int gPS5TempSmbAddressType;
         extern int gPS5TempSmbDhcp;
@@ -3316,6 +3323,55 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         const int listTop = cardH + 34;
         int settingsFocusY = rowY;
         int settingsScrollOffset = 0;
+
+        if (gPS5ControllerLogVisible) {
+            const char *steps[] = {
+                "IDLE", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT",
+                "A_OR_CROSS", "B_OR_CIRCLE", "X_OR_SQUARE", "Y_OR_TRIANGLE",
+                "LB_L1", "RB_R1", "LT_L2", "RT_R2", "VIEW_SELECT",
+                "MENU_START", "L3", "R3", "LEFT_STICK_MOVE", "RIGHT_STICK_MOVE", NULL};
+            int panelX = 48;
+            int panelY = 70;
+            int panelW = screenWidth - 96;
+            int panelH = screenHeight - 126;
+            int footerY = screenHeight - 20;
+            char stepText[96];
+            char capturedText[64];
+            char latestLine[192];
+
+            strncpy(latestLine, gPS5ControllerLogLatest, sizeof(latestLine) - 1);
+            latestLine[sizeof(latestLine) - 1] = '\0';
+            fntFitString(gPS5SmallFont, latestLine, panelW - 48);
+
+            rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+            fntRenderString(gPS5SemiBoldFont, panelX, 24, ALIGN_LEFT, 0, 0, "Controller Log", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+            rmDrawRoundedRect(panelX - 1, panelY - 1, panelW + 2, panelH + 2, 8, GS_SETREG_RGBA(0x30, 0x30, 0x30, 0x80));
+            rmDrawRoundedRect(panelX, panelY, panelW, panelH, 7, GS_SETREG_RGBA(0x08, 0x08, 0x08, 0xFA));
+
+            snprintf(stepText, sizeof(stepText), "Step %d: %s", gPS5ControllerLogStep + 1, steps[gPS5ControllerLogStep] ? steps[gPS5ControllerLogStep] : "DONE");
+            snprintf(capturedText, sizeof(capturedText), "Captured: %d", gPS5ControllerLogCaptured);
+
+            fntRenderString(gPS5SemiBoldFont, panelX + 24, panelY + 26, ALIGN_LEFT, 0, 0, stepText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            fntRenderString(gPS5RegFont, panelX + panelW - 24, panelY + 26, ALIGN_RIGHT, 0, 0, capturedText, GS_SETREG_RGBA(0xA8, 0xA8, 0xA8, 0x70));
+            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 70, ALIGN_LEFT, 0, 0, gPS5ControllerLogDevice, GS_SETREG_RGBA(0xD0, 0xD0, 0xD0, 0x78));
+            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 98, ALIGN_LEFT, 0, 0, latestLine, GS_SETREG_RGBA(0x88, 0x88, 0x88, 0x68));
+            fntRenderString(gPS5RegFont, panelX + 24, panelY + 146, ALIGN_LEFT, 0, 0, "Hold the requested controller button, then press Cross on the PS2/working controller.", GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, 0x78));
+            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 184, ALIGN_LEFT, 0, 0, gPS5ControllerLogStatus, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
+
+            if (gPS5ControllerLogLines[gPS5ControllerLogStep][0]) {
+                char savedLine[192];
+                strncpy(savedLine, gPS5ControllerLogLines[gPS5ControllerLogStep], sizeof(savedLine) - 1);
+                savedLine[sizeof(savedLine) - 1] = '\0';
+                fntFitString(gPS5SmallFont, savedLine, panelW - 48);
+                fntRenderString(gPS5SmallFont, panelX + 24, panelY + 224, ALIGN_LEFT, 0, 0, savedLine, GS_SETREG_RGBA(0x78, 0x78, 0x78, 0x60));
+            }
+
+            drawPS5IconAndText(CROSS_ICON, "Capture", gPS5SemiBoldFont, 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            drawPS5IconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, 170, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            drawPS5RightIconAndText(CIRCLE_ICON, "Close", gPS5SemiBoldFont, screenWidth - 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            return;
+        }
 
         if (gPS5SettingsPage == 1) {
             int headerBottom = 56;
