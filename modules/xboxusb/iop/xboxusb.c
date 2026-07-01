@@ -27,6 +27,7 @@ typedef struct xboxusb_device
 {
     int devId;
     int sema;
+    int transferSema;
     int controlEndp;
     int interruptEndp;
     int interruptOutEndp;
@@ -59,6 +60,7 @@ static void usb_config_set(int result, int count, void *arg);
 static void usb_data_cb(int resultCode, int bytes, void *arg);
 static int xboxusb_send_packet(const u8 *data, int len);
 static void xboxusb_send_init(void);
+static void xboxusb_poll_thread(void *arg);
 static void xboxusb_get_raw(char *dst, int size);
 
 static UsbDriver usb_driver = {NULL, NULL, "xboxusb", usb_probe, usb_connect, usb_disconnect};
@@ -181,7 +183,7 @@ static void usb_config_set(int result, int count, void *arg)
 static void usb_data_cb(int resultCode, int bytes, void *arg)
 {
     usb_result = resultCode;
-    SignalSema(xboxpad.sema);
+    SignalSema(xboxpad.transferSema);
 }
 
 static int xboxusb_send_packet(const u8 *data, int len)
@@ -199,7 +201,7 @@ static int xboxusb_send_packet(const u8 *data, int len)
     if (ret != USB_RC_OK)
         return 0;
 
-    WaitSema(xboxpad.sema);
+    WaitSema(xboxpad.transferSema);
     ret = usb_result == USB_RC_OK;
     usb_result = 1;
 
@@ -220,10 +222,34 @@ static void xboxusb_send_init(void)
     xboxpad.status |= XBOXUSB_STATE_INIT_SENT;
 }
 
+static void xboxusb_poll_thread(void *arg)
+{
+    int ret;
+
+    while (1) {
+        if (xboxpad.interruptEndp >= 0 && (xboxpad.status & XBOXUSB_STATE_CONFIGURED)) {
+            xboxusb_send_init();
+
+            ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
+            if (ret == USB_RC_OK) {
+                WaitSema(xboxpad.transferSema);
+                if (usb_result == USB_RC_OK && usb_buf[0] == XBOXUSB_INPUT_PACKET) {
+                    WaitSema(xboxpad.sema);
+                    xboxpad.reportLen = RAW_REPORT_SIZE;
+                    xboxusb_memcpy(xboxpad.report, usb_buf, RAW_REPORT_SIZE);
+                    SignalSema(xboxpad.sema);
+                }
+                usb_result = 1;
+            }
+        } else {
+            DelayThread(10000);
+        }
+    }
+}
+
 static void xboxusb_get_raw(char *dst, int size)
 {
     u8 *out = (u8 *)dst;
-    int ret;
     int i;
 
     if (size < RPC_REPORT_SIZE)
@@ -232,21 +258,6 @@ static void xboxusb_get_raw(char *dst, int size)
     xboxusb_memset(dst, 0, size);
 
     WaitSema(xboxpad.sema);
-    xboxusb_send_init();
-
-    if (xboxpad.interruptEndp >= 0) {
-        ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
-        if (ret == USB_RC_OK) {
-            WaitSema(xboxpad.sema);
-            if (usb_result == USB_RC_OK) {
-                if (usb_buf[0] == XBOXUSB_INPUT_PACKET || xboxpad.reportLen == 0) {
-                    xboxpad.reportLen = RAW_REPORT_SIZE;
-                    xboxusb_memcpy(xboxpad.report, usb_buf, RAW_REPORT_SIZE);
-                }
-            }
-            usb_result = 1;
-        }
-    }
 
     out[0] = xboxpad.vid & 0xFF;
     out[1] = (xboxpad.vid >> 8) & 0xFF;
@@ -305,6 +316,9 @@ int _start(int argc, char *argv[])
     sema.option = 0;
     xboxpad.sema = CreateSema(&sema);
 
+    sema.initial = 0;
+    xboxpad.transferSema = CreateSema(&sema);
+
     UsbRegisterDriver(&usb_driver);
 
     thread.attr = TH_C;
@@ -312,6 +326,13 @@ int _start(int argc, char *argv[])
     thread.priority = 40;
     thread.stacksize = 0x800;
     thread.option = 0;
+    tid = CreateThread(&thread);
+    if (tid > 0)
+        StartThread(tid, NULL);
+
+    thread.thread = xboxusb_poll_thread;
+    thread.priority = 39;
+    thread.stacksize = 0x800;
     tid = CreateThread(&thread);
     if (tid > 0)
         StartThread(tid, NULL);
