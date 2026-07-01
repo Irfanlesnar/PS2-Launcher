@@ -7,11 +7,13 @@
 #include "thsemap.h"
 #include "usbd.h"
 #include "usbd_macro.h"
+#include "ds34common.h"
 
 IRX_ID("xboxusb", 1, 1);
 
 #define XBOXUSB_BIND_RPC_ID 0x18E38791
 #define XBOXUSB_GET_RAW     1
+#define XBOXUSB_GET_DATA    2
 
 #define XBOX_VENDOR_MICROSOFT 0x045E
 #define XBOXUSB_STATE_CONNECTED  0x01
@@ -40,6 +42,7 @@ typedef struct xboxusb_device
     u8 reportLen;
     u8 seq;
     u8 report[RAW_REPORT_SIZE];
+    struct ds2report ds2;
 } xboxusb_device;
 
 static xboxusb_device xboxpad;
@@ -61,7 +64,10 @@ static void usb_data_cb(int resultCode, int bytes, void *arg);
 static int xboxusb_send_packet(const u8 *data, int len);
 static void xboxusb_send_init(void);
 static void xboxusb_poll_thread(void *arg);
+static int xboxusb_axis_to_ds2(u8 low, u8 high);
+static void xboxusb_translate_input(const u8 *in, struct ds2report *out);
 static void xboxusb_get_raw(char *dst, int size);
+static void xboxusb_get_data(char *dst, int size);
 
 static UsbDriver usb_driver = {NULL, NULL, "xboxusb", usb_probe, usb_connect, usb_disconnect};
 
@@ -237,6 +243,7 @@ static void xboxusb_poll_thread(void *arg)
                     WaitSema(xboxpad.sema);
                     xboxpad.reportLen = RAW_REPORT_SIZE;
                     xboxusb_memcpy(xboxpad.report, usb_buf, RAW_REPORT_SIZE);
+                    xboxusb_translate_input(xboxpad.report, &xboxpad.ds2);
                     SignalSema(xboxpad.sema);
                 }
                 usb_result = 1;
@@ -245,6 +252,83 @@ static void xboxusb_poll_thread(void *arg)
             DelayThread(10000);
         }
     }
+}
+
+static int xboxusb_axis_to_ds2(u8 low, u8 high)
+{
+    int value = (short)((high << 8) | low);
+
+    if (value > -4096 && value < 4096)
+        value = 0;
+
+    value = (value >> 8) + 128;
+    if (value < 0)
+        value = 0;
+    if (value > 255)
+        value = 255;
+
+    return value;
+}
+
+static void xboxusb_translate_input(const u8 *in, struct ds2report *out)
+{
+    u16 buttons = 0;
+    u16 lt = in[6] | (in[7] << 8);
+    u16 rt = in[8] | (in[9] << 8);
+
+    if (in[5] & 0x01)
+        buttons |= DS2ButtonUp;
+    if (in[5] & 0x02)
+        buttons |= DS2ButtonDown;
+    if (in[5] & 0x04)
+        buttons |= DS2ButtonLeft;
+    if (in[5] & 0x08)
+        buttons |= DS2ButtonRight;
+    if (in[5] & 0x10)
+        buttons |= DS2ButtonL1;
+    if (in[5] & 0x20)
+        buttons |= DS2ButtonR1;
+    if (in[5] & 0x40)
+        buttons |= DS2ButtonL3;
+    if (in[5] & 0x80)
+        buttons |= DS2ButtonR3;
+
+    if (in[4] & 0x04)
+        buttons |= DS2ButtonStart;
+    if (in[4] & 0x08)
+        buttons |= DS2ButtonSelect;
+    if (in[4] & 0x10)
+        buttons |= DS2ButtonCross;
+    if (in[4] & 0x20)
+        buttons |= DS2ButtonCircle;
+    if (in[4] & 0x40)
+        buttons |= DS2ButtonSquare;
+    if (in[4] & 0x80)
+        buttons |= DS2ButtonTriangle;
+
+    if (lt > 0)
+        buttons |= DS2ButtonL2;
+    if (rt > 0)
+        buttons |= DS2ButtonR2;
+
+    out->nButtonState = ~buttons;
+    out->LeftStickX = xboxusb_axis_to_ds2(in[10], in[11]);
+    out->LeftStickY = 255 - xboxusb_axis_to_ds2(in[12], in[13]);
+    out->RightStickX = xboxusb_axis_to_ds2(in[14], in[15]);
+    out->RightStickY = 255 - xboxusb_axis_to_ds2(in[16], in[17]);
+
+    out->PressureUp = (buttons & DS2ButtonUp) ? 0xFF : 0x00;
+    out->PressureDown = (buttons & DS2ButtonDown) ? 0xFF : 0x00;
+    out->PressureLeft = (buttons & DS2ButtonLeft) ? 0xFF : 0x00;
+    out->PressureRight = (buttons & DS2ButtonRight) ? 0xFF : 0x00;
+    out->PressureTriangle = (buttons & DS2ButtonTriangle) ? 0xFF : 0x00;
+    out->PressureCircle = (buttons & DS2ButtonCircle) ? 0xFF : 0x00;
+    out->PressureCross = (buttons & DS2ButtonCross) ? 0xFF : 0x00;
+    out->PressureSquare = (buttons & DS2ButtonSquare) ? 0xFF : 0x00;
+    out->PressureL1 = (buttons & DS2ButtonL1) ? 0xFF : 0x00;
+    out->PressureR1 = (buttons & DS2ButtonR1) ? 0xFF : 0x00;
+    out->PressureL2 = lt > 0x3FF ? 0xFF : (lt >> 2);
+    out->PressureR2 = rt > 0x3FF ? 0xFF : (rt >> 2);
 }
 
 static void xboxusb_get_raw(char *dst, int size)
@@ -274,11 +358,24 @@ static void xboxusb_get_raw(char *dst, int size)
     SignalSema(xboxpad.sema);
 }
 
+static void xboxusb_get_data(char *dst, int size)
+{
+    if (size < 18)
+        return;
+
+    WaitSema(xboxpad.sema);
+    xboxusb_memcpy(dst, &xboxpad.ds2, 18);
+    SignalSema(xboxpad.sema);
+}
+
 static void *rpc_server(int cmd, void *data, int size)
 {
     switch (cmd) {
         case XBOXUSB_GET_RAW:
             xboxusb_get_raw((char *)data, RPC_REPORT_SIZE);
+            break;
+        case XBOXUSB_GET_DATA:
+            xboxusb_get_data((char *)data, 18);
             break;
         default:
             break;
@@ -309,6 +406,11 @@ int _start(int argc, char *argv[])
     xboxpad.controlEndp = -1;
     xboxpad.interruptEndp = -1;
     xboxpad.interruptOutEndp = -1;
+    xboxpad.ds2.nButtonState = 0xFFFF;
+    xboxpad.ds2.RightStickX = 0x7F;
+    xboxpad.ds2.RightStickY = 0x7F;
+    xboxpad.ds2.LeftStickX = 0x7F;
+    xboxpad.ds2.LeftStickY = 0x7F;
 
     sema.attr = 1;
     sema.initial = 1;

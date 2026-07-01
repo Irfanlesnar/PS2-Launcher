@@ -2189,11 +2189,11 @@ void menuHandleInputMenu()
         } else if (gPS5SubSel == 6) { // Focus is on Controller
             if (getKeyOn(KEY_LEFT)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5TempControllerType = gPS5TempControllerType > 0 ? gPS5TempControllerType - 1 : 2;
+                gPS5TempControllerType = gPS5TempControllerType > 0 ? gPS5TempControllerType - 1 : 3;
             }
             if (getKeyOn(KEY_RIGHT)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5TempControllerType = gPS5TempControllerType < 2 ? gPS5TempControllerType + 1 : 0;
+                gPS5TempControllerType = gPS5TempControllerType < 3 ? gPS5TempControllerType + 1 : 0;
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 int i;

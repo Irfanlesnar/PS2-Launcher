@@ -10,6 +10,7 @@
 #include <libpad.h>
 #include <timer.h>
 #include <time.h>
+#include <string.h>
 
 #ifdef PADEMU
 #include <libds34bt.h>
@@ -23,6 +24,39 @@
 
 // 200 ms per repeat
 #define DEFAULT_PAD_DELAY 200
+
+#ifdef PADEMU
+#define XBOXUSB_BIND_RPC_ID 0x18E38791
+#define XBOXUSB_GET_DATA    2
+
+static SifRpcClientData_t xboxusb;
+static u8 xboxusb_inited = 0;
+static u8 xboxusb_rpcbuf[18] __attribute__((aligned(64)));
+
+static int xboxusb_init(void)
+{
+    if (xboxusb_inited)
+        return 1;
+
+    if (SifBindRpc(&xboxusb, XBOXUSB_BIND_RPC_ID, 0) < 0 || xboxusb.server == NULL)
+        return 0;
+
+    xboxusb_inited = 1;
+    return 1;
+}
+
+static int xboxusb_get_data(u8 *data)
+{
+    if (!xboxusb_init())
+        return 0;
+
+    if (SifCallRpc(&xboxusb, XBOXUSB_GET_DATA, 0, xboxusb_rpcbuf, 1, xboxusb_rpcbuf, sizeof(xboxusb_rpcbuf), NULL, NULL) != 0)
+        return 0;
+
+    memcpy(data, xboxusb_rpcbuf, sizeof(xboxusb_rpcbuf));
+    return 1;
+}
+#endif
 
 struct pad_data_t
 {
@@ -241,6 +275,69 @@ static u32 readLeftJoy(struct pad_data_t *pad, u32 pdata)
     return padData;
 }
 
+static u32 readLeftJoyFromStatus(struct padButtonStatus *buttons, u32 pdata)
+{
+    u32 padData = pdata;
+    int xDeadzone, yDeadzone;
+
+    switch (gXSensitivity) {
+        case 0:
+            xDeadzone = 100;
+            break;
+        case 1:
+            xDeadzone = 80;
+            break;
+        case 2:
+            xDeadzone = 60;
+            break;
+        default:
+            xDeadzone = 80;
+    }
+
+    switch (gYSensitivity) {
+        case 0:
+            yDeadzone = 100;
+            break;
+        case 1:
+            yDeadzone = 80;
+            break;
+        case 2:
+            yDeadzone = 60;
+            break;
+        default:
+            yDeadzone = 80;
+    }
+
+    if (buttons->ljoy_h < 127 - xDeadzone)
+        padData |= PAD_LEFT;
+    else if (buttons->ljoy_h > 127 + xDeadzone)
+        padData |= PAD_RIGHT;
+
+    if (buttons->ljoy_v < 127 - yDeadzone)
+        padData |= PAD_UP;
+    else if (buttons->ljoy_v > 127 + yDeadzone)
+        padData |= PAD_DOWN;
+
+    return padData;
+}
+
+#ifdef PADEMU
+static int readXboxPad(void)
+{
+    struct padButtonStatus buttons;
+    u32 newpdata;
+
+    if (!xboxusb_get_data((u8 *)&buttons.btns))
+        return 0;
+
+    newpdata = 0xffff ^ buttons.btns;
+    newpdata = readLeftJoyFromStatus(&buttons, newpdata);
+    paddata |= newpdata;
+
+    return newpdata != 0;
+}
+#endif
+
 static int readPad(struct pad_data_t *pad)
 {
     int rcode = 0, oldState, newState, ret, padsRead;
@@ -342,6 +439,10 @@ int readPads()
     for (i = 0; i < pad_count; ++i) {
         rslt |= readPad(&pad_data[i]);
     }
+
+#ifdef PADEMU
+    rslt |= readXboxPad();
+#endif
 
     for (i = 0; i < 16; ++i) {
         if (getKeyPressed(i + 1))

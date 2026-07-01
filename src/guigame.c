@@ -942,6 +942,9 @@ int guiGameGetPadEmuGlobalController(void)
     configGetInt(configGame, CONFIG_ITEM_PADEMUSETTINGS, &padEmuSettings);
 
     if (!enablePadEmu)
+        return ((padEmuSettings >> 24) == 3) ? 3 : 0;
+
+    if ((padEmuSettings >> 24) == 3)
         return 0;
 
     return (padEmuSettings & 0xFF) ? 2 : 1;
@@ -959,6 +962,10 @@ void guiGameSetPadEmuGlobalController(int controllerType)
         case 2: // PS3/PS4 Bluetooth.
             EnablePadEmu = 1;
             PadEmuSettings = 1 | (1 << 8) | (1 << 16);
+            break;
+        case 3: // Xbox USB launcher input.
+            EnablePadEmu = 0;
+            PadEmuSettings = (3 << 24);
             break;
         default:
             EnablePadEmu = 0;
