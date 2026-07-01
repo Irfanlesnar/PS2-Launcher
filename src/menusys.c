@@ -21,6 +21,7 @@
 #include "include/sound.h"
 #include "include/ethsupport.h"
 #include "include/config.h"
+#include "include/util.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <string.h>
@@ -1374,8 +1375,10 @@ static int ps5WriteControllerLogPath(const char *path)
     int fd;
     int i;
     char line[256];
+    char writablePath[64];
 
-    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    snprintf(writablePath, sizeof(writablePath), "%s", path);
+    fd = openFile(writablePath, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0)
         return 0;
 
@@ -1870,9 +1873,6 @@ void menuHandleInputMenu()
             gPS5SubSel = 8;
 
         if (gPS5ControllerLogVisible) {
-            u8 raw[72];
-            ps5ReadControllerRaw(raw);
-
             if (getKeyOn(KEY_CIRCLE)) {
                 sfxPlay(SFX_CANCEL);
                 gPS5ControllerLogVisible = 0;
@@ -2197,6 +2197,7 @@ void menuHandleInputMenu()
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 int i;
+                u8 raw[72];
                 sfxPlay(SFX_CONFIRM);
                 gPS5ControllerLogVisible = 1;
                 gPS5ControllerLogStep = 0;
@@ -2204,6 +2205,7 @@ void menuHandleInputMenu()
                 for (i = 0; i < 20; i++)
                     gPS5ControllerLogLines[i][0] = '\0';
                 snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Cross: capture  Square: save  Circle: close");
+                ps5ReadControllerRaw(raw);
             }
             if (getKey(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
