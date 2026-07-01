@@ -3289,6 +3289,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5TempShowCoverImages;
         extern int gPS5TempShowGamesLogo;
         extern int gPS5TempSortMode;
+        extern int gPS5TempControllerType;
         extern int gPS5SettingsSel;
         extern int gPS5SettingsPage;
         extern int gPS5SmbSettingsSel;
@@ -3483,6 +3484,16 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         snprintf(sortStr, sizeof(sortStr), "< %s >", gPS5TempSortMode ? "Available games" : "Each letter");
         drawPS5SettingsText(gPS5RegFont, rowX, rowY + listTop + (rowStep * 5), ALIGN_LEFT, "Sorting games", gPS5SubSel == 5);
         drawPS5SettingsText(gPS5RegFont, rightX, rowY + listTop + (rowStep * 5), ALIGN_RIGHT, sortStr, gPS5SubSel == 5);
+
+        char controllerStr[96];
+        const char *controllerText = "PS2 DualShock 2";
+        if (gPS5TempControllerType == 1)
+            controllerText = "PS3/PS4 USB";
+        else if (gPS5TempControllerType == 2)
+            controllerText = "PS3/PS4 Bluetooth";
+        snprintf(controllerStr, sizeof(controllerStr), "< %s >", controllerText);
+        drawPS5SettingsText(gPS5RegFont, rowX, rowY + listTop + (rowStep * 6), ALIGN_LEFT, "Controller", gPS5SubSel == 6);
+        drawPS5SettingsText(gPS5RegFont, rightX, rowY + listTop + (rowStep * 6), ALIGN_RIGHT, controllerStr, gPS5SubSel == 6);
 
         // 4. Draw quick action cards.
         char coverSummary[96];

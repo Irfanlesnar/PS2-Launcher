@@ -18,6 +18,8 @@ void guiGameShowCheatConfig(void);
 void guiGameShowPadEmuConfig(int forceGlobal);
 void guiGameShowPadMacroConfig(int forceGlobal);
 void guiGameSavePadEmuGlobalConfig(config_set_t *configGame);
+int guiGameGetPadEmuGlobalController(void);
+void guiGameSetPadEmuGlobalController(int controllerType);
 void guiGameSavePadMacroGlobalConfig(config_set_t *configGame);
 #endif
 

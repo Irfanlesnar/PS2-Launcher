@@ -508,12 +508,19 @@ void guiShowConfig()
     // configure the enumerations
     const char *deviceNames[] = {_l(_STR_BDM_GAMES), _l(_STR_NET_GAMES), _l(_STR_HDD_GAMES), _l(_STR_APPS), NULL};
     const char *deviceModes[] = {_l(_STR_OFF), _l(_STR_MANUAL), _l(_STR_AUTO), NULL};
+#ifdef PADEMU
+    const char *controllerTypes[] = {"PS2 DualShock 2", "PS3/PS4 USB", "PS3/PS4 Bluetooth", NULL};
+    int controllerType = 0;
+#endif
 
     diaSetEnum(diaConfig, CFG_DEFDEVICE, deviceNames);
     diaSetEnum(diaConfig, CFG_BDMMODE, deviceModes);
     diaSetEnum(diaConfig, CFG_HDDMODE, deviceModes);
     diaSetEnum(diaConfig, CFG_ETHMODE, deviceModes);
     diaSetEnum(diaConfig, CFG_APPMODE, deviceModes);
+#ifdef PADEMU
+    diaSetEnum(diaConfig, CFG_CONTROLLER_TYPE, controllerTypes);
+#endif
 
     diaSetInt(diaConfig, CFG_BDMCACHE, bdmCacheSize);
     diaSetInt(diaConfig, CFG_HDDCACHE, hddCacheSize);
@@ -531,6 +538,9 @@ void guiShowConfig()
     diaSetInt(diaConfig, CFG_AUTOSTARTLAST, gAutoStartLastPlayed);
     diaSetVisible(diaConfig, CFG_AUTOSTARTLAST, gRememberLastPlayed);
     diaSetVisible(diaConfig, CFG_LBL_AUTOSTARTLAST, gRememberLastPlayed);
+#ifdef PADEMU
+    diaSetInt(diaConfig, CFG_CONTROLLER_TYPE, guiGameGetPadEmuGlobalController());
+#endif
 
     int deviceModeIndex = guiIoModeToDeviceType(gDefaultDevice);
     diaSetInt(diaConfig, CFG_DEFDEVICE, deviceModeIndex);
@@ -553,6 +563,10 @@ void guiShowConfig()
         diaGetString(diaConfig, CFG_ETHPREFIX, gETHPrefix, sizeof(gETHPrefix));
         diaGetInt(diaConfig, CFG_LASTPLAYED, &gRememberLastPlayed);
         diaGetInt(diaConfig, CFG_AUTOSTARTLAST, &gAutoStartLastPlayed);
+#ifdef PADEMU
+        if (diaGetInt(diaConfig, CFG_CONTROLLER_TYPE, &controllerType))
+            guiGameSetPadEmuGlobalController(controllerType);
+#endif
         DisableCron = 1; // Disable Auto Start Last Played counter (we don't want to call it right after enable it on GUI)
         diaGetInt(diaConfig, CFG_DEFDEVICE, &deviceModeIndex);
         gDefaultDevice = guiDeviceTypeToIoMode(deviceModeIndex);
@@ -921,16 +935,26 @@ void guiShowControllerConfig(void)
     const char *scrollSpeeds[] = {_l(_STR_SLOW), _l(_STR_MEDIUM), _l(_STR_FAST), NULL};
     const char *selectButtons[] = {_l(_STR_CIRCLE), _l(_STR_CROSS), NULL};
     const char *sensitivity[] = {_l(_STR_LOW), _l(_STR_MEDIUM), _l(_STR_HIGH), NULL};
+#ifdef PADEMU
+    const char *controllerTypes[] = {"PS2 DualShock 2", "PS3/PS4 USB", "PS3/PS4 Bluetooth", NULL};
+    int controllerType = 0;
+#endif
 
     diaSetEnum(diaControllerConfig, UICFG_SCROLL, scrollSpeeds);
     diaSetEnum(diaControllerConfig, CFG_SELECTBUTTON, selectButtons);
     diaSetEnum(diaControllerConfig, CFG_XSENSITIVITY, sensitivity);
     diaSetEnum(diaControllerConfig, CFG_YSENSITIVITY, sensitivity);
+#ifdef PADEMU
+    diaSetEnum(diaControllerConfig, CFG_CONTROLLER_TYPE, controllerTypes);
+#endif
 
     diaSetInt(diaControllerConfig, UICFG_SCROLL, gScrollSpeed);
     diaSetInt(diaControllerConfig, CFG_SELECTBUTTON, gSelectButton == KEY_CIRCLE ? 0 : 1);
     diaSetInt(diaControllerConfig, CFG_XSENSITIVITY, gXSensitivity);
     diaSetInt(diaControllerConfig, CFG_YSENSITIVITY, gYSensitivity);
+#ifdef PADEMU
+    diaSetInt(diaControllerConfig, CFG_CONTROLLER_TYPE, guiGameGetPadEmuGlobalController());
+#endif
 
     int result = diaExecuteDialog(diaControllerConfig, -1, 1, NULL);
     if (result) {
@@ -943,6 +967,9 @@ void guiShowControllerConfig(void)
         else
             gSelectButton = KEY_CIRCLE;
 #ifdef PADEMU
+        if (diaGetInt(diaControllerConfig, CFG_CONTROLLER_TYPE, &controllerType))
+            guiGameSetPadEmuGlobalController(controllerType);
+
         if (result == PADEMU_GLOBAL_BUTTON) {
             guiGameShowPadEmuConfig(1);
         } else if (result == PADMACRO_GLOBAL_BUTTON) {

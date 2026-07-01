@@ -197,6 +197,13 @@ struct UIItem diaConfig[] = {
     {UI_BOOL, CFG_ENWRITEOP, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
     {UI_BREAK},
 
+#ifdef PADEMU
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Controller", -1}}},
+    {UI_SPACER},
+    {UI_ENUM, CFG_CONTROLLER_TYPE, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+#endif
+
     {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {NULL, _STR_LASTPLAYED}}},
     {UI_SPACER},
     {UI_BOOL, CFG_LASTPLAYED, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
@@ -1023,6 +1030,13 @@ struct UIItem diaControllerConfig[] = {
     {UI_SPACER},
     {UI_ENUM, CFG_SELECTBUTTON, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
     {UI_BREAK},
+
+#ifdef PADEMU
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Controller", -1}}},
+    {UI_SPACER},
+    {UI_ENUM, CFG_CONTROLLER_TYPE, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+#endif
 
     {UI_BREAK},
     {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {NULL, _STR_XSENSITIVITY}}},

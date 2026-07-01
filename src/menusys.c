@@ -1192,6 +1192,8 @@ int gPS5SavedSortMode = -1;
 int gPS5TempSortMode = 1;
 int gPS5SavedSelectButton = -1;
 int gPS5TempSelectButton = KEY_CIRCLE;
+int gPS5SavedControllerType = -1;
+int gPS5TempControllerType = 0;
 int gPS5SmbSettingsSel = 0;
 int gPS5TempEthEnabled = 0;
 int gPS5TempSmbAddressType = 0;
@@ -1619,6 +1621,9 @@ static void ps5SaveSettings(void)
     gPS5ShowGamesLogo = gPS5TempShowGamesLogo;
     gPS5SortMode = gPS5TempSortMode;
     gSelectButton = gPS5TempSelectButton;
+#ifdef PADEMU
+    guiGameSetPadEmuGlobalController(gPS5TempControllerType);
+#endif
     ps5ApplyTempSmbSettings();
 
     gPS5SavedUISound = gPS5UISound;
@@ -1626,10 +1631,13 @@ static void ps5SaveSettings(void)
     gPS5SavedShowGamesLogo = gPS5ShowGamesLogo;
     gPS5SavedSortMode = gPS5SortMode;
     gPS5SavedSelectButton = gSelectButton;
+#ifdef PADEMU
+    gPS5SavedControllerType = gPS5TempControllerType;
+#endif
     gPS5SavedVMode = gVMode;
 
     gPS5SaveBusyFrame = guiFrameId;
-    saveConfigQuiet(CONFIG_OPL | CONFIG_NETWORK);
+    saveConfigQuiet(CONFIG_OPL | CONFIG_NETWORK | CONFIG_GAME);
     gPS5SmbPromptState = 1;
     gPS5SmbLoadStatus = 0;
     gPS5SmbRefreshQueued = 0;
@@ -1668,12 +1676,14 @@ void menuHandleInputMenu()
             gPS5TempShowGamesLogo = gPS5ShowGamesLogo;
             gPS5SavedSortMode = gPS5SortMode;
             gPS5TempSortMode = gPS5SortMode;
+#ifdef PADEMU
+            gPS5SavedControllerType = guiGameGetPadEmuGlobalController();
+            gPS5TempControllerType = gPS5SavedControllerType;
+#endif
             ps5CopySmbSettingsToTemp();
         }
         if (gPS5SubSel > 8)
             gPS5SubSel = 8;
-        if (gPS5SubSel > 5 && gPS5SubSel < 7)
-            gPS5SubSel = 5;
 
         if (ps5HandleSmbDialogInput()) {
             return;
@@ -1827,6 +1837,9 @@ void menuHandleInputMenu()
             gPS5TempShowCoverImages = gPS5SavedShowCoverImages;
             gPS5TempShowGamesLogo = gPS5SavedShowGamesLogo;
             gPS5TempSortMode = gPS5SavedSortMode;
+#ifdef PADEMU
+            gPS5TempControllerType = gPS5SavedControllerType;
+#endif
             {
                 extern int gPS5SettingsPage;
                 gPS5SettingsPage = 0;
@@ -1952,6 +1965,27 @@ void menuHandleInputMenu()
                 sfxPlay(SFX_CURSOR);
                 gPS5SubSel = 4;
             }
+            if (getKey(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 6;
+            }
+        } else if (gPS5SubSel == 6) { // Focus is on Controller
+            if (getKeyOn(KEY_LEFT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempControllerType = gPS5TempControllerType > 0 ? gPS5TempControllerType - 1 : 2;
+            }
+            if (getKeyOn(KEY_RIGHT)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5TempControllerType = gPS5TempControllerType < 2 ? gPS5TempControllerType + 1 : 0;
+            }
+            if (getKey(KEY_UP)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 5;
+            }
+            if (getKey(KEY_DOWN)) {
+                sfxPlay(SFX_CURSOR);
+                gPS5SubSel = 7;
+            }
         } else if (gPS5SubSel == 7) { // Focus is on Game Covers
             if (getKeyOn(KEY_LEFT) || getKeyOn(KEY_RIGHT)) {
                 sfxPlay(SFX_CURSOR);
@@ -1963,7 +1997,7 @@ void menuHandleInputMenu()
             }
             if (getKey(KEY_UP)) {
                 sfxPlay(SFX_CURSOR);
-                gPS5SubSel = 8;
+                gPS5SubSel = 6;
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 sfxPlay(SFX_CONFIRM);

@@ -932,6 +932,48 @@ void guiGameSavePadEmuGlobalConfig(config_set_t *configGame)
     }
 }
 
+int guiGameGetPadEmuGlobalController(void)
+{
+    int enablePadEmu = 0;
+    int padEmuSettings = 0;
+    config_set_t *configGame = configGetByType(CONFIG_GAME);
+
+    configGetInt(configGame, CONFIG_ITEM_ENABLEPADEMU, &enablePadEmu);
+    configGetInt(configGame, CONFIG_ITEM_PADEMUSETTINGS, &padEmuSettings);
+
+    if (!enablePadEmu)
+        return 0;
+
+    return (padEmuSettings & 0xFF) ? 2 : 1;
+}
+
+void guiGameSetPadEmuGlobalController(int controllerType)
+{
+    gPadEmuSource = SETTINGS_GLOBAL;
+
+    switch (controllerType) {
+        case 1: // PS3/PS4 USB.
+            EnablePadEmu = 1;
+            PadEmuSettings = (1 << 8) | (1 << 16);
+            break;
+        case 2: // PS3/PS4 Bluetooth.
+            EnablePadEmu = 1;
+            PadEmuSettings = 1 | (1 << 8) | (1 << 16);
+            break;
+        default:
+            EnablePadEmu = 0;
+            PadEmuSettings = 0;
+            break;
+    }
+
+    gEnablePadEmu = EnablePadEmu;
+    gPadEmuSettings = PadEmuSettings;
+
+    config_set_t *configGame = configGetByType(CONFIG_GAME);
+    configSetInt(configGame, CONFIG_ITEM_ENABLEPADEMU, EnablePadEmu);
+    configSetInt(configGame, CONFIG_ITEM_PADEMUSETTINGS, PadEmuSettings);
+}
+
 void guiGameSavePadMacroGlobalConfig(config_set_t *configGame)
 {
     if (gPadMacroSource == SETTINGS_GLOBAL) {
