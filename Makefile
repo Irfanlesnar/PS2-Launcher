@@ -523,8 +523,8 @@ modules/ds34usb/iop/ds34usb.irx: modules/ds34usb/iop
 $(EE_ASM_DIR)ds34usb.c: modules/ds34usb/iop/ds34usb.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
-modules/xboxusb/iop/xboxusb.irx: modules/xboxusb/iop
-	$(MAKE) -C $<
+modules/xboxusb/iop/xboxusb.irx: modules/xboxusb/iop/xboxusb.c modules/xboxusb/iop/imports.lst modules/xboxusb/iop/irx_imports.h
+	$(MAKE) -C modules/xboxusb/iop
 
 $(EE_ASM_DIR)xboxusb.c: modules/xboxusb/iop/xboxusb.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx

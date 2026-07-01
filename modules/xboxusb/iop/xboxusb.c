@@ -17,6 +17,7 @@ IRX_ID("xboxusb", 1, 1);
 #define XBOXUSB_STATE_CONNECTED  0x01
 #define XBOXUSB_STATE_CONFIGURED 0x02
 #define XBOXUSB_STATE_RUNNING    0x04
+#define XBOXUSB_STATE_INIT_SENT  0x08
 
 #define RAW_REPORT_SIZE 64
 #define RPC_REPORT_SIZE 72
@@ -27,12 +28,15 @@ typedef struct xboxusb_device
     int sema;
     int controlEndp;
     int interruptEndp;
+    int interruptOutEndp;
     u16 vid;
     u16 pid;
     u8 status;
     u8 epIn;
+    u8 epOut;
     u8 packetSize;
     u8 reportLen;
+    u8 seq;
     u8 report[RAW_REPORT_SIZE];
 } xboxusb_device;
 
@@ -41,12 +45,19 @@ static u8 usb_buf[RAW_REPORT_SIZE + 32] __attribute((aligned(4))) = {0};
 static int usb_result = 1;
 static int rpc_buf[RPC_REPORT_SIZE] __attribute((aligned(16)));
 
+static const u8 xboxone_power_on[] = {0x05, 0x20, 0x00, 0x01, 0x00};
+static const u8 xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0F, 0x06};
+static const u8 xboxone_led_on[] = {0x0A, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
+static const u8 xboxone_auth_done[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
+
 static int usb_probe(int devId);
 static int usb_connect(int devId);
 static int usb_disconnect(int devId);
 static void usb_release(void);
 static void usb_config_set(int result, int count, void *arg);
 static void usb_data_cb(int resultCode, int bytes, void *arg);
+static int xboxusb_send_packet(const u8 *data, int len);
+static void xboxusb_send_init(void);
 static void xboxusb_get_raw(char *dst, int size);
 
 static UsbDriver usb_driver = {NULL, NULL, "xboxusb", usb_probe, usb_connect, usb_disconnect};
@@ -112,7 +123,9 @@ static int usb_connect(int devId)
             xboxpad.interruptEndp = UsbOpenEndpointAligned(devId, endpoint);
             xboxpad.epIn = endpoint->bEndpointAddress;
             xboxpad.packetSize = endpoint->wMaxPacketSizeLB;
-            break;
+        } else if (endpoint->bmAttributes == USB_ENDPOINT_XFER_INT && (endpoint->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_OUT) {
+            xboxpad.interruptOutEndp = UsbOpenEndpointAligned(devId, endpoint);
+            xboxpad.epOut = endpoint->bEndpointAddress;
         }
 
         endpoint = (UsbEndpointDescriptor *)((char *)endpoint + endpoint->bLength);
@@ -140,16 +153,21 @@ static void usb_release(void)
 {
     if (xboxpad.interruptEndp >= 0)
         UsbCloseEndpoint(xboxpad.interruptEndp);
+    if (xboxpad.interruptOutEndp >= 0)
+        UsbCloseEndpoint(xboxpad.interruptOutEndp);
     if (xboxpad.controlEndp >= 0)
         UsbCloseEndpoint(xboxpad.controlEndp);
 
     xboxpad.devId = -1;
     xboxpad.controlEndp = -1;
     xboxpad.interruptEndp = -1;
+    xboxpad.interruptOutEndp = -1;
     xboxpad.status = 0;
     xboxpad.epIn = 0;
+    xboxpad.epOut = 0;
     xboxpad.packetSize = 0;
     xboxpad.reportLen = 0;
+    xboxpad.seq = 0;
     xboxusb_memset(xboxpad.report, 0, sizeof(xboxpad.report));
 }
 
@@ -165,6 +183,42 @@ static void usb_data_cb(int resultCode, int bytes, void *arg)
     SignalSema(xboxpad.sema);
 }
 
+static int xboxusb_send_packet(const u8 *data, int len)
+{
+    int ret;
+
+    if (xboxpad.interruptOutEndp < 0 || len <= 0 || len > RAW_REPORT_SIZE)
+        return 0;
+
+    xboxusb_memset(usb_buf, 0, sizeof(usb_buf));
+    xboxusb_memcpy(usb_buf, data, len);
+    usb_buf[2] = xboxpad.seq++;
+
+    ret = UsbInterruptTransfer(xboxpad.interruptOutEndp, usb_buf, len, usb_data_cb, NULL);
+    if (ret != USB_RC_OK)
+        return 0;
+
+    WaitSema(xboxpad.sema);
+    ret = usb_result == USB_RC_OK;
+    usb_result = 1;
+
+    return ret;
+}
+
+static void xboxusb_send_init(void)
+{
+    if ((xboxpad.status & XBOXUSB_STATE_CONFIGURED) == 0 || (xboxpad.status & XBOXUSB_STATE_INIT_SENT))
+        return;
+
+    xboxusb_send_packet(xboxone_power_on, sizeof(xboxone_power_on));
+    if (xboxpad.vid == 0x045E && xboxpad.pid == 0x02EA)
+        xboxusb_send_packet(xboxone_s_init, sizeof(xboxone_s_init));
+    xboxusb_send_packet(xboxone_led_on, sizeof(xboxone_led_on));
+    xboxusb_send_packet(xboxone_auth_done, sizeof(xboxone_auth_done));
+
+    xboxpad.status |= XBOXUSB_STATE_INIT_SENT;
+}
+
 static void xboxusb_get_raw(char *dst, int size)
 {
     u8 *out = (u8 *)dst;
@@ -177,6 +231,7 @@ static void xboxusb_get_raw(char *dst, int size)
     xboxusb_memset(dst, 0, size);
 
     WaitSema(xboxpad.sema);
+    xboxusb_send_init();
 
     if (xboxpad.interruptEndp >= 0) {
         ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
@@ -239,6 +294,7 @@ int _start(int argc, char *argv[])
     xboxpad.devId = -1;
     xboxpad.controlEndp = -1;
     xboxpad.interruptEndp = -1;
+    xboxpad.interruptOutEndp = -1;
 
     sema.attr = 1;
     sema.initial = 1;
