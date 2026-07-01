@@ -21,6 +21,8 @@ IRX_ID("xboxusb", 1, 1);
 
 #define RAW_REPORT_SIZE 64
 #define RPC_REPORT_SIZE 72
+#define XBOXUSB_INPUT_PACKET 0x20
+#define XBOXUSB_CAPTURE_ATTEMPTS 8
 
 typedef struct xboxusb_device
 {
@@ -223,6 +225,7 @@ static void xboxusb_get_raw(char *dst, int size)
 {
     u8 *out = (u8 *)dst;
     int ret;
+    int attempt;
     int i;
 
     if (size < RPC_REPORT_SIZE)
@@ -233,7 +236,7 @@ static void xboxusb_get_raw(char *dst, int size)
     WaitSema(xboxpad.sema);
     xboxusb_send_init();
 
-    if (xboxpad.interruptEndp >= 0) {
+    for (attempt = 0; xboxpad.interruptEndp >= 0 && attempt < XBOXUSB_CAPTURE_ATTEMPTS; attempt++) {
         ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
         if (ret == USB_RC_OK) {
             WaitSema(xboxpad.sema);
@@ -243,6 +246,9 @@ static void xboxusb_get_raw(char *dst, int size)
             }
             usb_result = 1;
         }
+
+        if (xboxpad.report[0] == XBOXUSB_INPUT_PACKET)
+            break;
     }
 
     out[0] = xboxpad.vid & 0xFF;
