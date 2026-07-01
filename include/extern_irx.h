@@ -138,6 +138,8 @@ IMPORT_BIN2C(usbmass_bd_irx);
 
 IMPORT_BIN2C(usb_pademu_irx);
 
+IMPORT_BIN2C(xboxusb_irx);
+
 IMPORT_BIN2C(xhdd_irx);
 
 #endif

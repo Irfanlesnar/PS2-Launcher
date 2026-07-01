@@ -26,9 +26,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#ifdef PADEMU
-#include <libds34usb.h>
-#endif
 
 enum MENU_IDs {
     MENU_SETTINGS = 0,
@@ -1262,6 +1259,51 @@ static const char *ps5ControllerLogSteps[] = {
     "RIGHT_STICK_MOVE",
     NULL};
 
+#define XBOXUSB_BIND_RPC_ID 0x18E38791
+#define XBOXUSB_GET_RAW     1
+
+static SifRpcClientData_t gXboxUsbRpc;
+static u8 gXboxUsbRpcReady = 0;
+static u8 gXboxUsbRpcBuf[72] __attribute__((aligned(64)));
+
+static int ps5BindXboxUsbRpc(void)
+{
+#ifdef PADEMU
+    int retries;
+
+    if (gXboxUsbRpcReady)
+        return 1;
+
+    memset(&gXboxUsbRpc, 0, sizeof(gXboxUsbRpc));
+    for (retries = 0; retries < 8; retries++) {
+        if (SifBindRpc(&gXboxUsbRpc, XBOXUSB_BIND_RPC_ID, 0) >= 0 && gXboxUsbRpc.server != NULL) {
+            gXboxUsbRpcReady = 1;
+            return 1;
+        }
+        nopdelay();
+    }
+#endif
+
+    return 0;
+}
+
+static int ps5GetXboxUsbRawReport(u8 *raw)
+{
+#ifdef PADEMU
+    if (!ps5BindXboxUsbRpc())
+        return 0;
+
+    memset(gXboxUsbRpcBuf, 0, sizeof(gXboxUsbRpcBuf));
+    if (SifCallRpc(&gXboxUsbRpc, XBOXUSB_GET_RAW, 0, gXboxUsbRpcBuf, 1, gXboxUsbRpcBuf, sizeof(gXboxUsbRpcBuf), NULL, NULL) != 0)
+        return 0;
+
+    memcpy(raw, gXboxUsbRpcBuf, sizeof(gXboxUsbRpcBuf));
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 static void ps5FormatControllerBytes(char *dst, int dstSize, const u8 *data, int len)
 {
     int i;
@@ -1277,8 +1319,7 @@ static void ps5FormatControllerBytes(char *dst, int dstSize, const u8 *data, int
 
 static int ps5ReadControllerRaw(u8 *raw)
 {
-#ifdef PADEMU
-    if (ds34usb_get_raw_report(0, raw)) {
+    if (ps5GetXboxUsbRawReport(raw)) {
         unsigned int vid = raw[0] | (raw[1] << 8);
         unsigned int pid = raw[2] | (raw[3] << 8);
         unsigned int status = raw[4];
@@ -1297,9 +1338,8 @@ static int ps5ReadControllerRaw(u8 *raw)
         snprintf(gPS5ControllerLogLatest, sizeof(gPS5ControllerLogLatest), "Latest: %s", bytes[0] ? bytes : "no report");
         return vid || pid || reportLen;
     }
-#endif
     memset(raw, 0, 72);
-    snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE: DS34 USB RPC not ready");
+    snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE: Xbox USB logger not ready");
     snprintf(gPS5ControllerLogLatest, sizeof(gPS5ControllerLogLatest), "Latest: no report");
     return 0;
 }

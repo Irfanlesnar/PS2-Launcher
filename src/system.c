@@ -277,6 +277,8 @@ void sysReset(int modload_mask)
     if (modload_mask & SYS_LOAD_USB_MODULES) {
         LOG("[DS34_USB]:\n");
         sysLoadModuleBuffer(&ds34usb_irx, size_ds34usb_irx, 4, (char *)&ds3pads);
+        LOG("[XBOX_USB]:\n");
+        sysLoadModuleBuffer(&xboxusb_irx, size_xboxusb_irx, 0, NULL);
         LOG("[DS34_BT]:\n");
         sysLoadModuleBuffer(&ds34bt_irx, size_ds34bt_irx, 4, (char *)&ds3pads);
 

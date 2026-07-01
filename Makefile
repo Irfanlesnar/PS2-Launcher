@@ -146,7 +146,7 @@ else
 endif
 
 ifeq ($(PADEMU),1)
-  IOP_OBJS += bt_pademu.o usb_pademu.o ds34usb.o ds34bt.o libds34usb.a libds34bt.a
+  IOP_OBJS += bt_pademu.o usb_pademu.o ds34usb.o ds34bt.o xboxusb.o libds34usb.a libds34bt.a
   EE_CFLAGS += -DPADEMU
   EE_INCS += -Imodules/ds34bt/ee -Imodules/ds34usb/ee
   PADEMU_FLAGS = PADEMU=1
@@ -321,6 +321,8 @@ clean:	download_lwNBD
 	$(MAKE) -C modules/ds34usb clean
 	echo " -ds34bt"
 	$(MAKE) -C modules/ds34bt clean
+	echo " -xboxusb"
+	$(MAKE) -C modules/xboxusb clean
 	echo " -pademu"
 	$(MAKE) -C modules/pademu USE_BT=1 clean
 	$(MAKE) -C modules/pademu USE_USB=1 clean
@@ -519,6 +521,12 @@ modules/ds34usb/iop/ds34usb.irx: modules/ds34usb/iop
 	$(MAKE) -C $<
 
 $(EE_ASM_DIR)ds34usb.c: modules/ds34usb/iop/ds34usb.irx | $(EE_ASM_DIR)
+	$(BIN2C) $< $@ $(*F)_irx
+
+modules/xboxusb/iop/xboxusb.irx: modules/xboxusb/iop
+	$(MAKE) -C $<
+
+$(EE_ASM_DIR)xboxusb.c: modules/xboxusb/iop/xboxusb.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
 modules/pademu/bt_pademu.irx: modules/pademu

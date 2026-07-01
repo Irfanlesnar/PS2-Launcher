@@ -7,12 +7,8 @@
 
 #define DS3 0
 #define DS4 1
-#define XBOX 2
 
 #define MAX_BUFFER_SIZE 64 // Size of general purpose data buffer
-
-#define XBOX_VID     0x045E
-#define XBOX_ONE_PID 0x02FF
 
 typedef struct _usb_ds34
 {
@@ -27,12 +23,6 @@ typedef struct _usb_ds34
     u8 lrum;
     u8 rrum;
     u8 update_rum;
-    u16 vid;
-    u16 pid;
-    u8 raw_report_len;
-    u8 raw_ep_addr;
-    u8 raw_packet_size;
-    u8 raw_data[MAX_BUFFER_SIZE];
     u8 oldled[4]; // rgb for ds4 and blink
     union
     {
