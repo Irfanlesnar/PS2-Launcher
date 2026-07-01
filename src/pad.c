@@ -33,6 +33,7 @@
 static SifRpcClientData_t xboxusb;
 static u8 xboxusb_inited = 0;
 static u8 xboxusb_rpcbuf[18] __attribute__((aligned(64)));
+extern int gPS5TempControllerType;
 
 static int xboxusb_init(void)
 {
@@ -336,7 +337,7 @@ static int readXboxPad(void)
     struct padButtonStatus buttons;
     u32 newpdata;
 
-    if (guiGameGetPadEmuGlobalController() != 3)
+    if (guiGameGetPadEmuGlobalController() != 3 && gPS5TempControllerType != 3)
         return 0;
 
     if (!xboxusb_get_data((u8 *)&buttons.btns))

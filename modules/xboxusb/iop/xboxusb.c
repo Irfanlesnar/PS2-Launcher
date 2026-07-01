@@ -58,9 +58,12 @@ static const u8 xboxone_auth_done[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
 static int usb_probe(int devId);
 static int usb_connect(int devId);
 static int usb_disconnect(int devId);
+static void xboxusb_reset_ds2(void);
 static void usb_release(void);
 static void usb_config_set(int result, int count, void *arg);
 static void usb_data_cb(int resultCode, int bytes, void *arg);
+static void xboxusb_reset_transfer(void);
+static int xboxusb_wait_transfer(int timeoutMs);
 static int xboxusb_send_packet(const u8 *data, int len);
 static void xboxusb_send_init(void);
 static void xboxusb_poll_thread(void *arg);
@@ -116,6 +119,7 @@ static int usb_connect(int devId)
 
     WaitSema(xboxpad.sema);
     usb_release();
+    xboxusb_reset_ds2();
 
     xboxpad.devId = devId;
     xboxpad.vid = device->idVendor;
@@ -158,6 +162,27 @@ static int usb_disconnect(int devId)
     return 0;
 }
 
+static void xboxusb_reset_ds2(void)
+{
+    xboxpad.ds2.nButtonState = 0xFFFF;
+    xboxpad.ds2.RightStickX = 0x7F;
+    xboxpad.ds2.RightStickY = 0x7F;
+    xboxpad.ds2.LeftStickX = 0x7F;
+    xboxpad.ds2.LeftStickY = 0x7F;
+    xboxpad.ds2.PressureRight = 0;
+    xboxpad.ds2.PressureLeft = 0;
+    xboxpad.ds2.PressureUp = 0;
+    xboxpad.ds2.PressureDown = 0;
+    xboxpad.ds2.PressureTriangle = 0;
+    xboxpad.ds2.PressureCircle = 0;
+    xboxpad.ds2.PressureCross = 0;
+    xboxpad.ds2.PressureSquare = 0;
+    xboxpad.ds2.PressureL1 = 0;
+    xboxpad.ds2.PressureR1 = 0;
+    xboxpad.ds2.PressureL2 = 0;
+    xboxpad.ds2.PressureR2 = 0;
+}
+
 static void usb_release(void)
 {
     if (xboxpad.interruptEndp >= 0)
@@ -178,6 +203,8 @@ static void usb_release(void)
     xboxpad.reportLen = 0;
     xboxpad.seq = 0;
     xboxusb_memset(xboxpad.report, 0, sizeof(xboxpad.report));
+    xboxusb_reset_ds2();
+    xboxusb_reset_transfer();
 }
 
 static void usb_config_set(int result, int count, void *arg)
@@ -192,6 +219,26 @@ static void usb_data_cb(int resultCode, int bytes, void *arg)
     SignalSema(xboxpad.transferSema);
 }
 
+static void xboxusb_reset_transfer(void)
+{
+    while (PollSema(xboxpad.transferSema) == 0) {
+    }
+    usb_result = 1;
+}
+
+static int xboxusb_wait_transfer(int timeoutMs)
+{
+    int i;
+
+    for (i = 0; i < timeoutMs; i++) {
+        if (PollSema(xboxpad.transferSema) == 0)
+            return 1;
+        DelayThread(1000);
+    }
+
+    return 0;
+}
+
 static int xboxusb_send_packet(const u8 *data, int len)
 {
     int ret;
@@ -202,12 +249,15 @@ static int xboxusb_send_packet(const u8 *data, int len)
     xboxusb_memset(usb_buf, 0, sizeof(usb_buf));
     xboxusb_memcpy(usb_buf, data, len);
     usb_buf[2] = xboxpad.seq++;
+    xboxusb_reset_transfer();
 
     ret = UsbInterruptTransfer(xboxpad.interruptOutEndp, usb_buf, len, usb_data_cb, NULL);
     if (ret != USB_RC_OK)
         return 0;
 
-    WaitSema(xboxpad.transferSema);
+    if (!xboxusb_wait_transfer(250))
+        return 0;
+
     ret = usb_result == USB_RC_OK;
     usb_result = 1;
 
@@ -235,10 +285,15 @@ static void xboxusb_poll_thread(void *arg)
     while (1) {
         if (xboxpad.interruptEndp >= 0 && (xboxpad.status & XBOXUSB_STATE_CONFIGURED)) {
             xboxusb_send_init();
+            xboxusb_reset_transfer();
 
             ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
             if (ret == USB_RC_OK) {
-                WaitSema(xboxpad.transferSema);
+                if (!xboxusb_wait_transfer(250)) {
+                    usb_result = 1;
+                    continue;
+                }
+
                 if (usb_result == USB_RC_OK && usb_buf[0] == XBOXUSB_INPUT_PACKET) {
                     WaitSema(xboxpad.sema);
                     xboxpad.reportLen = RAW_REPORT_SIZE;
@@ -406,11 +461,7 @@ int _start(int argc, char *argv[])
     xboxpad.controlEndp = -1;
     xboxpad.interruptEndp = -1;
     xboxpad.interruptOutEndp = -1;
-    xboxpad.ds2.nButtonState = 0xFFFF;
-    xboxpad.ds2.RightStickX = 0x7F;
-    xboxpad.ds2.RightStickY = 0x7F;
-    xboxpad.ds2.LeftStickX = 0x7F;
-    xboxpad.ds2.LeftStickY = 0x7F;
+    xboxusb_reset_ds2();
 
     sema.attr = 1;
     sema.initial = 1;
