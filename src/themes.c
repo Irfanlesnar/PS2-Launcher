@@ -3299,6 +3299,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern char gPS5ControllerLogDevice[96];
         extern char gPS5ControllerLogLatest[192];
         extern char gPS5ControllerLogPressed[128];
+        extern char gPS5ControllerLogBridge[128];
         extern char gPS5ControllerLogStatus[96];
         extern char gPS5ControllerLogLines[20][192];
         extern int gPS5TempEthEnabled;
@@ -3340,6 +3341,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             char capturedText[64];
             char latestLine[192];
             char pressedLine[128];
+            char bridgeLine[128];
 
             strncpy(latestLine, gPS5ControllerLogLatest, sizeof(latestLine) - 1);
             latestLine[sizeof(latestLine) - 1] = '\0';
@@ -3347,6 +3349,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             strncpy(pressedLine, gPS5ControllerLogPressed, sizeof(pressedLine) - 1);
             pressedLine[sizeof(pressedLine) - 1] = '\0';
             fntFitString(gPS5SmallFont, pressedLine, panelW - 48);
+            strncpy(bridgeLine, gPS5ControllerLogBridge, sizeof(bridgeLine) - 1);
+            bridgeLine[sizeof(bridgeLine) - 1] = '\0';
+            fntFitString(gPS5SmallFont, bridgeLine, panelW - 48);
 
             rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
             fntRenderString(gPS5SemiBoldFont, panelX, 24, ALIGN_LEFT, 0, 0, "Controller Log", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
@@ -3361,8 +3366,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             fntRenderString(gPS5RegFont, panelX + panelW - 24, panelY + 26, ALIGN_RIGHT, 0, 0, capturedText, GS_SETREG_RGBA(0xA8, 0xA8, 0xA8, 0x70));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 70, ALIGN_LEFT, 0, 0, gPS5ControllerLogDevice, GS_SETREG_RGBA(0xD0, 0xD0, 0xD0, 0x78));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 98, ALIGN_LEFT, 0, 0, pressedLine, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
-            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 122, ALIGN_LEFT, 0, 0, latestLine, GS_SETREG_RGBA(0x88, 0x88, 0x88, 0x68));
-            fntRenderString(gPS5RegFont, panelX + 24, panelY + 146, ALIGN_LEFT, 0, 0, "Hold the requested controller button, then press Cross on the PS2/working controller.", GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, 0x78));
+            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 122, ALIGN_LEFT, 0, 0, bridgeLine, GS_SETREG_RGBA(0xB8, 0xD8, 0xFF, 0x78));
+            fntRenderString(gPS5SmallFont, panelX + 24, panelY + 146, ALIGN_LEFT, 0, 0, latestLine, GS_SETREG_RGBA(0x88, 0x88, 0x88, 0x68));
+            fntRenderString(gPS5RegFont, panelX + 24, panelY + 170, ALIGN_LEFT, 0, 0, "Hold the requested controller button, then press Cross on the PS2/working controller.", GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, 0x78));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 184, ALIGN_LEFT, 0, 0, gPS5ControllerLogStatus, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
 
             if (gPS5ControllerLogLines[gPS5ControllerLogStep][0]) {

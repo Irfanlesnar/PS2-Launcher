@@ -1205,6 +1205,7 @@ int gPS5ControllerLogCaptured = 0;
 char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
 char gPS5ControllerLogLatest[192] = "Latest: no report";
 char gPS5ControllerLogPressed[128] = "Pressed: no input found";
+char gPS5ControllerLogBridge[128] = "Bridge: no valid input packet";
 char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Circle: close";
 char gPS5ControllerLogLines[20][192];
 int gPS5SmbSettingsSel = 0;
@@ -1357,6 +1358,71 @@ static void ps5AppendPressed(char *dst, int dstSize, int *first, const char *nam
     *first = 0;
 }
 
+static void ps5UpdateControllerBridgeStatus(const u8 *data)
+{
+    unsigned int padData = 0;
+    u16 lt, rt;
+    int lx, ly;
+
+    if (data[0] != 0x20) {
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: ignored non-input packet");
+        return;
+    }
+
+    if (data[5] & 0x01)
+        padData |= PAD_UP;
+    if (data[5] & 0x02)
+        padData |= PAD_DOWN;
+    if (data[5] & 0x04)
+        padData |= PAD_LEFT;
+    if (data[5] & 0x08)
+        padData |= PAD_RIGHT;
+    if (data[5] & 0x10)
+        padData |= PAD_L1;
+    if (data[5] & 0x20)
+        padData |= PAD_R1;
+    if (data[5] & 0x40)
+        padData |= PAD_L3;
+    if (data[5] & 0x80)
+        padData |= PAD_R3;
+
+    if (data[4] & 0x04)
+        padData |= PAD_START;
+    if (data[4] & 0x08)
+        padData |= PAD_SELECT;
+    if (data[4] & 0x10)
+        padData |= PAD_CROSS;
+    if (data[4] & 0x20)
+        padData |= PAD_CIRCLE;
+    if (data[4] & 0x40)
+        padData |= PAD_SQUARE;
+    if (data[4] & 0x80)
+        padData |= PAD_TRIANGLE;
+
+    lt = data[6] | (data[7] << 8);
+    rt = data[8] | (data[9] << 8);
+    if (lt > 0)
+        padData |= PAD_L2;
+    if (rt > 0)
+        padData |= PAD_R2;
+
+    lx = (short)((data[11] << 8) | data[10]);
+    ly = (short)((data[13] << 8) | data[12]);
+    if (lx < -8192)
+        padData |= PAD_LEFT;
+    else if (lx > 8192)
+        padData |= PAD_RIGHT;
+    if (ly < -8192)
+        padData |= PAD_UP;
+    else if (ly > 8192)
+        padData |= PAD_DOWN;
+
+    if (padData)
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: launcher paddata=0x%04X", padData & 0xFFFF);
+    else
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: valid input packet, neutral");
+}
+
 static void ps5UpdateControllerLiveStatus(void)
 {
     u8 raw[72];
@@ -1368,10 +1434,12 @@ static void ps5UpdateControllerLiveStatus(void)
 
     if (!ps5ReadControllerRaw(raw)) {
         snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: no raw report");
         return;
     }
 
     data = raw + 8;
+    ps5UpdateControllerBridgeStatus(data);
     if (data[0] != 0x20) {
         if (data[0] || data[1] || data[2] || data[3])
             snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: non-input packet b0-b9=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
