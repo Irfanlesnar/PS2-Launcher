@@ -46,6 +46,7 @@ static u32 time_since_last = 0;
 
 static unsigned short pad_count;
 static struct pad_data_t pad_data[MAX_PADS];
+static pad_controller_state_t controller_state[PAD_CONTROLLER_COUNT];
 
 // gathered pad data
 static u32 paddata;
@@ -73,6 +74,37 @@ static const int keyToPad[17] = {
     PAD_L1,
     PAD_R2,
     PAD_L2};
+
+static void clearControllerStates(void)
+{
+    int i;
+
+    for (i = 0; i < PAD_CONTROLLER_COUNT; i++) {
+        controller_state[i].connected = 0;
+        controller_state[i].source = PAD_CONTROLLER_SOURCE_NONE;
+        controller_state[i].buttons = 0;
+    }
+}
+
+static void setControllerState(int player, int source, u32 buttons)
+{
+    if (player < 0 || player >= PAD_CONTROLLER_COUNT)
+        return;
+
+    controller_state[player].connected = 1;
+    controller_state[player].source = source;
+    controller_state[player].buttons = buttons;
+}
+
+static void mergeControllerStates(void)
+{
+    int i;
+
+    for (i = 0; i < PAD_CONTROLLER_COUNT; i++) {
+        if (controller_state[i].connected)
+            paddata |= controller_state[i].buttons;
+    }
+}
 
 /*
  * waitPadReady()
@@ -241,7 +273,7 @@ static u32 readLeftJoy(struct pad_data_t *pad, u32 pdata)
     return padData;
 }
 
-static int readPad(struct pad_data_t *pad)
+static int readPad(struct pad_data_t *pad, int player)
 {
     int rcode = 0, oldState, newState, ret, padsRead;
     u32 newpdata = 0;
@@ -300,8 +332,7 @@ static int readPad(struct pad_data_t *pad)
         pad->oldpaddata = pad->paddata;
         pad->paddata = newpdata;
 
-        // merge into the global vars
-        paddata |= pad->paddata;
+        setControllerState(player, PAD_CONTROLLER_SOURCE_PS2, pad->paddata);
     }
 
     return rcode;
@@ -329,6 +360,7 @@ int readPads()
     int i;
     oldpaddata = paddata;
     paddata = 0;
+    clearControllerStates();
 
     // in ms.
     u32 newtime = cpu_ticks() / CLOCKS_PER_MILISEC;
@@ -340,8 +372,9 @@ int readPads()
     int rslt = 0;
 
     for (i = 0; i < pad_count; ++i) {
-        rslt |= readPad(&pad_data[i]);
+        rslt |= readPad(&pad_data[i], i);
     }
+    mergeControllerStates();
 
     for (i = 0; i < 16; ++i) {
         if (getKeyPressed(i + 1))
@@ -446,6 +479,19 @@ int getButtonDelay(int button)
         return 0;
 
     return paddelay[button - 1];
+}
+
+const pad_controller_state_t *padGetControllerState(int player)
+{
+    if (player < 0 || player >= PAD_CONTROLLER_COUNT)
+        return NULL;
+
+    return &controller_state[player];
+}
+
+int padGetControllerCount(void)
+{
+    return PAD_CONTROLLER_COUNT;
 }
 
 /** Unloads a single pad.

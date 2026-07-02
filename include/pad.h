@@ -20,9 +20,26 @@
 #define KEY_R2       15
 #define KEY_L2       16
 
+#define PAD_CONTROLLER_COUNT 4
+
+#define PAD_CONTROLLER_SOURCE_NONE 0
+#define PAD_CONTROLLER_SOURCE_PS2  1
+#define PAD_CONTROLLER_SOURCE_DS34 2
+#define PAD_CONTROLLER_SOURCE_XBOX 3
+
+typedef struct pad_controller_state
+{
+    int connected;
+    int source;
+    unsigned int buttons;
+} pad_controller_state_t;
+
 int startPads();
 int readPads();
 void unloadPads();
+
+const pad_controller_state_t *padGetControllerState(int player);
+int padGetControllerCount(void);
 
 int getKey(int num);
 
