@@ -1362,7 +1362,6 @@ static void ps5UpdateControllerLiveStatus(void)
 {
     u8 raw[72];
     u8 *data;
-    int base = 0;
     int first = 1;
     int hasSignal = 0;
     u16 lt, rt;
@@ -1374,59 +1373,59 @@ static void ps5UpdateControllerLiveStatus(void)
     }
 
     data = raw + 8;
-    if (data[0] != 0x20 && data[1] == 0x20)
-        base = 1;
 
     snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: ");
 
-    if (data[base + 5] & 0x01)
+    if (data[5] & 0x01)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Up");
-    if (data[base + 5] & 0x02)
+    if (data[5] & 0x02)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Down");
-    if (data[base + 5] & 0x04)
+    if (data[5] & 0x04)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Left");
-    if (data[base + 5] & 0x08)
+    if (data[5] & 0x08)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Right");
-    if (data[base + 5] & 0x10)
+    if (data[5] & 0x10)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L1/LB");
-    if (data[base + 5] & 0x20)
+    if (data[5] & 0x20)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R1/RB");
-    if (data[base + 5] & 0x40)
+    if (data[5] & 0x40)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L3");
-    if (data[base + 5] & 0x80)
+    if (data[5] & 0x80)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R3");
 
-    if (data[base + 4] & 0x04)
+    if (data[4] & 0x04)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Start/Menu");
-    if (data[base + 4] & 0x08)
+    if (data[4] & 0x08)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Select/View");
-    if (data[base + 4] & 0x10)
+    if (data[4] & 0x10)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Cross/A");
-    if (data[base + 4] & 0x20)
+    if (data[4] & 0x20)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Circle/B");
-    if (data[base + 4] & 0x40)
+    if (data[4] & 0x40)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Square/X");
-    if (data[base + 4] & 0x80)
+    if (data[4] & 0x80)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Triangle/Y");
 
-    lt = data[base + 6] | (data[base + 7] << 8);
-    rt = data[base + 8] | (data[base + 9] << 8);
+    lt = data[6] | (data[7] << 8);
+    rt = data[8] | (data[9] << 8);
     if (lt > 0)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L2/LT");
     if (rt > 0)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R2/RT");
 
-    lx = (short)((data[base + 11] << 8) | data[base + 10]);
-    ly = (short)((data[base + 13] << 8) | data[base + 12]);
-    rx = (short)((data[base + 15] << 8) | data[base + 14]);
-    ry = (short)((data[base + 17] << 8) | data[base + 16]);
+    lx = (short)((data[11] << 8) | data[10]);
+    ly = (short)((data[13] << 8) | data[12]);
+    rx = (short)((data[15] << 8) | data[14]);
+    ry = (short)((data[17] << 8) | data[16]);
     if (lx < -8192 || lx > 8192 || ly < -8192 || ly > 8192)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Left Stick");
     if (rx < -8192 || rx > 8192 || ry < -8192 || ry > 8192)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Right Stick");
 
     if (first) {
-        hasSignal = data[0] || data[1] || data[2] || data[3] || data[4] || data[5];
+        hasSignal = data[4] || data[5] || data[6] || data[7] || data[8] || data[9] ||
+                    lx < -8192 || lx > 8192 || ly < -8192 || ly > 8192 ||
+                    rx < -8192 || rx > 8192 || ry < -8192 || ry > 8192;
         if (hasSignal)
             snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: signal b0-b9=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
                      data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]);
