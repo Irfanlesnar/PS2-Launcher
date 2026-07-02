@@ -7,12 +7,9 @@
 #include "include/opl.h"
 #include "include/pad.h"
 #include "include/ioman.h"
-#include "include/guigame.h"
-#include <delaythread.h>
 #include <libpad.h>
 #include <timer.h>
 #include <time.h>
-#include <string.h>
 
 #ifdef PADEMU
 #include <libds34bt.h>
@@ -26,136 +23,6 @@
 
 // 200 ms per repeat
 #define DEFAULT_PAD_DELAY 200
-
-#ifdef PADEMU
-#define XBOXUSB_BIND_RPC_ID 0x18E38791
-#define XBOXUSB_GET_DATA    2
-
-extern void *_gp;
-extern int gPS5TempControllerType;
-extern int gPS5ControllerLogVisible;
-
-static SifRpcClientData_t xboxusb;
-static u8 xboxusb_rpcbuf[18] __attribute__((aligned(64)));
-static unsigned char xboxusb_thread_stack[0x2000] __attribute__((aligned(16)));
-static int xboxusb_thread_id = -1;
-static volatile u32 xboxusb_paddata = 0;
-
-static int xboxusb_controller_enabled(void)
-{
-    return guiGameGetPadEmuGlobalController() == 3 || gPS5TempControllerType == 3;
-}
-
-static u32 xboxusb_read_left_joy(struct padButtonStatus *buttons, u32 pdata)
-{
-    u32 padData = pdata;
-    int xDeadzone, yDeadzone;
-
-    switch (gXSensitivity) {
-        case 0:
-            xDeadzone = 100;
-            break;
-        case 1:
-            xDeadzone = 80;
-            break;
-        case 2:
-            xDeadzone = 60;
-            break;
-        default:
-            xDeadzone = 80;
-    }
-
-    switch (gYSensitivity) {
-        case 0:
-            yDeadzone = 100;
-            break;
-        case 1:
-            yDeadzone = 80;
-            break;
-        case 2:
-            yDeadzone = 60;
-            break;
-        default:
-            yDeadzone = 80;
-    }
-
-    if (buttons->ljoy_h < 127 - xDeadzone)
-        padData |= PAD_LEFT;
-    else if (buttons->ljoy_h > 127 + xDeadzone)
-        padData |= PAD_RIGHT;
-
-    if (buttons->ljoy_v < 127 - yDeadzone)
-        padData |= PAD_UP;
-    else if (buttons->ljoy_v > 127 + yDeadzone)
-        padData |= PAD_DOWN;
-
-    return padData;
-}
-
-static void xboxusb_poll_thread(void *arg)
-{
-    struct padButtonStatus buttons;
-    int bound = 0;
-    u32 newpdata;
-
-    while (1) {
-        if (!xboxusb_controller_enabled() || gPS5ControllerLogVisible) {
-            xboxusb_paddata = 0;
-            DelayThread(50000);
-            continue;
-        }
-
-        if (!bound) {
-            memset(&xboxusb, 0, sizeof(xboxusb));
-            bound = SifBindRpc(&xboxusb, XBOXUSB_BIND_RPC_ID, 0) >= 0 && xboxusb.server != NULL;
-            if (!bound) {
-                xboxusb_paddata = 0;
-                DelayThread(100000);
-                continue;
-            }
-        }
-
-        memset(xboxusb_rpcbuf, 0, sizeof(xboxusb_rpcbuf));
-        xboxusb_rpcbuf[0] = 0xFF;
-        xboxusb_rpcbuf[1] = 0xFF;
-        xboxusb_rpcbuf[2] = 0x7F;
-        xboxusb_rpcbuf[3] = 0x7F;
-        xboxusb_rpcbuf[4] = 0x7F;
-        xboxusb_rpcbuf[5] = 0x7F;
-
-        if (SifCallRpc(&xboxusb, XBOXUSB_GET_DATA, 0, xboxusb_rpcbuf, 1, xboxusb_rpcbuf, sizeof(xboxusb_rpcbuf), NULL, NULL) == 0) {
-            memset(&buttons, 0, sizeof(buttons));
-            memcpy(&buttons.btns, xboxusb_rpcbuf, sizeof(xboxusb_rpcbuf));
-            newpdata = 0xffff ^ buttons.btns;
-            xboxusb_paddata = xboxusb_read_left_joy(&buttons, newpdata);
-        } else {
-            bound = 0;
-            xboxusb_paddata = 0;
-        }
-
-        DelayThread(16000);
-    }
-}
-
-static void xboxusb_start_thread(void)
-{
-    ee_thread_t thread;
-
-    if (xboxusb_thread_id >= 0)
-        return;
-
-    memset(&thread, 0, sizeof(thread));
-    thread.attr = 0;
-    thread.stack_size = sizeof(xboxusb_thread_stack);
-    thread.gp_reg = &_gp;
-    thread.func = &xboxusb_poll_thread;
-    thread.stack = xboxusb_thread_stack;
-    thread.initial_priority = 59;
-    xboxusb_thread_id = CreateThread(&thread);
-    if (xboxusb_thread_id >= 0)
-        StartThread(xboxusb_thread_id, NULL);
-}
-#endif
 
 struct pad_data_t
 {
@@ -476,13 +343,6 @@ int readPads()
         rslt |= readPad(&pad_data[i]);
     }
 
-#ifdef PADEMU
-    if (xboxusb_paddata != 0) {
-        paddata |= xboxusb_paddata;
-        rslt = 1;
-    }
-#endif
-
     for (i = 0; i < 16; ++i) {
         if (getKeyPressed(i + 1))
             delaycnt[i] -= time_since_last;
@@ -664,10 +524,6 @@ int startPads()
     }
     paddelay[KEY_UP - 1] = 80;
     paddelay[KEY_DOWN - 1] = 80;
-
-#ifdef PADEMU
-    xboxusb_start_thread();
-#endif
 
     return pad_count;
 }
