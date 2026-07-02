@@ -281,7 +281,7 @@ static void xboxusb_poll_thread(void *arg)
 
 static int xboxusb_is_input_packet(const u8 *in)
 {
-    return in[0] == XBOXUSB_INPUT_PACKET || in[1] == XBOXUSB_INPUT_PACKET;
+    return in[0] == XBOXUSB_INPUT_PACKET;
 }
 
 static int xboxusb_axis_to_ds2(u8 low, u8 high)

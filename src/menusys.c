@@ -1373,6 +1373,14 @@ static void ps5UpdateControllerLiveStatus(void)
     }
 
     data = raw + 8;
+    if (data[0] != 0x20) {
+        if (data[0] || data[1] || data[2] || data[3])
+            snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: non-input packet b0-b9=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                     data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]);
+        else
+            snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
+        return;
+    }
 
     snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: ");
 
