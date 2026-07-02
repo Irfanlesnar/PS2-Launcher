@@ -65,6 +65,7 @@ static void usb_data_cb(int resultCode, int bytes, void *arg);
 static int xboxusb_send_packet(const u8 *data, int len);
 static void xboxusb_send_init(void);
 static void xboxusb_poll_thread(void *arg);
+static int xboxusb_is_input_packet(const u8 *in);
 static int xboxusb_axis_to_ds2(u8 low, u8 high);
 static void xboxusb_translate_input(const u8 *in, struct ds2report *out);
 static void xboxusb_get_raw(char *dst, int size);
@@ -263,7 +264,7 @@ static void xboxusb_poll_thread(void *arg)
             ret = UsbInterruptTransfer(xboxpad.interruptEndp, usb_buf, RAW_REPORT_SIZE, usb_data_cb, NULL);
             if (ret == USB_RC_OK) {
                 WaitSema(xboxpad.transferSema);
-                if (usb_result == USB_RC_OK && usb_buf[0] == XBOXUSB_INPUT_PACKET) {
+                if (usb_result == USB_RC_OK && xboxusb_is_input_packet(usb_buf)) {
                     WaitSema(xboxpad.sema);
                     xboxpad.reportLen = RAW_REPORT_SIZE;
                     xboxusb_memcpy(xboxpad.report, usb_buf, RAW_REPORT_SIZE);
@@ -276,6 +277,11 @@ static void xboxusb_poll_thread(void *arg)
             DelayThread(10000);
         }
     }
+}
+
+static int xboxusb_is_input_packet(const u8 *in)
+{
+    return in[0] == XBOXUSB_INPUT_PACKET || in[1] == XBOXUSB_INPUT_PACKET;
 }
 
 static int xboxusb_axis_to_ds2(u8 low, u8 high)
