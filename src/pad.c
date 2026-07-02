@@ -7,6 +7,8 @@
 #include "include/opl.h"
 #include "include/pad.h"
 #include "include/ioman.h"
+#include "include/ds34common.h"
+#include <sifcmd.h>
 #include <libpad.h>
 #include <timer.h>
 #include <time.h>
@@ -23,6 +25,100 @@
 
 // 200 ms per repeat
 #define DEFAULT_PAD_DELAY 200
+
+#ifdef PADEMU
+#define XBOXUSB_PAD_CMD_ID 0x18E38792
+
+typedef struct xboxusb_pad_cmd
+{
+    SifCmdHeader_t header;
+    u32 magic;
+    u32 sequence;
+    u32 connected;
+    struct ds2report ds2;
+} xboxusb_pad_cmd_t;
+
+static volatile int xboxusb_connected = 0;
+static volatile u32 xboxusb_buttons = 0;
+static u32 xboxusb_sequence = 0;
+static int xboxusb_cmd_handler_registered = 0;
+
+static u32 readLeftJoyValues(u8 x, u8 y, u32 pdata)
+{
+    u32 padData = pdata;
+    int xDeadzone, yDeadzone;
+
+    switch (gXSensitivity) {
+        case 0:
+            xDeadzone = 100;
+            break;
+        case 1:
+            xDeadzone = 80;
+            break;
+        case 2:
+            xDeadzone = 60;
+            break;
+        default:
+            xDeadzone = 80;
+    }
+
+    switch (gYSensitivity) {
+        case 0:
+            yDeadzone = 100;
+            break;
+        case 1:
+            yDeadzone = 80;
+            break;
+        case 2:
+            yDeadzone = 60;
+            break;
+        default:
+            yDeadzone = 80;
+    }
+
+    if (x < 127 - xDeadzone)
+        padData |= PAD_LEFT;
+    else if (x > 127 + xDeadzone)
+        padData |= PAD_RIGHT;
+
+    if (y < 127 - yDeadzone)
+        padData |= PAD_UP;
+    else if (y > 127 + yDeadzone)
+        padData |= PAD_DOWN;
+
+    return padData;
+}
+
+static void xboxusb_pad_cmd_handler(void *data, void *harg)
+{
+    xboxusb_pad_cmd_t *cmd = (xboxusb_pad_cmd_t *)data;
+    u32 buttons;
+
+    if (cmd == NULL || cmd->magic != 0x58424F58)
+        return;
+
+    xboxusb_sequence = cmd->sequence;
+    if (!cmd->connected) {
+        xboxusb_connected = 0;
+        xboxusb_buttons = 0;
+        return;
+    }
+
+    buttons = 0xffff ^ cmd->ds2.nButtonState;
+    buttons = readLeftJoyValues(cmd->ds2.LeftStickX, cmd->ds2.LeftStickY, buttons);
+    xboxusb_buttons = buttons;
+    xboxusb_connected = 1;
+}
+
+static void xboxusb_register_cmd_handler(void)
+{
+    if (xboxusb_cmd_handler_registered)
+        return;
+
+    SifAddCmdHandler(XBOXUSB_PAD_CMD_ID, xboxusb_pad_cmd_handler, NULL);
+    xboxusb_cmd_handler_registered = 1;
+}
+#endif
 
 struct pad_data_t
 {
@@ -374,6 +470,10 @@ int readPads()
     for (i = 0; i < pad_count; ++i) {
         rslt |= readPad(&pad_data[i], i);
     }
+#ifdef PADEMU
+    if (xboxusb_connected)
+        setControllerState(2, PAD_CONTROLLER_SOURCE_XBOX, xboxusb_buttons);
+#endif
     mergeControllerStates();
 
     for (i = 0; i < 16; ++i) {
@@ -570,6 +670,10 @@ int startPads()
     }
     paddelay[KEY_UP - 1] = 80;
     paddelay[KEY_DOWN - 1] = 80;
+
+#ifdef PADEMU
+    xboxusb_register_cmd_handler();
+#endif
 
     return pad_count;
 }
