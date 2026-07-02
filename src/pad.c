@@ -10,7 +10,6 @@
 #include <libpad.h>
 #include <timer.h>
 #include <time.h>
-#include <string.h>
 
 #ifdef PADEMU
 #include <libds34bt.h>
@@ -24,46 +23,6 @@
 
 // 200 ms per repeat
 #define DEFAULT_PAD_DELAY 200
-
-#ifdef PADEMU
-#define XBOXUSB_BIND_RPC_ID 0x18E38791
-#define XBOXUSB_GET_DATA    2
-
-static SifRpcClientData_t xboxusb;
-static u8 xboxusb_inited = 0;
-static u8 xboxusb_pending = 0;
-static u8 xboxusb_valid = 0;
-static u8 xboxusb_rpcbuf[18] __attribute__((aligned(64)));
-static u8 xboxusb_cache[18];
-extern int gPS5XboxInputSessionEnabled;
-
-static void xboxusb_rpc_end(void *arg)
-{
-}
-
-static int xboxusb_init(void)
-{
-    if (xboxusb_inited)
-        return 1;
-
-    if (SifBindRpc(&xboxusb, XBOXUSB_BIND_RPC_ID, 0) < 0 || xboxusb.server == NULL)
-        return 0;
-
-    xboxusb_inited = 1;
-    return 1;
-}
-
-static void xboxusb_reset_report(u8 *report)
-{
-    memset(report, 0, 18);
-    report[0] = 0xFF;
-    report[1] = 0xFF;
-    report[2] = 0x7F;
-    report[3] = 0x7F;
-    report[4] = 0x7F;
-    report[5] = 0x7F;
-}
-#endif
 
 struct pad_data_t
 {
@@ -282,93 +241,6 @@ static u32 readLeftJoy(struct pad_data_t *pad, u32 pdata)
     return padData;
 }
 
-#ifdef PADEMU
-static u32 readLeftJoyFromStatus(struct padButtonStatus *buttons, u32 pdata)
-{
-    u32 padData = pdata;
-    int xDeadzone, yDeadzone;
-
-    switch (gXSensitivity) {
-        case 0:
-            xDeadzone = 100;
-            break;
-        case 1:
-            xDeadzone = 80;
-            break;
-        case 2:
-            xDeadzone = 60;
-            break;
-        default:
-            xDeadzone = 80;
-    }
-
-    switch (gYSensitivity) {
-        case 0:
-            yDeadzone = 100;
-            break;
-        case 1:
-            yDeadzone = 80;
-            break;
-        case 2:
-            yDeadzone = 60;
-            break;
-        default:
-            yDeadzone = 80;
-    }
-
-    if (buttons->ljoy_h < 127 - xDeadzone)
-        padData |= PAD_LEFT;
-    else if (buttons->ljoy_h > 127 + xDeadzone)
-        padData |= PAD_RIGHT;
-
-    if (buttons->ljoy_v < 127 - yDeadzone)
-        padData |= PAD_UP;
-    else if (buttons->ljoy_v > 127 + yDeadzone)
-        padData |= PAD_DOWN;
-
-    return padData;
-}
-
-static int readXboxPad(void)
-{
-    struct padButtonStatus buttons;
-    u32 newpdata;
-
-    if (!gPS5XboxInputSessionEnabled) {
-        xboxusb_pending = 0;
-        xboxusb_valid = 0;
-        return 0;
-    }
-
-    if (xboxusb_pending) {
-        if (SifCheckStatRpc(&xboxusb))
-            return 0;
-
-        xboxusb_pending = 0;
-        memcpy(xboxusb_cache, xboxusb_rpcbuf, sizeof(xboxusb_cache));
-        xboxusb_valid = 1;
-    }
-
-    if (!xboxusb_pending && xboxusb_init()) {
-        xboxusb_reset_report(xboxusb_rpcbuf);
-        if (SifCallRpc(&xboxusb, XBOXUSB_GET_DATA, SIF_RPC_M_NOWAIT, xboxusb_rpcbuf, 1, xboxusb_rpcbuf, sizeof(xboxusb_rpcbuf), xboxusb_rpc_end, NULL) == 0)
-            xboxusb_pending = 1;
-    }
-
-    if (!xboxusb_valid)
-        return 0;
-
-    memset(&buttons, 0, sizeof(buttons));
-    memcpy(&buttons.btns, xboxusb_cache, sizeof(xboxusb_cache));
-
-    newpdata = 0xffff ^ buttons.btns;
-    newpdata = readLeftJoyFromStatus(&buttons, newpdata);
-    paddata |= newpdata;
-
-    return newpdata != 0;
-}
-#endif
-
 static int readPad(struct pad_data_t *pad)
 {
     int rcode = 0, oldState, newState, ret, padsRead;
@@ -470,10 +342,6 @@ int readPads()
     for (i = 0; i < pad_count; ++i) {
         rslt |= readPad(&pad_data[i]);
     }
-
-#ifdef PADEMU
-    rslt |= readXboxPad();
-#endif
 
     for (i = 0; i < 16; ++i) {
         if (getKeyPressed(i + 1))

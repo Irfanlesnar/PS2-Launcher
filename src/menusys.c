@@ -1199,7 +1199,6 @@ int gPS5SavedSelectButton = -1;
 int gPS5TempSelectButton = KEY_CIRCLE;
 int gPS5SavedControllerType = -1;
 int gPS5TempControllerType = 0;
-int gPS5XboxInputSessionEnabled = 0;
 int gPS5ControllerLogVisible = 0;
 int gPS5ControllerLogStep = 0;
 int gPS5ControllerLogCaptured = 0;
@@ -2289,12 +2288,10 @@ void menuHandleInputMenu()
             if (getKeyOn(KEY_LEFT)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5TempControllerType = gPS5TempControllerType > 0 ? gPS5TempControllerType - 1 : 3;
-                gPS5XboxInputSessionEnabled = gPS5TempControllerType == 3;
             }
             if (getKeyOn(KEY_RIGHT)) {
                 sfxPlay(SFX_CURSOR);
                 gPS5TempControllerType = gPS5TempControllerType < 3 ? gPS5TempControllerType + 1 : 0;
-                gPS5XboxInputSessionEnabled = gPS5TempControllerType == 3;
             }
             if (getKeyOn(KEY_CROSS) || getKeyOn(gSelectButton)) {
                 int i;
