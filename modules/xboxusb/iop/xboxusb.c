@@ -1,6 +1,5 @@
 #include "types.h"
 #include "loadcore.h"
-#include "sifcmd.h"
 #include "sifrpc.h"
 #include "stdio.h"
 #include "sysclib.h"
@@ -13,7 +12,6 @@
 IRX_ID("xboxusb", 1, 1);
 
 #define XBOXUSB_BIND_RPC_ID 0x18E38791
-#define XBOXUSB_PAD_CMD_ID  0x18E38792
 #define XBOXUSB_GET_RAW     1
 #define XBOXUSB_GET_DATA    2
 
@@ -47,21 +45,10 @@ typedef struct xboxusb_device
     struct ds2report ds2;
 } xboxusb_device;
 
-typedef struct xboxusb_pad_cmd
-{
-    SifCmdHeader_t header;
-    u32 magic;
-    u32 sequence;
-    u32 connected;
-    struct ds2report ds2;
-} xboxusb_pad_cmd_t;
-
 static xboxusb_device xboxpad;
 static u8 usb_buf[RAW_REPORT_SIZE + 32] __attribute((aligned(4))) = {0};
 static int usb_result = 1;
 static int rpc_buf[RPC_REPORT_SIZE] __attribute((aligned(16)));
-static xboxusb_pad_cmd_t pad_cmd __attribute((aligned(16)));
-static u32 pad_sequence = 0;
 
 static const u8 xboxone_power_on[] = {0x05, 0x20, 0x00, 0x01, 0x00};
 static const u8 xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0F, 0x06};
@@ -81,8 +68,6 @@ static void xboxusb_poll_thread(void *arg);
 static int xboxusb_is_input_packet(const u8 *in);
 static int xboxusb_axis_to_ds2(u8 low, u8 high);
 static void xboxusb_translate_input(const u8 *in, struct ds2report *out);
-static int xboxusb_ds2_changed(const struct ds2report *a, const struct ds2report *b);
-static void xboxusb_send_pad_cmd(int connected);
 static void xboxusb_get_raw(char *dst, int size);
 static void xboxusb_get_data(char *dst, int size);
 
@@ -218,7 +203,6 @@ static void usb_release(void)
     xboxpad.seq = 0;
     xboxusb_memset(xboxpad.report, 0, sizeof(xboxpad.report));
     xboxusb_reset_ds2();
-    xboxusb_send_pad_cmd(0);
 }
 
 static void usb_config_set(int result, int count, void *arg)
@@ -281,14 +265,10 @@ static void xboxusb_poll_thread(void *arg)
             if (ret == USB_RC_OK) {
                 WaitSema(xboxpad.transferSema);
                 if (usb_result == USB_RC_OK && xboxusb_is_input_packet(usb_buf)) {
-                    struct ds2report prev;
                     WaitSema(xboxpad.sema);
-                    xboxusb_memcpy(&prev, &xboxpad.ds2, sizeof(prev));
                     xboxpad.reportLen = RAW_REPORT_SIZE;
                     xboxusb_memcpy(xboxpad.report, usb_buf, RAW_REPORT_SIZE);
                     xboxusb_translate_input(xboxpad.report, &xboxpad.ds2);
-                    if (xboxusb_ds2_changed(&prev, &xboxpad.ds2))
-                        xboxusb_send_pad_cmd(1);
                     SignalSema(xboxpad.sema);
                 }
                 usb_result = 1;
@@ -379,29 +359,6 @@ static void xboxusb_translate_input(const u8 *in, struct ds2report *out)
     out->PressureR1 = (buttons & DS2ButtonR1) ? 0xFF : 0x00;
     out->PressureL2 = lt > 0x3FF ? 0xFF : (lt >> 2);
     out->PressureR2 = rt > 0x3FF ? 0xFF : (rt >> 2);
-}
-
-static int xboxusb_ds2_changed(const struct ds2report *a, const struct ds2report *b)
-{
-    const u8 *ap = (const u8 *)a;
-    const u8 *bp = (const u8 *)b;
-    int i;
-
-    for (i = 0; i < (int)sizeof(struct ds2report); i++) {
-        if (ap[i] != bp[i])
-            return 1;
-    }
-
-    return 0;
-}
-
-static void xboxusb_send_pad_cmd(int connected)
-{
-    pad_cmd.magic = 0x58424F58; /* XBOX */
-    pad_cmd.sequence = ++pad_sequence;
-    pad_cmd.connected = connected;
-    xboxusb_memcpy(&pad_cmd.ds2, &xboxpad.ds2, sizeof(pad_cmd.ds2));
-    SifSendCmd(XBOXUSB_PAD_CMD_ID, &pad_cmd, sizeof(pad_cmd), NULL, NULL, 0);
 }
 
 static void xboxusb_get_raw(char *dst, int size)
