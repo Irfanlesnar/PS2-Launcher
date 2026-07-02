@@ -1205,6 +1205,7 @@ int gPS5ControllerLogStep = 0;
 int gPS5ControllerLogCaptured = 0;
 char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
 char gPS5ControllerLogLatest[192] = "Latest: no report";
+char gPS5ControllerLogPressed[128] = "Pressed: no input found";
 char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Circle: close";
 char gPS5ControllerLogLines[20][192];
 int gPS5SmbSettingsSel = 0;
@@ -1344,6 +1345,94 @@ static int ps5ReadControllerRaw(u8 *raw)
     snprintf(gPS5ControllerLogDevice, sizeof(gPS5ControllerLogDevice), "DEVICE: Xbox USB logger not ready");
     snprintf(gPS5ControllerLogLatest, sizeof(gPS5ControllerLogLatest), "Latest: no report");
     return 0;
+}
+
+static void ps5AppendPressed(char *dst, int dstSize, int *first, const char *name)
+{
+    int len = strlen(dst);
+
+    if (len >= dstSize - 2)
+        return;
+
+    snprintf(dst + len, dstSize - len, "%s%s", *first ? "" : " + ", name);
+    *first = 0;
+}
+
+static void ps5UpdateControllerLiveStatus(void)
+{
+    u8 raw[72];
+    u8 *data;
+    int base = 0;
+    int first = 1;
+    int hasSignal = 0;
+    u16 lt, rt;
+    int lx, ly, rx, ry;
+
+    if (!ps5ReadControllerRaw(raw)) {
+        snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
+        return;
+    }
+
+    data = raw + 8;
+    if (data[0] != 0x20 && data[1] == 0x20)
+        base = 1;
+
+    snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: ");
+
+    if (data[base + 5] & 0x01)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Up");
+    if (data[base + 5] & 0x02)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Down");
+    if (data[base + 5] & 0x04)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Left");
+    if (data[base + 5] & 0x08)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Dpad Right");
+    if (data[base + 5] & 0x10)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L1/LB");
+    if (data[base + 5] & 0x20)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R1/RB");
+    if (data[base + 5] & 0x40)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L3");
+    if (data[base + 5] & 0x80)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R3");
+
+    if (data[base + 4] & 0x04)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Start/Menu");
+    if (data[base + 4] & 0x08)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Select/View");
+    if (data[base + 4] & 0x10)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Cross/A");
+    if (data[base + 4] & 0x20)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Circle/B");
+    if (data[base + 4] & 0x40)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Square/X");
+    if (data[base + 4] & 0x80)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Triangle/Y");
+
+    lt = data[base + 6] | (data[base + 7] << 8);
+    rt = data[base + 8] | (data[base + 9] << 8);
+    if (lt > 0)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "L2/LT");
+    if (rt > 0)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "R2/RT");
+
+    lx = (short)((data[base + 11] << 8) | data[base + 10]);
+    ly = (short)((data[base + 13] << 8) | data[base + 12]);
+    rx = (short)((data[base + 15] << 8) | data[base + 14]);
+    ry = (short)((data[base + 17] << 8) | data[base + 16]);
+    if (lx < -8192 || lx > 8192 || ly < -8192 || ly > 8192)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Left Stick");
+    if (rx < -8192 || rx > 8192 || ry < -8192 || ry > 8192)
+        ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Right Stick");
+
+    if (first) {
+        hasSignal = data[0] || data[1] || data[2] || data[3] || data[4] || data[5];
+        if (hasSignal)
+            snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: signal b0-b9=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                     data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]);
+        else
+            snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
+    }
 }
 
 static void ps5CaptureControllerLogStep(void)
@@ -1874,6 +1963,8 @@ void menuHandleInputMenu()
             gPS5SubSel = 8;
 
         if (gPS5ControllerLogVisible) {
+            ps5UpdateControllerLiveStatus();
+
             if (getKeyOn(KEY_CIRCLE)) {
                 sfxPlay(SFX_CANCEL);
                 gPS5ControllerLogVisible = 0;
