@@ -3296,6 +3296,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
         extern int gPS5ControllerLogVisible;
         extern int gPS5ControllerLogStep;
         extern int gPS5ControllerLogCaptured;
+        extern int gPS5ControllerLogNavTestEnabled;
         extern char gPS5ControllerLogDevice[96];
         extern char gPS5ControllerLogLatest[192];
         extern char gPS5ControllerLogPressed[128];
@@ -3342,6 +3343,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             char latestLine[192];
             char pressedLine[128];
             char bridgeLine[128];
+            char navLine[64];
 
             strncpy(latestLine, gPS5ControllerLogLatest, sizeof(latestLine) - 1);
             latestLine[sizeof(latestLine) - 1] = '\0';
@@ -3361,9 +3363,11 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             snprintf(stepText, sizeof(stepText), "Step %d: %s", gPS5ControllerLogStep + 1, steps[gPS5ControllerLogStep] ? steps[gPS5ControllerLogStep] : "DONE");
             snprintf(capturedText, sizeof(capturedText), "Captured: %d", gPS5ControllerLogCaptured);
+            snprintf(navLine, sizeof(navLine), "Nav Test: %s", gPS5ControllerLogNavTestEnabled ? "ON" : "OFF");
 
             fntRenderString(gPS5SemiBoldFont, panelX + 24, panelY + 26, ALIGN_LEFT, 0, 0, stepText, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             fntRenderString(gPS5RegFont, panelX + panelW - 24, panelY + 26, ALIGN_RIGHT, 0, 0, capturedText, GS_SETREG_RGBA(0xA8, 0xA8, 0xA8, 0x70));
+            fntRenderString(gPS5SmallFont, panelX + panelW - 24, panelY + 54, ALIGN_RIGHT, 0, 0, navLine, gPS5ControllerLogNavTestEnabled ? GS_SETREG_RGBA(0x90, 0xFF, 0xA8, 0x78) : GS_SETREG_RGBA(0xA8, 0xA8, 0xA8, 0x60));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 70, ALIGN_LEFT, 0, 0, gPS5ControllerLogDevice, GS_SETREG_RGBA(0xD0, 0xD0, 0xD0, 0x78));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 98, ALIGN_LEFT, 0, 0, pressedLine, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x78));
             fntRenderString(gPS5SmallFont, panelX + 24, panelY + 122, ALIGN_LEFT, 0, 0, bridgeLine, GS_SETREG_RGBA(0xB8, 0xD8, 0xFF, 0x78));
@@ -3381,6 +3385,7 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
             drawPS5IconAndText(CROSS_ICON, "Capture", gPS5SemiBoldFont, 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             drawPS5IconAndText(SQUARE_ICON, "Save", gPS5SemiBoldFont, 170, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            drawPS5IconAndText(TRIANGLE_ICON, "Nav Test", gPS5SemiBoldFont, 270, footerY, gPS5ControllerLogNavTestEnabled ? GS_SETREG_RGBA(0x90, 0xFF, 0xA8, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             drawPS5RightIconAndText(CIRCLE_ICON, "Close", gPS5SemiBoldFont, screenWidth - 50, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
             return;
         }

@@ -55,6 +55,12 @@ static u32 oldpaddata;
 static int delaycnt[16];
 static int paddelay[16];
 
+#ifdef PADEMU
+extern int gPS5ControllerLogVisible;
+extern int gPS5ControllerLogNavTestEnabled;
+extern unsigned int gPS5ControllerLogBridgePadData;
+#endif
+
 // KEY_ to PAD_ conversion table
 static const int keyToPad[17] = {
     -1,
@@ -374,6 +380,10 @@ int readPads()
     for (i = 0; i < pad_count; ++i) {
         rslt |= readPad(&pad_data[i], i);
     }
+#ifdef PADEMU
+    if (gPS5ControllerLogVisible && gPS5ControllerLogNavTestEnabled && gPS5ControllerLogBridgePadData != 0)
+        setControllerState(2, PAD_CONTROLLER_SOURCE_XBOX, gPS5ControllerLogBridgePadData);
+#endif
     mergeControllerStates();
 
     for (i = 0; i < 16; ++i) {

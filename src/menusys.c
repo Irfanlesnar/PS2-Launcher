@@ -1202,11 +1202,13 @@ int gPS5TempControllerType = 0;
 int gPS5ControllerLogVisible = 0;
 int gPS5ControllerLogStep = 0;
 int gPS5ControllerLogCaptured = 0;
+int gPS5ControllerLogNavTestEnabled = 0;
+unsigned int gPS5ControllerLogBridgePadData = 0;
 char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
 char gPS5ControllerLogLatest[192] = "Latest: no report";
 char gPS5ControllerLogPressed[128] = "Pressed: no input found";
 char gPS5ControllerLogBridge[128] = "Bridge: no valid input packet";
-char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Circle: close";
+char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Triangle: nav test  Circle: close";
 char gPS5ControllerLogLines[20][192];
 int gPS5SmbSettingsSel = 0;
 int gPS5TempEthEnabled = 0;
@@ -1365,6 +1367,7 @@ static void ps5UpdateControllerBridgeStatus(const u8 *data)
     int lx, ly;
 
     if (data[0] != 0x20) {
+        gPS5ControllerLogBridgePadData = 0;
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: ignored non-input packet");
         return;
     }
@@ -1417,10 +1420,11 @@ static void ps5UpdateControllerBridgeStatus(const u8 *data)
     else if (ly > 8192)
         padData |= PAD_DOWN;
 
+    gPS5ControllerLogBridgePadData = padData;
     if (padData)
-        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: launcher paddata=0x%04X", padData & 0xFFFF);
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: launcher paddata=0x%04X%s", padData & 0xFFFF, gPS5ControllerLogNavTestEnabled ? " (nav on)" : "");
     else
-        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: valid input packet, neutral");
+        snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: valid input packet, neutral%s", gPS5ControllerLogNavTestEnabled ? " (nav on)" : "");
 }
 
 static void ps5UpdateControllerLiveStatus(void)
@@ -1433,6 +1437,7 @@ static void ps5UpdateControllerLiveStatus(void)
     int lx, ly, rx, ry;
 
     if (!ps5ReadControllerRaw(raw)) {
+        gPS5ControllerLogBridgePadData = 0;
         snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: no raw report");
         return;
@@ -2042,6 +2047,15 @@ void menuHandleInputMenu()
             if (getKeyOn(KEY_CIRCLE)) {
                 sfxPlay(SFX_CANCEL);
                 gPS5ControllerLogVisible = 0;
+                gPS5ControllerLogNavTestEnabled = 0;
+                gPS5ControllerLogBridgePadData = 0;
+                return;
+            }
+            if (getKeyOn(KEY_TRIANGLE)) {
+                sfxPlay(SFX_CONFIRM);
+                gPS5ControllerLogNavTestEnabled = !gPS5ControllerLogNavTestEnabled;
+                gPS5ControllerLogBridgePadData = 0;
+                snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Nav test %s. Xbox input is active only on this screen.", gPS5ControllerLogNavTestEnabled ? "enabled" : "disabled");
                 return;
             }
             if (getKeyOn(KEY_UP)) {
@@ -2368,9 +2382,11 @@ void menuHandleInputMenu()
                 gPS5ControllerLogVisible = 1;
                 gPS5ControllerLogStep = 0;
                 gPS5ControllerLogCaptured = 0;
+                gPS5ControllerLogNavTestEnabled = 0;
+                gPS5ControllerLogBridgePadData = 0;
                 for (i = 0; i < 20; i++)
                     gPS5ControllerLogLines[i][0] = '\0';
-                snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Cross: capture  Square: save  Circle: close");
+                snprintf(gPS5ControllerLogStatus, sizeof(gPS5ControllerLogStatus), "Cross: capture  Square: save  Triangle: nav test  Circle: close");
                 ps5ReadControllerRaw(raw);
             }
             if (getKey(KEY_UP)) {
