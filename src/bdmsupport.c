@@ -971,6 +971,14 @@ void bdmEnumerateDevices()
     LOG("bdmEnumerateDevices done\n");
 }
 
+item_list_t *bdmGetDeviceObject(int index)
+{
+    if (index < 0 || index >= MAX_BDM_DEVICES || bdmDeviceListInitialized == 0)
+        return NULL;
+
+    return &bdmDeviceList[index];
+}
+
 void bdmResolveLBA_UDMA(bdm_device_data_t *pDeviceData)
 {
     // If atad is loaded then xhdd is also loaded, query the hdd to see if it supports LBA48 or not.

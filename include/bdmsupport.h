@@ -55,6 +55,7 @@ void bdmInitSemaphore();
 void bdmEnumerateDevices();
 
 void bdmResolveLBA_UDMA(bdm_device_data_t *pDeviceData);
+item_list_t *bdmGetDeviceObject(int index);
 int bdmIsUsbPath(const char *path);
 int bdmIsUsbPathDisconnected(const char *path);
 int bdmIsDeviceLoading(void);

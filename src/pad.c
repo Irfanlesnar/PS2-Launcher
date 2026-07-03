@@ -59,6 +59,8 @@ static int paddelay[16];
 extern int gPS5ControllerLogVisible;
 extern int gPS5ControllerLogNavTestEnabled;
 extern unsigned int gPS5ControllerLogBridgePadData;
+extern int gPS5XboxNavEnabled;
+extern unsigned int gPS5XboxNavPadData;
 #endif
 
 // KEY_ to PAD_ conversion table
@@ -383,6 +385,8 @@ int readPads()
 #ifdef PADEMU
     if (gPS5ControllerLogVisible && gPS5ControllerLogNavTestEnabled && gPS5ControllerLogBridgePadData != 0)
         setControllerState(2, PAD_CONTROLLER_SOURCE_XBOX, gPS5ControllerLogBridgePadData);
+    else if (gPS5XboxNavEnabled && gPS5XboxNavPadData != 0)
+        setControllerState(2, PAD_CONTROLLER_SOURCE_XBOX, gPS5XboxNavPadData);
 #endif
     mergeControllerStates();
 

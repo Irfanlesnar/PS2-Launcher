@@ -892,7 +892,7 @@ static int gPS5TitleFont = -1;
 static int gPS5SmallFont = -1;
 static float gPS5AnimPos = -1.0f;
 
-int gPS5ActiveTab = 0; // 0 = Games, 1 = Settings
+int gPS5ActiveTab = 0; // 0 = Games, 1 = Settings, 2 = Apps
 static int gPS5UserHasNavigated = 0;
 GSTEXTURE gPS5InstagramTex;
 int gPS5InstagramTexLoaded = 0;
@@ -2904,19 +2904,19 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
 
     // Header Navigation (Top Left & Top Right)
     const int gamesX = 50;
-    const int settingsX = 140;
+    const int appsX = 140;
+    const int settingsX = 220;
     const int l1X = 30;
     int l1Width = rmUnScaleX(fntCalcDimensions(gPS5SmallFont, "L1"));
     int tabTextGap = gamesX - (l1X + l1Width);
     int settingsR1X = settingsX + rmUnScaleX(fntCalcDimensions(gPS5RegFont, "Settings")) + tabTextGap;
 
-    if (gPS5ActiveTab == 0) {
-        fntRenderString(gPS5SemiBoldFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        fntRenderString(gPS5RegFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
-    } else {
-        fntRenderString(gPS5RegFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
-        fntRenderString(gPS5SemiBoldFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-    }
+    fntRenderString(gPS5ActiveTab == 0 ? gPS5SemiBoldFont : gPS5RegFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games",
+        gPS5ActiveTab == 0 ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+    fntRenderString(gPS5ActiveTab == 2 ? gPS5SemiBoldFont : gPS5RegFont, appsX, 20, ALIGN_LEFT, 0, 0, "Apps",
+        gPS5ActiveTab == 2 ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+    fntRenderString(gPS5ActiveTab == 1 ? gPS5SemiBoldFont : gPS5RegFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings",
+        gPS5ActiveTab == 1 ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
     // Small L1/R1 indicators (smaller font size, offset adjusted for alignment)
     fntRenderString(gPS5SemiBoldFont, l1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "L1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
     fntRenderString(gPS5SemiBoldFont, settingsR1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "R1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
@@ -3281,6 +3281,99 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             gPS5CarouselNavInterrupt--;
         drawPS5SmbDialogOverlay();
         drawPS5SmbCheckDialogOverlay();
+    } else if (gPS5ActiveTab == 2) {
+        extern volatile int gPS5AppsLoading;
+        extern int gPS5AppsSelected;
+        extern int gPS5AppsItemCount;
+        extern int gPS5AppsGroupCount;
+        extern ps5_app_item_t gPS5Apps[PS5_APPS_MAX_ITEMS];
+        extern ps5_app_group_t gPS5AppGroups[PS5_APPS_MAX_GROUPS];
+        int headerBottom = 56;
+        int footerTop = screenHeight - 44;
+        int footerY = screenHeight - 20;
+        int rowX = 72;
+        int rowY = 86;
+        int rowStep = 30;
+        int rowIndex = 0;
+        int selectedRow = 0;
+        int scrollOffset = 0;
+        int g, i;
+
+        gPS5BgColorR = 0;
+        gPS5BgColorG = 0;
+        gPS5BgColorB = 0;
+        rmDrawRect(0, 0, screenWidth, screenHeight, GS_SETREG_RGBA(0, 0, 0, 0x80));
+        rmDrawRect(0, 0, screenWidth, headerBottom, GS_SETREG_RGBA(0, 0, 0, 0x80));
+        rmDrawRect(0, footerTop, screenWidth, screenHeight - footerTop, GS_SETREG_RGBA(0, 0, 0, 0x80));
+        rmDrawRect(0, headerBottom, screenWidth, 1, GS_SETREG_RGBA(0x38, 0x38, 0x38, 0x40));
+        rmDrawRect(0, footerTop, screenWidth, 1, GS_SETREG_RGBA(0x38, 0x38, 0x38, 0x40));
+
+        fntRenderString(gPS5RegFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+        fntRenderString(gPS5SemiBoldFont, appsX, 20, ALIGN_LEFT, 0, 0, "Apps", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+        fntRenderString(gPS5RegFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+        fntRenderString(gPS5SemiBoldFont, l1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "L1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
+        fntRenderString(gPS5SemiBoldFont, settingsR1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "R1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
+
+        for (g = 0; g < gPS5AppsGroupCount; g++) {
+            if (gPS5AppGroups[g].count <= 0)
+                continue;
+            rowIndex++;
+            for (i = 0; i < gPS5AppsItemCount; i++) {
+                if (gPS5Apps[i].group == g) {
+                    if (i == gPS5AppsSelected)
+                        selectedRow = rowIndex;
+                    rowIndex++;
+                }
+            }
+        }
+
+        if (rowY + selectedRow * rowStep > footerTop - 36)
+            scrollOffset = rowY + selectedRow * rowStep - (footerTop - 36);
+        else if (rowY + selectedRow * rowStep < headerBottom + 26)
+            scrollOffset = rowY + selectedRow * rowStep - (headerBottom + 26);
+        rowY -= scrollOffset;
+
+        rowIndex = 0;
+        for (g = 0; g < gPS5AppsGroupCount; g++) {
+            int y;
+
+            if (gPS5AppGroups[g].count <= 0)
+                continue;
+
+            y = rowY + rowIndex * rowStep;
+            if (y >= headerBottom + 12 && y <= footerTop - 18)
+                fntRenderString(gPS5SemiBoldFont, 50, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, gPS5AppGroups[g].title, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+            rowIndex++;
+
+            for (i = 0; i < gPS5AppsItemCount; i++) {
+                if (gPS5Apps[i].group == g) {
+                    int focused = i == gPS5AppsSelected;
+                    char name[PS5_APPS_NAME_MAX];
+
+                    y = rowY + rowIndex * rowStep;
+                    if (y >= headerBottom + 12 && y <= footerTop - 18) {
+                        strncpy(name, gPS5Apps[i].name, sizeof(name) - 1);
+                        name[sizeof(name) - 1] = '\0';
+                        fntFitString(focused ? gPS5SemiBoldFont : gPS5RegFont, name, screenWidth - rowX - 64);
+                        if (focused)
+                            drawPS5FocusPointer(rowX - 22, y);
+                        fntRenderString(focused ? gPS5SemiBoldFont : gPS5RegFont, rowX, y, ALIGN_LEFT | ALIGN_VCENTER, 0, 0, name,
+                            focused ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xA0, 0xA0, 0xA0, 0x70));
+                    }
+                    rowIndex++;
+                }
+            }
+        }
+
+        if (!gPS5AppsLoading && gPS5AppsItemCount <= 0)
+            fntRenderString(gPS5BoldFont, 320, 245, ALIGN_CENTER, 0, 0, "NO APPS FOUND", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x2C));
+
+        drawPS5IconAndText(CROSS_ICON, "Open", gPS5SemiBoldFont, 50, footerY,
+            (!gPS5AppsLoading && gPS5AppsItemCount > 0) ? GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
+        drawPS5IconAndText(SQUARE_ICON, "Refresh", gPS5SemiBoldFont, 150, footerY, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
+
+        if (gPS5AppsLoading)
+            drawPS5DeviceLoadingOverlay();
     } else {
         extern int gPS5SubSel;
         extern int gPS5TempVMode;
@@ -3631,13 +3724,9 @@ static void drawPS5Launcher(struct menu_list *menu, struct submenu_list *item, s
             rmDrawRect(0, settingsFooterTop, screenWidth, 1, GS_SETREG_RGBA(0x38, 0x38, 0x38, 0x40));
         }
 
-        if (gPS5ActiveTab == 0) {
-            fntRenderString(gPS5SemiBoldFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-            fntRenderString(gPS5RegFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
-        } else {
-            fntRenderString(gPS5RegFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
-            fntRenderString(gPS5SemiBoldFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
-        }
+        fntRenderString(gPS5RegFont, gamesX, 20, ALIGN_LEFT, 0, 0, "Games", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+        fntRenderString(gPS5RegFont, appsX, 20, ALIGN_LEFT, 0, 0, "Apps", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x56));
+        fntRenderString(gPS5SemiBoldFont, settingsX, 20, ALIGN_LEFT, 0, 0, "Settings", GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80));
         fntRenderString(gPS5SemiBoldFont, l1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "L1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
         fntRenderString(gPS5SemiBoldFont, settingsR1X, 27, ALIGN_LEFT, 0.70f, 0.70f, "R1", GS_SETREG_RGBA(0x58, 0x58, 0x58, 0x50));
 

@@ -22,6 +22,8 @@
 #include "include/ethsupport.h"
 #include "include/config.h"
 #include "include/util.h"
+#include "include/bdmsupport.h"
+#include "include/hddsupport.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <string.h>
@@ -66,6 +68,7 @@ enum GAME_MENU_IDs {
 #define PS5_SMB_SETTINGS_COUNT 11
 #define PS5_CAROUSEL_REPEAT_DELAY 120
 #define PS5_CAROUSEL_REPEAT_DELAY_FAST 100
+#define PS5_APPS_SCAN_MAX_DEPTH 8
 
 static int ps5CarouselHoldDirection = 0;
 static clock_t ps5CarouselHoldStarted = 0;
@@ -1204,6 +1207,8 @@ int gPS5ControllerLogStep = 0;
 int gPS5ControllerLogCaptured = 0;
 int gPS5ControllerLogNavTestEnabled = 0;
 unsigned int gPS5ControllerLogBridgePadData = 0;
+int gPS5XboxNavEnabled = 0;
+unsigned int gPS5XboxNavPadData = 0;
 char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
 char gPS5ControllerLogLatest[192] = "Latest: no report";
 char gPS5ControllerLogPressed[128] = "Pressed: no input found";
@@ -1230,6 +1235,15 @@ static unsigned int gPS5SmbAutoStartFrame = 0;
 static unsigned int gPS5SmbManualRefreshFrame = 0;
 static unsigned int gPS5SmbRetryFrame = 0;
 volatile int gPS5SmbUiLoading = 0;
+
+volatile int gPS5AppsLoading = 0;
+int gPS5AppsScanned = 0;
+int gPS5AppsSelected = 0;
+int gPS5AppsItemCount = 0;
+int gPS5AppsGroupCount = 0;
+ps5_app_item_t gPS5Apps[PS5_APPS_MAX_ITEMS];
+ps5_app_group_t gPS5AppGroups[PS5_APPS_MAX_GROUPS];
+static volatile int gPS5AppsScanQueued = 0;
 
 static void ps5CheckSmbConnectionTask(void);
 int gPS5SmbDialogState = 0; // 0 = hidden, 1 = confirm, 2 = loading, 3 = info, 4 = error
@@ -1309,6 +1323,214 @@ static int ps5GetXboxUsbRawReport(u8 *raw)
 #endif
 }
 
+static int ps5AppsNameEndsWithElf(const char *name)
+{
+    int len;
+
+    if (name == NULL)
+        return 0;
+
+    len = strlen(name);
+    if (len < 4)
+        return 0;
+
+    name += len - 4;
+    return name[0] == '.' &&
+           (name[1] == 'e' || name[1] == 'E') &&
+           (name[2] == 'l' || name[2] == 'L') &&
+           (name[3] == 'f' || name[3] == 'F');
+}
+
+static const char *ps5AppsBaseName(const char *path)
+{
+    const char *base = path;
+    const char *p;
+
+    if (path == NULL)
+        return "";
+
+    for (p = path; *p; p++) {
+        if (*p == '/' || *p == '\\' || *p == ':')
+            base = p + 1;
+    }
+
+    return base;
+}
+
+static void ps5AppsJoinPath(char *dst, int dstSize, const char *dir, const char *name)
+{
+    int len;
+
+    if (dstSize <= 0)
+        return;
+
+    len = strlen(dir);
+    if (len > 0 && (dir[len - 1] == '/' || dir[len - 1] == '\\' || (dir[len - 1] == ':' && strncmp(dir, "pfs", 3) == 0)))
+        snprintf(dst, dstSize, "%s%s", dir, name);
+    else
+        snprintf(dst, dstSize, "%s/%s", dir, name);
+}
+
+static int ps5AppsFindOrAddGroup(const char *title)
+{
+    int i;
+
+    for (i = 0; i < gPS5AppsGroupCount; i++) {
+        if (strcmp(gPS5AppGroups[i].title, title) == 0)
+            return i;
+    }
+
+    if (gPS5AppsGroupCount >= PS5_APPS_MAX_GROUPS)
+        return -1;
+
+    i = gPS5AppsGroupCount++;
+    memset(&gPS5AppGroups[i], 0, sizeof(gPS5AppGroups[i]));
+    strncpy(gPS5AppGroups[i].title, title, sizeof(gPS5AppGroups[i].title) - 1);
+    return i;
+}
+
+static void ps5AppsAddItem(int group, const char *path)
+{
+    ps5_app_item_t *app;
+
+    if (group < 0 || gPS5AppsItemCount >= PS5_APPS_MAX_ITEMS || path == NULL || path[0] == '\0')
+        return;
+
+    app = &gPS5Apps[gPS5AppsItemCount++];
+    memset(app, 0, sizeof(*app));
+    strncpy(app->path, path, sizeof(app->path) - 1);
+    strncpy(app->name, ps5AppsBaseName(path), sizeof(app->name) - 1);
+    app->group = group;
+    gPS5AppGroups[group].count++;
+}
+
+static void ps5AppsScanDirectory(const char *dirPath, int group, int depth)
+{
+    DIR *dir;
+    struct dirent *entry;
+
+    if (dirPath == NULL || depth > PS5_APPS_SCAN_MAX_DEPTH || gPS5AppsItemCount >= PS5_APPS_MAX_ITEMS)
+        return;
+
+    dir = opendir(dirPath);
+    if (dir == NULL)
+        return;
+
+    while ((entry = readdir(dir)) != NULL && gPS5AppsItemCount < PS5_APPS_MAX_ITEMS) {
+        char path[PS5_APPS_PATH_MAX];
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        ps5AppsJoinPath(path, sizeof(path), dirPath, entry->d_name);
+
+        if (entry->d_type == DT_DIR)
+            ps5AppsScanDirectory(path, group, depth + 1);
+        else if (ps5AppsNameEndsWithElf(entry->d_name))
+            ps5AppsAddItem(group, path);
+    }
+
+    closedir(dir);
+}
+
+static void ps5AppsScanRoot(const char *title, const char *root)
+{
+    DIR *dir;
+    int group;
+
+    if (root == NULL || root[0] == '\0')
+        return;
+
+    dir = opendir(root);
+    if (dir == NULL)
+        return;
+    closedir(dir);
+
+    group = ps5AppsFindOrAddGroup(title);
+    if (group >= 0)
+        ps5AppsScanDirectory(root, group, 0);
+}
+
+static const char *ps5AppsBdmDeviceLabel(item_list_t *support)
+{
+    bdm_device_data_t *bdmData;
+
+    if (support == NULL || support->priv == NULL)
+        return "USB";
+
+    bdmData = (bdm_device_data_t *)support->priv;
+    switch (bdmData->bdmDeviceType) {
+        case BDM_TYPE_SDC:
+            return "MX4SIO";
+        case BDM_TYPE_ATA:
+            return "Internal HDD";
+        case BDM_TYPE_ILINK:
+            return "iLink";
+        case BDM_TYPE_USB:
+        default:
+            return "USB";
+    }
+}
+
+static void ps5AppsScanTask(void)
+{
+    int i;
+
+    gPS5AppsLoading = 1;
+    gPS5AppsScanned = 1;
+    gPS5AppsItemCount = 0;
+    gPS5AppsGroupCount = 0;
+    gPS5AppsSelected = 0;
+    memset(gPS5Apps, 0, sizeof(gPS5Apps));
+    memset(gPS5AppGroups, 0, sizeof(gPS5AppGroups));
+
+    ps5AppsScanRoot("Memory Card 1", "mc0:/");
+    ps5AppsScanRoot("Memory Card 2", "mc1:/");
+
+    for (i = 0; i < MAX_BDM_DEVICES; i++) {
+        item_list_t *support = bdmGetDeviceObject(i);
+        char root[16];
+
+        snprintf(root, sizeof(root), "mass%d:/", i);
+        if (support != NULL && support->enabled)
+            ps5AppsScanRoot(ps5AppsBdmDeviceLabel(support), root);
+        else
+            ps5AppsScanRoot("USB", root);
+    }
+
+    ps5AppsScanRoot("Internal HDD", "pfs0:");
+
+    if (gPS5AppsSelected >= gPS5AppsItemCount)
+        gPS5AppsSelected = gPS5AppsItemCount > 0 ? gPS5AppsItemCount - 1 : 0;
+
+    gPS5AppsLoading = 0;
+    gPS5AppsScanQueued = 0;
+}
+
+void ps5QueueAppsScan(int force)
+{
+    if (gPS5AppsLoading || gPS5AppsScanQueued)
+        return;
+
+    if (!force && gPS5AppsScanned)
+        return;
+
+    gPS5AppsScanQueued = 1;
+    gPS5AppsLoading = 1;
+    if (ioPutRequest(IO_CUSTOM_SIMPLEACTION, &ps5AppsScanTask) < 0) {
+        gPS5AppsLoading = 0;
+        gPS5AppsScanQueued = 0;
+    }
+}
+
+void ps5LaunchSelectedApp(void)
+{
+    if (gPS5AppsLoading || gPS5AppsItemCount <= 0 || gPS5AppsSelected < 0 || gPS5AppsSelected >= gPS5AppsItemCount)
+        return;
+
+    sysExecElf(gPS5Apps[gPS5AppsSelected].path);
+}
+
 static void ps5FormatControllerBytes(char *dst, int dstSize, const u8 *data, int len)
 {
     int i;
@@ -1368,6 +1590,8 @@ static void ps5UpdateControllerBridgeStatus(const u8 *data)
 
     if (data[0] != 0x20) {
         gPS5ControllerLogBridgePadData = 0;
+        if (!gPS5ControllerLogVisible)
+            gPS5XboxNavPadData = 0;
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: ignored non-input packet");
         return;
     }
@@ -1421,6 +1645,8 @@ static void ps5UpdateControllerBridgeStatus(const u8 *data)
         padData |= PAD_DOWN;
 
     gPS5ControllerLogBridgePadData = padData;
+    if (!gPS5ControllerLogVisible)
+        gPS5XboxNavPadData = padData;
     if (padData)
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: launcher paddata=0x%04X%s", padData & 0xFFFF, gPS5ControllerLogNavTestEnabled ? " (nav on)" : "");
     else
@@ -1438,6 +1664,8 @@ static void ps5UpdateControllerLiveStatus(void)
 
     if (!ps5ReadControllerRaw(raw)) {
         gPS5ControllerLogBridgePadData = 0;
+        if (!gPS5ControllerLogVisible)
+            gPS5XboxNavPadData = 0;
         snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: no raw report");
         return;
@@ -1512,6 +1740,25 @@ static void ps5UpdateControllerLiveStatus(void)
         else
             snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
     }
+}
+
+static void ps5PollXboxNavigation(void)
+{
+    u8 raw[72];
+
+    gPS5XboxNavEnabled = (gPS5TempControllerType == 3 || guiGameGetPadEmuGlobalController() == 3);
+    if (!gPS5XboxNavEnabled || gPS5ControllerLogVisible) {
+        if (!gPS5ControllerLogVisible)
+            gPS5XboxNavPadData = 0;
+        return;
+    }
+
+    if (!ps5ReadControllerRaw(raw)) {
+        gPS5XboxNavPadData = 0;
+        return;
+    }
+
+    ps5UpdateControllerBridgeStatus(raw + 8);
 }
 
 static void ps5CaptureControllerLogStep(void)
@@ -2572,6 +2819,7 @@ void menuHandleInputMain()
         }
         if (ps5SmbConsumeInputWhileBusy())
             return;
+        ps5PollXboxNavigation();
         if (getKeyOn(KEY_L1)) {
             sfxPlay(SFX_CURSOR);
             if (gPS5ActiveTab == 1) {
@@ -2589,11 +2837,18 @@ void menuHandleInputMain()
             gPS5TempShowCoverImages = gPS5SavedShowCoverImages;
             gPS5TempShowGamesLogo = gPS5SavedShowGamesLogo;
             gPS5TempSortMode = gPS5SavedSortMode;
-            gPS5ActiveTab = 0;
+            gPS5ActiveTab = gPS5ActiveTab == 1 ? 2 : 0;
+            if (gPS5ActiveTab == 2)
+                ps5QueueAppsScan(0);
             return;
         } else if (getKeyOn(KEY_R1)) {
             sfxPlay(SFX_CURSOR);
             if (gPS5ActiveTab == 0) {
+                gPS5ActiveTab = 2;
+                ps5QueueAppsScan(0);
+                return;
+            }
+            if (gPS5ActiveTab == 2) {
                 extern int gPS5SubSel;
                 gPS5SavedVMode = gVMode; // Backup current resolution when switching to settings
                 gPS5TempVMode = gVMode;
@@ -2629,6 +2884,41 @@ void menuHandleInputMain()
 
         if (gPS5ActiveTab == 1) {
             menuHandleInputMenu();
+            return;
+        }
+
+        if (gPS5ActiveTab == 2) {
+            if (!gPS5AppsScanned && !gPS5AppsLoading)
+                ps5QueueAppsScan(0);
+
+            setButtonDelay(KEY_UP, 120);
+            setButtonDelay(KEY_DOWN, 120);
+
+            if (getKey(KEY_UP)) {
+                if (gPS5AppsItemCount > 0) {
+                    sfxPlay(SFX_CURSOR);
+                    gPS5AppsSelected = gPS5AppsSelected > 0 ? gPS5AppsSelected - 1 : gPS5AppsItemCount - 1;
+                }
+            } else if (getKey(KEY_DOWN)) {
+                if (gPS5AppsItemCount > 0) {
+                    sfxPlay(SFX_CURSOR);
+                    gPS5AppsSelected = gPS5AppsSelected + 1 < gPS5AppsItemCount ? gPS5AppsSelected + 1 : 0;
+                }
+            } else if (getKeyOn(KEY_SQUARE)) {
+                if (!gPS5AppsLoading) {
+                    sfxPlay(SFX_CONFIRM);
+                    ps5QueueAppsScan(1);
+                } else {
+                    sfxPlay(SFX_MESSAGE);
+                }
+            } else if (getKeyOn(KEY_CROSS)) {
+                if (gPS5AppsItemCount > 0 && !gPS5AppsLoading) {
+                    sfxPlay(SFX_CONFIRM);
+                    ps5LaunchSelectedApp();
+                } else {
+                    sfxPlay(SFX_MESSAGE);
+                }
+            }
             return;
         }
 

@@ -4,6 +4,24 @@
 #include "include/config.h"
 #include "include/dia.h"
 
+#define PS5_APPS_MAX_GROUPS 8
+#define PS5_APPS_MAX_ITEMS  256
+#define PS5_APPS_NAME_MAX   64
+#define PS5_APPS_PATH_MAX   256
+
+typedef struct ps5_app_item
+{
+    char name[PS5_APPS_NAME_MAX];
+    char path[PS5_APPS_PATH_MAX];
+    int group;
+} ps5_app_item_t;
+
+typedef struct ps5_app_group
+{
+    char title[32];
+    int count;
+} ps5_app_group_t;
+
 struct UIItem;
 
 /// a single submenu item
@@ -113,6 +131,16 @@ void menuHandleInputMenu();
 void menuHandleInputInfo();
 void menuHandleInputGameMenu();
 void menuHandleInputAppMenu();
+
+extern volatile int gPS5AppsLoading;
+extern int gPS5AppsScanned;
+extern int gPS5AppsSelected;
+extern int gPS5AppsItemCount;
+extern int gPS5AppsGroupCount;
+extern ps5_app_item_t gPS5Apps[PS5_APPS_MAX_ITEMS];
+extern ps5_app_group_t gPS5AppGroups[PS5_APPS_MAX_GROUPS];
+void ps5QueueAppsScan(int force);
+void ps5LaunchSelectedApp(void);
 
 // Sets the selected item if it is found in the menu list
 void menuSetSelectedItem(menu_item_t *item);

@@ -24,6 +24,7 @@
 #include "../ee_core/include/modules.h"
 #include "../ee_core/include/coreconfig.h"
 #include <osd_config.h>
+#include <loadfile.h>
 #include "include/pggsm.h"
 #include "include/cheatman.h"
 #include "include/xparam.h"
@@ -1026,6 +1027,29 @@ void sysLaunchLoaderElf(const char *filename, const char *mode_str, int size_cdv
     FlushCache(2);
 
     ExecPS2((void *)eh->entry, NULL, argc, argv);
+}
+
+int sysExecElf(const char *path)
+{
+    char *argv[1];
+    t_ExecData elf;
+
+    if (path == NULL || path[0] == '\0')
+        return -1;
+
+    argv[0] = (char *)path;
+
+    if (SifLoadElf(path, &elf) != 0)
+        return -1;
+
+    FlushCache(0);
+    FlushCache(2);
+
+    SifExitIopHeap();
+    SifExitRpc();
+
+    ExecPS2((void *)elf.epc, (void *)elf.gp, 1, argv);
+    return 0;
 }
 
 int sysCheckMC(void)
