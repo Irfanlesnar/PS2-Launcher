@@ -9,6 +9,7 @@
 #define DS4       1
 #define GUITAR_GH 2
 #define GUITAR_RB 3
+#define XBOX_USB  4
 
 #define MODEL_GUITAR 1
 #define MODEL_PS2    3
@@ -23,9 +24,12 @@ typedef struct _usb_ds34
     int controlEndp;
     int interruptEndp;
     int outEndp;
+    u16 vid;
+    u16 pid;
     u8 enabled;
     u8 status;
     u8 type;      // 0 - ds3, 1 - ds4, 2 - guitar hero guitar, 3 - rock band guitar
+    u8 xbox_seq;
     u8 oldled[4]; // rgb for ds4 and blink
     u8 lrum;
     u8 rrum;
@@ -45,6 +49,7 @@ enum eDS34USBStatus {
     DS34USB_STATE_CONFIGURED = 0x02,
     DS34USB_STATE_CONNECTED = 0x04,
     DS34USB_STATE_RUNNING = 0x08,
+    DS34USB_STATE_INIT_SENT = 0x10,
 };
 
 enum eHID {

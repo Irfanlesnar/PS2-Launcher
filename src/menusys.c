@@ -218,6 +218,42 @@ static void ps5DrawLaunchLoadingTransition(void)
     }
 }
 
+static void ps5DrawAppLaunchTransition(void)
+{
+    GSTEXTURE *loader = thmGetTexture(LOADER_ICON);
+    int screenW, screenH;
+    int frame;
+
+    rmGetScreenExtents(&screenW, &screenH);
+
+    for (frame = 0; frame < 60; frame++) {
+        int alpha;
+        int loaderAlpha;
+        int loaderSize = 14;
+        int loaderX = (screenW - 20 - (loaderSize / 2)) * 4 / rmGetAspectWidth();
+        int loaderY = screenH - 20;
+        float angle = (float)frame * 0.22f;
+
+        if (frame < 12)
+            alpha = (0x80 * frame) / 11;
+        else
+            alpha = 0x80;
+
+        if (frame < 12)
+            loaderAlpha = (0xFF * frame) / 11;
+        else if (frame < 48)
+            loaderAlpha = 0xFF;
+        else
+            loaderAlpha = 0xFF - ((0xFF * (frame - 48)) / 11);
+
+        guiStartFrame();
+        rmDrawRect(0, 0, screenW, screenH, GS_SETREG_RGBA(0, 0, 0, alpha));
+        if (loader && loader->Mem && loaderAlpha > 0)
+            rmDrawRotatedPixmap(loader, loaderX, loaderY, loaderSize, loaderSize, angle, GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, loaderAlpha));
+        guiEndFrame();
+    }
+}
+
 static void ps5GameOptionsSave(config_set_t *configSet)
 {
     if (configSet == NULL)
@@ -1528,6 +1564,7 @@ void ps5LaunchSelectedApp(void)
     if (gPS5AppsLoading || gPS5AppsItemCount <= 0 || gPS5AppsSelected < 0 || gPS5AppsSelected >= gPS5AppsItemCount)
         return;
 
+    ps5DrawAppLaunchTransition();
     sysExecElf(gPS5Apps[gPS5AppsSelected].path);
 }
 

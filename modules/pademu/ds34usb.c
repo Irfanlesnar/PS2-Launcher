@@ -18,6 +18,8 @@
 #define REQ_USB_IN  (USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_INTERFACE)
 
 #define MAX_PADS 4
+#define XBOX_VENDOR_MICROSOFT 0x045E
+#define XBOXUSB_INPUT_PACKET  0x20
 
 static u8 output_01_report[] =
     {
@@ -46,6 +48,11 @@ static u8 power_level[] =
     {
         0x00, 0x00, 0x02, 0x06, 0x0E, 0x1E};
 
+static const u8 xboxone_power_on[] = {0x05, 0x20, 0x00, 0x01, 0x00};
+static const u8 xboxone_s_init[] = {0x05, 0x20, 0x00, 0x0F, 0x06};
+static const u8 xboxone_led_on[] = {0x0A, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14};
+static const u8 xboxone_auth_done[] = {0x06, 0x20, 0x00, 0x02, 0x01, 0x00};
+
 static u8 rgbled_patterns[][2][3] =
     {
         {{0x00, 0x00, 0x10}, {0x00, 0x00, 0x7F}}, // light blue/blue
@@ -55,6 +62,11 @@ static u8 rgbled_patterns[][2][3] =
 };
 
 static u8 usb_buf[MAX_BUFFER_SIZE + 32] __attribute((aligned(4))) = {0};
+static u8 xbox_poll_buf[MAX_BUFFER_SIZE + 32] __attribute((aligned(4))) = {0};
+static int xbox_poll_sema = -1;
+static int xbox_poll_result = 1;
+static int xbox_poll_tid = -1;
+static int xbox_poll_pending = 0;
 
 int usb_probe(int devId);
 int usb_connect(int devId);
@@ -68,6 +80,17 @@ UsbDriver usb_driver = {NULL, NULL, "ds34usb", usb_probe, usb_connect, usb_disco
 static void DS3USB_init(int pad);
 static void readReport(u8 *data, int pad);
 static int LEDRumble(u8 *led, u8 lrum, u8 rrum, int pad);
+static void TransferWait(int sema);
+static void TransferWaitTimeout(int sema, u32 timeout_lo);
+static int xboxusb_is_input_packet(const u8 *data);
+static void xboxusb_poll_thread(void *arg);
+static void xboxusb_poll_cb(int resultCode, int bytes, void *arg);
+static int xboxusb_axis_to_ds2(u8 low, u8 high);
+static void xboxusb_apply_buttons(const u8 *in, struct ds2report *out);
+static void xboxusb_translate_input(const u8 *in, struct ds2report *out);
+static void xboxusb_translate_framed_input(const u8 *in, struct ds2report *out);
+static int xboxusb_send_packet(int pad, const u8 *data, int len);
+static int xboxusb_send_init(int pad);
 
 ds34usb_device ds34pad[MAX_PADS];
 
@@ -88,6 +111,9 @@ int usb_probe(int devId)
     }
 
     if (device->idVendor == DS34_VID && (device->idProduct == DS3_PID || device->idProduct == DS4_PID || device->idProduct == DS4_PID_SLIM))
+        return 1;
+
+    if (device->idVendor == XBOX_VENDOR_MICROSOFT)
         return 1;
 
     return 0;
@@ -115,17 +141,28 @@ int usb_connect(int devId)
 
     PollSema(ds34pad[pad].sema);
 
+    device = (UsbDeviceDescriptor *)UsbGetDeviceStaticDescriptor(devId, NULL, USB_DT_DEVICE);
+    config = (UsbConfigDescriptor *)UsbGetDeviceStaticDescriptor(devId, device, USB_DT_CONFIG);
+    if (device == NULL || config == NULL) {
+        SignalSema(ds34pad[pad].sema);
+        return 1;
+    }
+
     ds34pad[pad].devId = devId;
+    ds34pad[pad].vid = device->idVendor;
+    ds34pad[pad].pid = device->idProduct;
 
     ds34pad[pad].status = DS34USB_STATE_AUTHORIZED;
 
     ds34pad[pad].controlEndp = UsbOpenEndpoint(devId, NULL);
 
-    device = (UsbDeviceDescriptor *)UsbGetDeviceStaticDescriptor(devId, NULL, USB_DT_DEVICE);
-    config = (UsbConfigDescriptor *)UsbGetDeviceStaticDescriptor(devId, device, USB_DT_CONFIG);
     interface = (UsbInterfaceDescriptor *)((char *)config + config->bLength);
 
-    if (device->idProduct == DS3_PID) {
+    if (device->idVendor == XBOX_VENDOR_MICROSOFT) {
+        ds34pad[pad].type = XBOX_USB;
+        ds34pad[pad].analog_btn = 1;
+        epCount = interface->bNumEndpoints;
+    } else if (device->idProduct == DS3_PID) {
         ds34pad[pad].type = DS3;
         epCount = interface->bNumEndpoints - 1;
     } else if (device->idProduct == GUITAR_HERO_PS3_PID) {
@@ -201,6 +238,9 @@ static void usb_release(int pad)
     ds34pad[pad].interruptEndp = -1;
     ds34pad[pad].outEndp = -1;
     ds34pad[pad].devId = -1;
+    ds34pad[pad].vid = 0;
+    ds34pad[pad].pid = 0;
+    ds34pad[pad].xbox_seq = 0;
     ds34pad[pad].status = DS34USB_STATE_DISCONNECTED;
 
     SignalSema(ds34pad[pad].sema);
@@ -235,6 +275,11 @@ static void usb_config_set(int result, int count, void *arg)
 
     PollSema(ds34pad[pad].sema);
 
+    if (result != USB_RC_OK) {
+        SignalSema(ds34pad[pad].sema);
+        return;
+    }
+
     ds34pad[pad].status |= DS34USB_STATE_CONFIGURED;
 
     if (ds34pad[pad].type == DS3) {
@@ -247,9 +292,11 @@ static void usb_config_set(int result, int count, void *arg)
         led[1] = rgbled_patterns[pad][1][1];
         led[2] = rgbled_patterns[pad][1][2];
         led[3] = 0;
-    }
+    } else if (ds34pad[pad].type == XBOX_USB)
+        xboxusb_send_init(pad);
 
-    LEDRumble(led, 0, 0, pad);
+    if (ds34pad[pad].type != XBOX_USB)
+        LEDRumble(led, 0, 0, pad);
 
     ds34pad[pad].status |= DS34USB_STATE_RUNNING;
 
@@ -279,6 +326,18 @@ static void readReport(u8 *data, int pad_idx)
         translate_pad_guitar(report, &pad->ds2, pad->type == GUITAR_GH);
         padMacroPerform(&pad->ds2, report->PSButton);
     }
+    if (pad->type == XBOX_USB) {
+        if (!xboxusb_is_input_packet(data))
+            return;
+
+        if (data[0] == 0x03)
+            xboxusb_translate_framed_input(data, &pad->ds2);
+        else
+            xboxusb_translate_input(data, &pad->ds2);
+        padMacroPerform(&pad->ds2, 0);
+        return;
+    }
+
     if (data[0]) {
 
         if (pad->type == DS3) {
@@ -363,6 +422,185 @@ static void readReport(u8 *data, int pad_idx)
     }
 }
 
+static int xboxusb_is_input_packet(const u8 *data)
+{
+    if (data[0] == XBOXUSB_INPUT_PACKET)
+        return 1;
+
+    if (data[0] == 0x03 && data[1] == XBOXUSB_INPUT_PACKET && data[3] == 0x04)
+        return 1;
+
+    return 0;
+}
+
+static void xboxusb_poll_cb(int resultCode, int bytes, void *arg)
+{
+    int pad = (int)arg;
+
+    xbox_poll_result = resultCode;
+    if (xbox_poll_result == USB_RC_OK && xboxusb_is_input_packet(xbox_poll_buf)) {
+        WaitSema(ds34pad[pad].sema);
+        if (xbox_poll_buf[0] == 0x03)
+            xboxusb_translate_framed_input(xbox_poll_buf, &ds34pad[pad].ds2);
+        else
+            xboxusb_translate_input(xbox_poll_buf, &ds34pad[pad].ds2);
+        padMacroPerform(&ds34pad[pad].ds2, 0);
+        SignalSema(ds34pad[pad].sema);
+    }
+
+    xbox_poll_result = 1;
+    xbox_poll_pending = 0;
+}
+
+static void xboxusb_apply_buttons(const u8 *in, struct ds2report *out)
+{
+    u16 buttons = 0;
+    u16 lt = in[6] | (in[7] << 8);
+    u16 rt = in[8] | (in[9] << 8);
+
+    if (in[5] & 0x01)
+        buttons |= DS2ButtonUp;
+    if (in[5] & 0x02)
+        buttons |= DS2ButtonDown;
+    if (in[5] & 0x04)
+        buttons |= DS2ButtonLeft;
+    if (in[5] & 0x08)
+        buttons |= DS2ButtonRight;
+    if (in[5] & 0x10)
+        buttons |= DS2ButtonL1;
+    if (in[5] & 0x20)
+        buttons |= DS2ButtonR1;
+    if (in[5] & 0x40)
+        buttons |= DS2ButtonL3;
+    if (in[5] & 0x80)
+        buttons |= DS2ButtonR3;
+
+    if (in[4] & 0x04)
+        buttons |= DS2ButtonStart;
+    if (in[4] & 0x08)
+        buttons |= DS2ButtonSelect;
+    if (in[4] & 0x10)
+        buttons |= DS2ButtonCross;
+    if (in[4] & 0x20)
+        buttons |= DS2ButtonCircle;
+    if (in[4] & 0x40)
+        buttons |= DS2ButtonSquare;
+    if (in[4] & 0x80)
+        buttons |= DS2ButtonTriangle;
+
+    if (lt > 0)
+        buttons |= DS2ButtonL2;
+    if (rt > 0)
+        buttons |= DS2ButtonR2;
+
+    out->nButtonState = ~buttons;
+    out->PressureUp = (buttons & DS2ButtonUp) ? 0xFF : 0x00;
+    out->PressureDown = (buttons & DS2ButtonDown) ? 0xFF : 0x00;
+    out->PressureLeft = (buttons & DS2ButtonLeft) ? 0xFF : 0x00;
+    out->PressureRight = (buttons & DS2ButtonRight) ? 0xFF : 0x00;
+    out->PressureTriangle = (buttons & DS2ButtonTriangle) ? 0xFF : 0x00;
+    out->PressureCircle = (buttons & DS2ButtonCircle) ? 0xFF : 0x00;
+    out->PressureCross = (buttons & DS2ButtonCross) ? 0xFF : 0x00;
+    out->PressureSquare = (buttons & DS2ButtonSquare) ? 0xFF : 0x00;
+    out->PressureL1 = (buttons & DS2ButtonL1) ? 0xFF : 0x00;
+    out->PressureR1 = (buttons & DS2ButtonR1) ? 0xFF : 0x00;
+    out->PressureL2 = lt > 0x3FF ? 0xFF : (lt >> 2);
+    out->PressureR2 = rt > 0x3FF ? 0xFF : (rt >> 2);
+}
+
+static void xboxusb_poll_thread(void *arg)
+{
+    int pad, ret;
+
+    while (1) {
+        if (!xbox_poll_pending) {
+            for (pad = 0; pad < MAX_PADS; pad++) {
+                if (ds34pad[pad].type != XBOX_USB || !(ds34pad[pad].status & DS34USB_STATE_CONFIGURED) || ds34pad[pad].interruptEndp < 0)
+                    continue;
+
+                xbox_poll_pending = 1;
+                ret = UsbInterruptTransfer(ds34pad[pad].interruptEndp, xbox_poll_buf, MAX_BUFFER_SIZE, xboxusb_poll_cb, (void *)pad);
+                if (ret != USB_RC_OK)
+                    xbox_poll_pending = 0;
+                break;
+            }
+        }
+
+        DelayThread(16000);
+    }
+}
+
+static int xboxusb_axis_to_ds2(u8 low, u8 high)
+{
+    int value = (short)((high << 8) | low);
+
+    if (value > -12000 && value < 12000)
+        value = 0;
+
+    value = (value >> 8) + 128;
+    if (value < 0)
+        value = 0;
+    if (value > 255)
+        value = 255;
+
+    return value;
+}
+
+static void xboxusb_translate_input(const u8 *in, struct ds2report *out)
+{
+    xboxusb_apply_buttons(in, out);
+    out->LeftStickX = xboxusb_axis_to_ds2(in[10], in[11]);
+    out->LeftStickY = 255 - xboxusb_axis_to_ds2(in[12], in[13]);
+    out->RightStickX = xboxusb_axis_to_ds2(in[14], in[15]);
+    out->RightStickY = 255 - xboxusb_axis_to_ds2(in[16], in[17]);
+}
+
+static void xboxusb_translate_framed_input(const u8 *in, struct ds2report *out)
+{
+    xboxusb_apply_buttons(&in[1], out);
+    out->LeftStickX = xboxusb_axis_to_ds2(in[11], in[12]);
+    out->LeftStickY = 255 - xboxusb_axis_to_ds2(in[13], in[14]);
+    out->RightStickX = xboxusb_axis_to_ds2(in[15], in[16]);
+    out->RightStickY = 255 - xboxusb_axis_to_ds2(in[17], in[18]);
+}
+
+static int xboxusb_send_packet(int pad, const u8 *data, int len)
+{
+    int ret;
+
+    if (ds34pad[pad].outEndp < 0 || len <= 0 || len > MAX_BUFFER_SIZE)
+        return 0;
+
+    PollSema(ds34pad[pad].cmd_sema);
+    mips_memset(usb_buf, 0, sizeof(usb_buf));
+    mips_memcpy(usb_buf, data, len);
+    usb_buf[2] = ds34pad[pad].xbox_seq++;
+
+    ret = UsbInterruptTransfer(ds34pad[pad].outEndp, usb_buf, len, usb_cmd_cb, (void *)pad);
+    if (ret == USB_RC_OK)
+        TransferWait(ds34pad[pad].cmd_sema);
+
+    return ret == USB_RC_OK;
+}
+
+static int xboxusb_send_init(int pad)
+{
+    if (ds34pad[pad].status & DS34USB_STATE_INIT_SENT)
+        return 1;
+
+    if (!xboxusb_send_packet(pad, xboxone_power_on, sizeof(xboxone_power_on)))
+        return 0;
+    if (ds34pad[pad].pid == 0x02EA)
+        xboxusb_send_packet(pad, xboxone_s_init, sizeof(xboxone_s_init));
+    if (!xboxusb_send_packet(pad, xboxone_led_on, sizeof(xboxone_led_on)))
+        return 0;
+    if (!xboxusb_send_packet(pad, xboxone_auth_done, sizeof(xboxone_auth_done)))
+        return 0;
+
+    ds34pad[pad].status |= DS34USB_STATE_INIT_SENT;
+    return 1;
+}
+
 static int LEDRumble(u8 *led, u8 lrum, u8 rrum, int pad)
 {
     int ret = 0;
@@ -427,9 +665,14 @@ static unsigned int timeout(void *arg)
 
 static void TransferWait(int sema)
 {
+    TransferWaitTimeout(sema, 200000);
+}
+
+static void TransferWaitTimeout(int sema, u32 timeout_lo)
+{
     iop_sys_clock_t cmd_timeout;
 
-    cmd_timeout.lo = 200000;
+    cmd_timeout.lo = timeout_lo;
     cmd_timeout.hi = 0;
 
     if (SetAlarm(&cmd_timeout, timeout, (void *)sema) == 0) {
@@ -455,12 +698,22 @@ int ds34usb_get_data(u8 *dst, int size, int port)
 
     WaitSema(ds34pad[port].sema);
 
+    if (ds34pad[port].type == XBOX_USB) {
+        mips_memcpy(dst, ds34pad[port].data, size);
+        ret = ds34pad[port].analog_btn & 1;
+        SignalSema(ds34pad[port].sema);
+        return ret;
+    }
+
     PollSema(ds34pad[port].sema);
 
     ret = UsbInterruptTransfer(ds34pad[port].interruptEndp, usb_buf, MAX_BUFFER_SIZE, usb_data_cb, (void *)port);
 
     if (ret == USB_RC_OK) {
-        TransferWait(ds34pad[port].sema);
+        if (ds34pad[port].type == XBOX_USB)
+            TransferWaitTimeout(ds34pad[port].sema, 2000);
+        else
+            TransferWait(ds34pad[port].sema);
         if (!usb_resulCode)
             readReport(usb_buf, port);
 
@@ -473,12 +726,13 @@ int ds34usb_get_data(u8 *dst, int size, int port)
     ret = ds34pad[port].analog_btn & 1;
 
     if (ds34pad[port].update_rum) {
-        ret = LEDRumble(ds34pad[port].oldled, ds34pad[port].lrum, ds34pad[port].rrum, port);
-        if (ret == USB_RC_OK)
-            TransferWait(ds34pad[port].cmd_sema);
-        else
-            DPRINTF("DS34USB: LEDRumble usb transfer error %d\n", ret);
-
+        if (ds34pad[port].type != XBOX_USB) {
+            ret = LEDRumble(ds34pad[port].oldled, ds34pad[port].lrum, ds34pad[port].rrum, port);
+            if (ret == USB_RC_OK)
+                TransferWait(ds34pad[port].cmd_sema);
+            else
+                DPRINTF("DS34USB: LEDRumble usb transfer error %d\n", ret);
+        }
         ds34pad[port].update_rum = 0;
     }
 
@@ -508,7 +762,10 @@ int ds34usb_get_status(int port)
     int ret;
 
     WaitSema(ds34pad[port].sema);
-    ret = ds34pad[port].status;
+    if (ds34pad[port].type == XBOX_USB && ds34pad[port].devId >= 0)
+        ret = DS34USB_STATE_RUNNING | DS34USB_STATE_CONNECTED | DS34USB_STATE_CONFIGURED | DS34USB_STATE_AUTHORIZED;
+    else
+        ret = ds34pad[port].status;
     SignalSema(ds34pad[port].sema);
 
     return ret;
@@ -532,6 +789,7 @@ int ds34usb_get_model(int port)
 int ds34usb_init(u8 pads, u8 options)
 {
     int pad;
+    iop_thread_t thread;
 
     for (pad = 0; pad < MAX_PADS; pad++) {
         ds34pad[pad].status = 0;
@@ -547,6 +805,10 @@ int ds34usb_init(u8 pads, u8 options)
         ds34pad[pad].cmd_sema = -1;
         ds34pad[pad].controlEndp = -1;
         ds34pad[pad].interruptEndp = -1;
+        ds34pad[pad].outEndp = -1;
+        ds34pad[pad].vid = 0;
+        ds34pad[pad].pid = 0;
+        ds34pad[pad].xbox_seq = 0;
         ds34pad[pad].enabled = (pads >> pad) & 1;
         ds34pad[pad].type = 0;
 
@@ -570,6 +832,22 @@ int ds34usb_init(u8 pads, u8 options)
         DPRINTF("DS34USB: Error registering USB devices\n");
         return 0;
     }
+
+    xbox_poll_sema = CreateMutex(IOP_MUTEX_LOCKED);
+    if (xbox_poll_sema < 0) {
+        DPRINTF("DS34USB: Failed to allocate Xbox poll semaphore.\n");
+        return 0;
+    }
+
+    thread.attr = TH_C;
+    thread.thread = xboxusb_poll_thread;
+    thread.priority = 40;
+    thread.stacksize = 0x800;
+    thread.option = 0;
+
+    xbox_poll_tid = CreateThread(&thread);
+    if (xbox_poll_tid >= 0)
+        StartThread(xbox_poll_tid, NULL);
 
     return 1;
 }

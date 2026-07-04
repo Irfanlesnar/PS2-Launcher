@@ -1032,19 +1032,29 @@ void sysLaunchLoaderElf(const char *filename, const char *mode_str, int size_cdv
 int sysExecElf(const char *path)
 {
     char *argv[1];
+    char execPath[256];
     t_ExecData elf;
+    int i;
 
     if (path == NULL || path[0] == '\0')
         return -1;
 
-    argv[0] = (char *)path;
+    for (i = 0; i < (int)sizeof(execPath) - 1 && path[i] != '\0'; i++)
+        execPath[i] = path[i];
+    execPath[i] = '\0';
 
-    if (SifLoadElf(path, &elf) != 0)
+    argv[0] = execPath;
+
+    if (SifLoadElf(execPath, &elf) != 0)
         return -1;
+
+    deinit(NO_EXCEPTION, IO_MODE_SELECTED_NONE);
+    sysReset(0);
 
     FlushCache(0);
     FlushCache(2);
 
+    SifLoadFileExit();
     SifExitIopHeap();
     SifExitRpc();
 

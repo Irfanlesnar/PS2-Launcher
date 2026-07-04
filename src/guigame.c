@@ -932,11 +932,19 @@ void guiGameSavePadEmuGlobalConfig(config_set_t *configGame)
     }
 }
 
+static const char *PS5_CONTROLLER_TYPE_KEY = "ps5_controller_type";
+
 int guiGameGetPadEmuGlobalController(void)
 {
+    int controllerType = -1;
     int enablePadEmu = 0;
     int padEmuSettings = 0;
+    config_set_t *configOPL = configGetByType(CONFIG_OPL);
     config_set_t *configGame = configGetByType(CONFIG_GAME);
+
+    configGetInt(configOPL, PS5_CONTROLLER_TYPE_KEY, &controllerType);
+    if (controllerType >= 0 && controllerType <= 3)
+        return controllerType;
 
     configGetInt(configGame, CONFIG_ITEM_ENABLEPADEMU, &enablePadEmu);
     configGetInt(configGame, CONFIG_ITEM_PADEMUSETTINGS, &padEmuSettings);
@@ -963,9 +971,9 @@ void guiGameSetPadEmuGlobalController(int controllerType)
             EnablePadEmu = 1;
             PadEmuSettings = 1 | (1 << 8) | (1 << 16);
             break;
-        case 3: // Xbox USB launcher input.
-            EnablePadEmu = 0;
-            PadEmuSettings = (3 << 24);
+        case 3: // Xbox USB.
+            EnablePadEmu = 1;
+            PadEmuSettings = (1 << 8) | (1 << 16);
             break;
         default:
             EnablePadEmu = 0;
@@ -977,6 +985,8 @@ void guiGameSetPadEmuGlobalController(int controllerType)
     gPadEmuSettings = PadEmuSettings;
 
     config_set_t *configGame = configGetByType(CONFIG_GAME);
+    config_set_t *configOPL = configGetByType(CONFIG_OPL);
+    configSetInt(configOPL, PS5_CONTROLLER_TYPE_KEY, controllerType);
     configSetInt(configGame, CONFIG_ITEM_ENABLEPADEMU, EnablePadEmu);
     configSetInt(configGame, CONFIG_ITEM_PADEMUSETTINGS, PadEmuSettings);
 }
