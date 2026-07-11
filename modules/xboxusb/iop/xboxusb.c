@@ -288,7 +288,7 @@ static int xboxusb_axis_to_ds2(u8 low, u8 high)
 {
     int value = (short)((high << 8) | low);
 
-    if (value > -4096 && value < 4096)
+    if (value > -12000 && value < 12000)
         value = 0;
 
     value = (value >> 8) + 128;

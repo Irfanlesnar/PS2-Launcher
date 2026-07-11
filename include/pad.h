@@ -40,6 +40,7 @@ void unloadPads();
 
 const pad_controller_state_t *padGetControllerState(int player);
 int padGetControllerCount(void);
+int padIsPhysicalDualShockConnected(int port);
 
 int getKey(int num);
 

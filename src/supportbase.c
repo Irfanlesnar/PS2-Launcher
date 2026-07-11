@@ -11,6 +11,7 @@
 #include "include/cheatman.h"
 #include "include/ps2cnf.h"
 #include "include/gui.h"
+#include "include/pad.h"
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h> // fileXioMount("iso:", ***), fileXioUmount("iso:")
@@ -580,6 +581,44 @@ int sbProbeISO9660(const char *path, base_game_info_t *game, u32 layer1_offset)
 
 static const struct cdvdman_settings_common cdvdman_settings_common_sample = CDVDMAN_SETTINGS_DEFAULT_COMMON;
 
+#ifdef PADEMU
+static void sbApplyPadEmuPhysicalPriority(void)
+{
+    int enabledPorts;
+    int vibrationPorts;
+
+    if (!gEnablePadEmu)
+        return;
+
+    if (gPadEmuSettings & 0xFF)
+        return;
+
+    enabledPorts = (gPadEmuSettings >> 8) & 0x0F;
+    vibrationPorts = (gPadEmuSettings >> 16) & 0x0F;
+
+    if (padIsPhysicalDualShockConnected(0)) {
+        if ((enabledPorts & 0x01) && !padIsPhysicalDualShockConnected(1)) {
+            enabledPorts = (enabledPorts & ~0x01) | 0x02;
+            vibrationPorts = (vibrationPorts & ~0x01) | 0x02;
+        } else {
+            enabledPorts &= ~0x01;
+            vibrationPorts &= ~0x01;
+        }
+    }
+
+    if (padIsPhysicalDualShockConnected(1)) {
+        enabledPorts &= ~0x02;
+        vibrationPorts &= ~0x02;
+    }
+
+    gPadEmuSettings &= ~((0x0F << 8) | (0x0F << 16));
+    gPadEmuSettings |= (enabledPorts << 8) | (vibrationPorts << 16);
+
+    if (enabledPorts == 0)
+        gEnablePadEmu = 0;
+}
+#endif
+
 int sbPrepare(base_game_info_t *game, config_set_t *configSet, int size_cdvdman, void **cdvdman_irx, int *patchindex)
 {
     int i;
@@ -658,6 +697,8 @@ int sbPrepare(base_game_info_t *game, config_set_t *configSet, int size_cdvdman,
     } else {
         configGetInt(configGame, CONFIG_ITEM_PADMACROSETTINGS, &gPadMacroSettings);
     }
+
+    sbApplyPadEmuPhysicalPriority();
 
     if (gEnablePadEmu) {
         settings->fakemodule_flags |= FAKE_MODULE_FLAG_USBD;

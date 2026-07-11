@@ -508,6 +508,38 @@ int padGetControllerCount(void)
     return PAD_CONTROLLER_COUNT;
 }
 
+int padIsPhysicalDualShockConnected(int port)
+{
+    int attempt;
+    int state;
+    int modes;
+    int modeId;
+
+    if (port < 0 || port >= padGetPortMax())
+        return 0;
+
+    for (attempt = 0; attempt < 20; attempt++) {
+        state = padGetState(port, 0);
+        if (state == PAD_STATE_STABLE || state == PAD_STATE_FINDCTP1) {
+            modes = padInfoMode(port, 0, PAD_MODETABLE, -1);
+            modeId = padInfoMode(port, 0, PAD_MODECURID, 0);
+
+            if (modes > 0 || modeId == PAD_TYPE_DUALSHOCK)
+                return 1;
+        } else if (state == PAD_STATE_DISCONN) {
+            return 0;
+        }
+
+        {
+            u32 start = cpu_ticks();
+            while ((cpu_ticks() - start) < (CLOCKS_PER_MILISEC * 10)) {
+            }
+        }
+    }
+
+    return 0;
+}
+
 /** Unloads a single pad.
  * @see unloadPads */
 static void unloadPad(struct pad_data_t *pad)

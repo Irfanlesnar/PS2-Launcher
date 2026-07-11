@@ -1249,6 +1249,8 @@ char gPS5ControllerLogDevice[96] = "DEVICE: not detected";
 char gPS5ControllerLogLatest[192] = "Latest: no report";
 char gPS5ControllerLogPressed[128] = "Pressed: no input found";
 char gPS5ControllerLogBridge[128] = "Bridge: no valid input packet";
+char gPS5ControllerLogRaw[160] = "Raw: no input";
+char gPS5ControllerLogDs2[160] = "DS2: no data";
 char gPS5ControllerLogStatus[96] = "Cross: capture  Square: save  Triangle: nav test  Circle: close";
 char gPS5ControllerLogLines[20][192];
 int gPS5SmbSettingsSel = 0;
@@ -1316,10 +1318,12 @@ static const char *ps5ControllerLogSteps[] = {
 
 #define XBOXUSB_BIND_RPC_ID 0x18E38791
 #define XBOXUSB_GET_RAW     1
+#define XBOXUSB_GET_DATA    2
 
 static SifRpcClientData_t gXboxUsbRpc;
 static u8 gXboxUsbRpcReady = 0;
 static u8 gXboxUsbRpcBuf[72] __attribute__((aligned(64)));
+static u8 gXboxUsbDataRpcBuf[18] __attribute__((aligned(64)));
 
 static int ps5BindXboxUsbRpc(void)
 {
@@ -1353,6 +1357,23 @@ static int ps5GetXboxUsbRawReport(u8 *raw)
         return 0;
 
     memcpy(raw, gXboxUsbRpcBuf, sizeof(gXboxUsbRpcBuf));
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static int ps5GetXboxUsbDs2Report(u8 *ds2)
+{
+#ifdef PADEMU
+    if (!ps5BindXboxUsbRpc())
+        return 0;
+
+    memset(gXboxUsbDataRpcBuf, 0, sizeof(gXboxUsbDataRpcBuf));
+    if (SifCallRpc(&gXboxUsbRpc, XBOXUSB_GET_DATA, 0, gXboxUsbDataRpcBuf, 1, gXboxUsbDataRpcBuf, sizeof(gXboxUsbDataRpcBuf), NULL, NULL) != 0)
+        return 0;
+
+    memcpy(ds2, gXboxUsbDataRpcBuf, sizeof(gXboxUsbDataRpcBuf));
     return 1;
 #else
     return 0;
@@ -1693,6 +1714,7 @@ static void ps5UpdateControllerBridgeStatus(const u8 *data)
 static void ps5UpdateControllerLiveStatus(void)
 {
     u8 raw[72];
+    u8 ds2[18];
     u8 *data;
     int first = 1;
     int hasSignal = 0;
@@ -1705,6 +1727,8 @@ static void ps5UpdateControllerLiveStatus(void)
             gPS5XboxNavPadData = 0;
         snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
         snprintf(gPS5ControllerLogBridge, sizeof(gPS5ControllerLogBridge), "Bridge: no raw report");
+        snprintf(gPS5ControllerLogRaw, sizeof(gPS5ControllerLogRaw), "Raw: no input");
+        snprintf(gPS5ControllerLogDs2, sizeof(gPS5ControllerLogDs2), "DS2: no data");
         return;
     }
 
@@ -1716,6 +1740,9 @@ static void ps5UpdateControllerLiveStatus(void)
                      data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]);
         else
             snprintf(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), "Pressed: no input found");
+        snprintf(gPS5ControllerLogRaw, sizeof(gPS5ControllerLogRaw), "Raw: packet b0-b9=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                 data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]);
+        snprintf(gPS5ControllerLogDs2, sizeof(gPS5ControllerLogDs2), "DS2: waiting for input packet");
         return;
     }
 
@@ -1762,6 +1789,15 @@ static void ps5UpdateControllerLiveStatus(void)
     ly = (short)((data[13] << 8) | data[12]);
     rx = (short)((data[15] << 8) | data[14]);
     ry = (short)((data[17] << 8) | data[16]);
+    snprintf(gPS5ControllerLogRaw, sizeof(gPS5ControllerLogRaw), "Raw: b4=%02X b5=%02X LT=%u RT=%u LX=%d LY=%d RX=%d RY=%d",
+             data[4], data[5], lt, rt, lx, ly, rx, ry);
+    if (ps5GetXboxUsbDs2Report(ds2)) {
+        u16 buttons = ds2[0] | (ds2[1] << 8);
+        snprintf(gPS5ControllerLogDs2, sizeof(gPS5ControllerLogDs2), "DS2: btn=%04X LX=%u LY=%u RX=%u RY=%u L2=%u R2=%u",
+                 buttons, ds2[4], ds2[5], ds2[2], ds2[3], ds2[16], ds2[17]);
+    } else {
+        snprintf(gPS5ControllerLogDs2, sizeof(gPS5ControllerLogDs2), "DS2: data not ready");
+    }
     if (lx < -8192 || lx > 8192 || ly < -8192 || ly > 8192)
         ps5AppendPressed(gPS5ControllerLogPressed, sizeof(gPS5ControllerLogPressed), &first, "Left Stick");
     if (rx < -8192 || rx > 8192 || ry < -8192 || ry > 8192)

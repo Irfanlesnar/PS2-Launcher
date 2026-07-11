@@ -67,6 +67,8 @@ static int xbox_poll_sema = -1;
 static int xbox_poll_result = 1;
 static int xbox_poll_tid = -1;
 static int xbox_poll_pending = 0;
+static short xbox_axis_center[MAX_PADS][4] = {{0}};
+static u8 xbox_axis_center_valid[MAX_PADS] = {0};
 
 int usb_probe(int devId);
 int usb_connect(int devId);
@@ -85,10 +87,10 @@ static void TransferWaitTimeout(int sema, u32 timeout_lo);
 static int xboxusb_is_input_packet(const u8 *data);
 static void xboxusb_poll_thread(void *arg);
 static void xboxusb_poll_cb(int resultCode, int bytes, void *arg);
-static int xboxusb_axis_to_ds2(u8 low, u8 high);
+static int xboxusb_axis_to_ds2_centered(int pad, int axis, u8 low, u8 high, int invert);
+static void xboxusb_update_axis_center(int pad, const u8 *data);
 static void xboxusb_apply_buttons(const u8 *in, struct ds2report *out);
-static void xboxusb_translate_input(const u8 *in, struct ds2report *out);
-static void xboxusb_translate_framed_input(const u8 *in, struct ds2report *out);
+static void xboxusb_translate_input(int pad, const u8 *in, struct ds2report *out);
 static int xboxusb_send_packet(int pad, const u8 *data, int len);
 static int xboxusb_send_init(int pad);
 
@@ -161,6 +163,7 @@ int usb_connect(int devId)
     if (device->idVendor == XBOX_VENDOR_MICROSOFT) {
         ds34pad[pad].type = XBOX_USB;
         ds34pad[pad].analog_btn = 1;
+        xbox_axis_center_valid[pad] = 0;
         epCount = interface->bNumEndpoints;
     } else if (device->idProduct == DS3_PID) {
         ds34pad[pad].type = DS3;
@@ -242,6 +245,7 @@ static void usb_release(int pad)
     ds34pad[pad].pid = 0;
     ds34pad[pad].xbox_seq = 0;
     ds34pad[pad].status = DS34USB_STATE_DISCONNECTED;
+    xbox_axis_center_valid[pad] = 0;
 
     SignalSema(ds34pad[pad].sema);
 }
@@ -330,10 +334,9 @@ static void readReport(u8 *data, int pad_idx)
         if (!xboxusb_is_input_packet(data))
             return;
 
-        if (data[0] == 0x03)
-            xboxusb_translate_framed_input(data, &pad->ds2);
-        else
-            xboxusb_translate_input(data, &pad->ds2);
+        if (!xbox_axis_center_valid[pad_idx])
+            xboxusb_update_axis_center(pad_idx, data);
+        xboxusb_translate_input(pad_idx, data, &pad->ds2);
         padMacroPerform(&pad->ds2, 0);
         return;
     }
@@ -424,13 +427,7 @@ static void readReport(u8 *data, int pad_idx)
 
 static int xboxusb_is_input_packet(const u8 *data)
 {
-    if (data[0] == XBOXUSB_INPUT_PACKET)
-        return 1;
-
-    if (data[0] == 0x03 && data[1] == XBOXUSB_INPUT_PACKET && data[3] == 0x04)
-        return 1;
-
-    return 0;
+    return data[0] == XBOXUSB_INPUT_PACKET;
 }
 
 static void xboxusb_poll_cb(int resultCode, int bytes, void *arg)
@@ -438,15 +435,14 @@ static void xboxusb_poll_cb(int resultCode, int bytes, void *arg)
     int pad = (int)arg;
 
     xbox_poll_result = resultCode;
+    WaitSema(ds34pad[pad].sema);
     if (xbox_poll_result == USB_RC_OK && xboxusb_is_input_packet(xbox_poll_buf)) {
-        WaitSema(ds34pad[pad].sema);
-        if (xbox_poll_buf[0] == 0x03)
-            xboxusb_translate_framed_input(xbox_poll_buf, &ds34pad[pad].ds2);
-        else
-            xboxusb_translate_input(xbox_poll_buf, &ds34pad[pad].ds2);
+        if (!xbox_axis_center_valid[pad])
+            xboxusb_update_axis_center(pad, xbox_poll_buf);
+        xboxusb_translate_input(pad, xbox_poll_buf, &ds34pad[pad].ds2);
         padMacroPerform(&ds34pad[pad].ds2, 0);
-        SignalSema(ds34pad[pad].sema);
     }
+    SignalSema(ds34pad[pad].sema);
 
     xbox_poll_result = 1;
     xbox_poll_pending = 0;
@@ -530,14 +526,30 @@ static void xboxusb_poll_thread(void *arg)
     }
 }
 
-static int xboxusb_axis_to_ds2(u8 low, u8 high)
+static void xboxusb_update_axis_center(int pad, const u8 *data)
+{
+    const u8 *in = data;
+
+    xbox_axis_center[pad][0] = (short)((in[11] << 8) | in[10]);
+    xbox_axis_center[pad][1] = (short)((in[13] << 8) | in[12]);
+    xbox_axis_center[pad][2] = (short)((in[15] << 8) | in[14]);
+    xbox_axis_center[pad][3] = (short)((in[17] << 8) | in[16]);
+    xbox_axis_center_valid[pad] = 1;
+}
+
+static int xboxusb_axis_to_ds2_centered(int pad, int axis, u8 low, u8 high, int invert)
 {
     int value = (short)((high << 8) | low);
+    int center = xbox_axis_center_valid[pad] ? xbox_axis_center[pad][axis] : 0;
+    int delta = value - center;
 
-    if (value > -12000 && value < 12000)
-        value = 0;
+    if (delta > -12000 && delta < 12000)
+        delta = 0;
 
-    value = (value >> 8) + 128;
+    if (invert)
+        delta = -delta;
+
+    value = (delta >> 8) + 128;
     if (value < 0)
         value = 0;
     if (value > 255)
@@ -546,22 +558,13 @@ static int xboxusb_axis_to_ds2(u8 low, u8 high)
     return value;
 }
 
-static void xboxusb_translate_input(const u8 *in, struct ds2report *out)
+static void xboxusb_translate_input(int pad, const u8 *in, struct ds2report *out)
 {
     xboxusb_apply_buttons(in, out);
-    out->LeftStickX = xboxusb_axis_to_ds2(in[10], in[11]);
-    out->LeftStickY = 255 - xboxusb_axis_to_ds2(in[12], in[13]);
-    out->RightStickX = xboxusb_axis_to_ds2(in[14], in[15]);
-    out->RightStickY = 255 - xboxusb_axis_to_ds2(in[16], in[17]);
-}
-
-static void xboxusb_translate_framed_input(const u8 *in, struct ds2report *out)
-{
-    xboxusb_apply_buttons(&in[1], out);
-    out->LeftStickX = xboxusb_axis_to_ds2(in[11], in[12]);
-    out->LeftStickY = 255 - xboxusb_axis_to_ds2(in[13], in[14]);
-    out->RightStickX = xboxusb_axis_to_ds2(in[15], in[16]);
-    out->RightStickY = 255 - xboxusb_axis_to_ds2(in[17], in[18]);
+    out->LeftStickX = xboxusb_axis_to_ds2_centered(pad, 0, in[10], in[11], 0);
+    out->LeftStickY = xboxusb_axis_to_ds2_centered(pad, 1, in[12], in[13], 1);
+    out->RightStickX = xboxusb_axis_to_ds2_centered(pad, 2, in[14], in[15], 0);
+    out->RightStickY = xboxusb_axis_to_ds2_centered(pad, 3, in[16], in[17], 1);
 }
 
 static int xboxusb_send_packet(int pad, const u8 *data, int len)
