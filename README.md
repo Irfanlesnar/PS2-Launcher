@@ -1,51 +1,39 @@
 # PS2 Launcher
 
-PS2 Launcher is a modern PlayStation 2 game launcher focused on delivering a cleaner, faster, and more console-like experience while maintaining the compatibility and reliability of Open PS2 Loader.
+A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, and more console-like experience — built on the foundation of Open PS2 Loader.
 
-Built for real PlayStation 2 hardware, PS2 Launcher introduces visual improvements, enhanced game browsing, modernized layouts, and display optimizations designed to make PS2 game management feel more polished and user-friendly.
+Designed for real PS2 hardware, PS2 Launcher introduces visual improvements, enhanced game browsing, modernized layouts, and display optimizations to make PS2 game management feel polished and user-friendly.
 
-<img width="1280" height="640" alt="repository-open-graph-template" src="https://github.com/user-attachments/assets/fc3880bf-4e1e-4a66-9df9-ed44ef35c73e" />
-
+<img width="1280" height="640" alt="PS2 Launcher Banner" src="https://github.com/user-attachments/assets/fc3880bf-4e1e-4a66-9df9-ed44ef35c73e" />
 
 ## Features
 
 - Modern launcher-style interface
 - Lightweight and optimized for PS2 hardware
-- USB Games (FAT32/exFAT)
-- HDD Games (FAT32/exFAT)
-- mx4sio
-- Internal HDD APA
-- Internal HDD GPT/MBR
-
-## Display Improvements
-
-PS2 Launcher includes extensive display optimizations to improve image quality on modern displays.
-
+- Display optimizations for improved image quality on modern displays
+- USB Games (FAT32 / exFAT)
+- HDD Games (FAT32 / exFAT)
+- MX4SIO support
+- Internal HDD — APA
+- Internal HDD — GPT / MBR
 
 ## Download
 
-- **Latest Release:** https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v3.1.0/PS2-Launcher-v3.1.0.ELF
-- **All Releases:** https://github.com/Irfanlesnar/PS2-Launcher/releases
+- **Latest Release:** [PS2-Launcher-v3.1.0.ELF](https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v3.1.0/PS2-Launcher-v3.1.0.ELF)
+- **All Releases:** [GitHub Releases](https://github.com/Irfanlesnar/PS2-Launcher/releases)
 
 ## Credits
 
 ### Project Creator
 
-**Irfan Ahamed S**
-
-Instagram: **@irfanmatheena**
+**Irfan Ahamed S** — Instagram: [@irfanmatheena](https://instagram.com/irfanmatheena)
 
 ### Based On
 
-PS2 Launcher is based on **Open PS2 Loader (OPL)**.
+PS2 Launcher is based on [Open PS2 Loader (OPL)](https://github.com/ps2homebrew/Open-PS2-Loader).
+Special thanks to the OPL developers and contributors whose work made this project possible.
 
-Special thanks to the Open PS2 Loader developers and contributors whose work made this project possible.
-
-Open PS2 Loader:
-https://github.com/ps2homebrew/Open-PS2-Loader
-
-
-### Thanks
+### Acknowledgements
 
 - Open PS2 Loader Development Team
 - PS2DEV Community
