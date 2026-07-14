@@ -1,0 +1,548 @@
+/*  Simple HTTP client for retrieving files.
+    Support for the "chunked" encoding has not been implemented.    */
+
+#include <stdio.h>
+#include <errno.h>
+#include <sysclib.h>
+#include <ps2ip.h>
+#include <thbase.h>
+
+#include "httpclient.h"
+
+#define HTTP_CONNECT_TIMEOUT_SEC 15
+
+static int LastRequestLength;
+static int LastSendLength;
+static int LastSelectResult;
+static int LastRecvResult;
+static int LastSocketError;
+
+void HttpCloseConnection(s32 HttpSocket)
+{
+    shutdown(HttpSocket, SHUT_RDWR);
+    closesocket(HttpSocket);
+}
+
+static int EstablishConnection(struct in_addr *server, unsigned short int port)
+{
+    struct sockaddr_in SockAddr;
+    int HostSocket;
+    int result;
+    int error;
+    int lastError;
+    int elapsed;
+    int stableZero;
+    int connectRetry;
+    socklen_t errorLength;
+    unsigned long nonBlocking;
+
+    HostSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (HostSocket < 0)
+        return -ENOTSOCK;
+
+    memset(&SockAddr, 0, sizeof(SockAddr));
+    SockAddr.sin_family = AF_INET;
+    SockAddr.sin_addr.s_addr = server->s_addr;
+    SockAddr.sin_port = htons(port);
+
+    nonBlocking = 1;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    result = connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr));
+    if (result != 0) {
+        result = -ETIMEDOUT;
+        lastError = 0;
+        stableZero = 0;
+        for (elapsed = 0; elapsed < HTTP_CONNECT_TIMEOUT_SEC * 10; elapsed++) {
+            DelayThread(100000);
+
+            connectRetry = connect(HostSocket, (struct sockaddr *)&SockAddr, sizeof(SockAddr));
+            LastRecvResult = connectRetry;
+            if (connectRetry == 0 || connectRetry == EISCONN || connectRetry == -EISCONN) {
+                result = 0;
+                break;
+            }
+
+            error = -1;
+            errorLength = sizeof(error);
+            if (getsockopt(HostSocket, SOL_SOCKET, SO_ERROR, &error, &errorLength) == 0) {
+                LastSocketError = error;
+                if (error == EISCONN || error == -EISCONN) {
+                    result = 0;
+                    break;
+                } else if (error == 0) {
+                    if (++stableZero >= 1) {
+                        result = 0;
+                        break;
+                    }
+                    continue;
+                }
+                stableZero = 0;
+                lastError = error;
+            }
+        }
+
+        if (result != 0 && lastError != 0)
+            result = -(1000 + lastError);
+    }
+
+    nonBlocking = 0;
+    ioctlsocket(HostSocket, FIONBIO, &nonBlocking);
+
+    if (result != 0) {
+        HttpCloseConnection(HostSocket);
+        HostSocket = -1;
+    } else {
+        DelayThread(20000);
+    }
+
+    return HostSocket;
+}
+
+static int SendData(int socket, char *buffer, int length)
+{
+    char *pointer;
+    int remaining, result, retries;
+
+    LastRequestLength = length;
+    LastSendLength = 0;
+    LastSelectResult = -2;
+    for (remaining = length, pointer = buffer, retries = 0; remaining > 0;) {
+        if ((result = send(socket, pointer, remaining, 0)) < 1) {
+            int socketError = -9999;
+            socklen_t socketErrorLength = sizeof(socketError);
+            if (getsockopt(socket, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0)
+                LastSocketError = socketError;
+            else
+                LastSocketError = -9998;
+            LastRecvResult = result;
+            if (++retries >= 8)
+                break;
+            DelayThread(50000);
+            continue;
+        }
+        retries = 0;
+        LastSendLength += result;
+        remaining -= result;
+        pointer += result;
+    }
+
+    return length - remaining;
+}
+
+static int GetData(int socket, char *buffer, int length)
+{
+    struct timeval timeout;
+    fd_set readfds;
+    char *pointer;
+    int remaining, ToRead, result;
+
+    for (remaining = length, pointer = buffer; remaining > 0;) {
+        ToRead = remaining;
+
+        // This safeguards against a deadlock, if the TCP connection gets broken for long enough. Long enough for the RST packet from the other side gets lost.
+        timeout.tv_sec = 10;
+        timeout.tv_usec = 0;
+        FD_ZERO(&readfds);
+        FD_SET(socket, &readfds);
+        LastSelectResult = select(socket + 1, &readfds, NULL, NULL, &timeout);
+        if (LastSelectResult <= 0) {
+            LastRecvResult = LastSelectResult;
+            break;
+        }
+
+        result = recv(socket, pointer, ToRead, 0);
+        LastRecvResult = result;
+        if (result < 1)
+            break;
+        remaining -= result;
+        pointer += result;
+    }
+
+    return length - remaining;
+}
+
+#define HTTP_WORK_BUFFER_SIZE 1024 // Must be long enough for real-world proxy/CDN header lines.
+
+enum TRANFER_ENCODING {
+    TRANFER_ENCODING_PLAIN,
+    TRANFER_ENCODING_CHUNKED
+};
+
+static int ContentLength;
+static int StatusCode;
+static unsigned short int HeaderLineNumber;
+// static char TransferEncoding;
+static char ConnectionMode;
+static int LastStatusCode;
+static int LastContentLength;
+
+int HttpGetLastStatusCode(void)
+{
+    return LastStatusCode;
+}
+
+int HttpGetLastContentLength(void)
+{
+    return LastContentLength;
+}
+
+int HttpGetLastRequestLength(void)
+{
+    return LastRequestLength;
+}
+
+int HttpGetLastSendLength(void)
+{
+    return LastSendLength;
+}
+
+int HttpGetLastSelectResult(void)
+{
+    return LastSelectResult;
+}
+
+int HttpGetLastRecvResult(void)
+{
+    return LastRecvResult;
+}
+
+int HttpGetLastSocketError(void)
+{
+    return LastSocketError;
+}
+
+static int HttpHeaderEquals(const char *line, const char *name)
+{
+    unsigned int i;
+
+    for (i = 0; name[i] != '\0'; i++) {
+        if (tolower(line[i]) != name[i])
+            return 0;
+    }
+
+    return line[i] == ':';
+}
+
+static void HttpParseEntityLine(const char *line)
+{
+    char *pColon;
+    char *value;
+
+    if ((pColon = strchr(line, ':')) != NULL) {
+        for (pColon++; *pColon != '\0'; pColon++) {
+            if (look_ctype_table(*pColon) & 2)
+                *pColon = tolower(*pColon);
+        }
+    }
+
+    // printf("%u\t%s\n", HeaderLineNumber, line);
+
+    if (HeaderLineNumber == 0 && (strncmp(line, "HTTP/1.1 ", 9) == 0 || strncmp(line, "HTTP/1.0 ", 9) == 0))
+        StatusCode = strtoul(line + 9, NULL, 10);
+
+    if (HttpHeaderEquals(line, "content-length")) {
+        value = (char *)line + 15;
+        while (*value == ' ' || *value == '\t')
+            value++;
+        ContentLength = strtoul(value, NULL, 10);
+    }
+    /*
+    if (strncmp(line, "Transfer-Encoding: ", 19) == 0) {
+        ContentLength = -1;
+        if (strcmp(line + 19, "chunked") == 0)
+            TransferEncoding = TRANFER_ENCODING_CHUNKED;
+    }
+    */
+    if (HttpHeaderEquals(line, "connection") && strstr(line, "close") != NULL)
+        ConnectionMode = HTTP_CMODE_CLOSED;
+
+    HeaderLineNumber++;
+}
+
+static int HttpGetResponse(s32 socket, s8 *mode, char *buffer, u16 *length)
+{
+    char work[HTTP_WORK_BUFFER_SIZE + 1], EndOfEntity, *ptr, *next_ptr, *PayloadPtr;
+    int result, DataAvailable, PayloadAmount;
+
+    // TransferEncoding = TRANFER_ENCODING_PLAIN;
+    ConnectionMode = *mode;
+    ContentLength = -1;
+    StatusCode = -1;
+    LastStatusCode = -1;
+    LastContentLength = -1;
+    LastRequestLength = 0;
+    LastSendLength = 0;
+    LastSelectResult = 0;
+    LastRecvResult = 0;
+    LastSocketError = 0;
+    HeaderLineNumber = 0;
+    PayloadPtr = buffer;
+    PayloadAmount = 0;
+    EndOfEntity = 0;
+    ptr = work;
+    DataAvailable = 0;
+    work[HTTP_WORK_BUFFER_SIZE] = '\0';
+    do {
+        if ((result = GetData(socket, ptr, HTTP_WORK_BUFFER_SIZE - DataAvailable)) > 0) {
+            DataAvailable += result;
+            ptr = work;
+            while ((next_ptr = strstr(ptr, "\r\n")) != NULL) {
+                *next_ptr = '\0';
+                // Parse line
+                HttpParseEntityLine(ptr);
+                DataAvailable -= (next_ptr + 2 - ptr);
+                ptr = next_ptr + 2; // skip CRLN
+                if (strncmp(ptr, "\r\n", 2) == 0) {
+                    EndOfEntity = 1;
+                    DataAvailable -= 2;
+                    ptr += 2;
+                    break;
+                }
+            }
+
+            // At this point, the final line (preceding NULL terminator) has been reached. Move any outstanding characters to the start of the buffer.
+            if (!EndOfEntity) {
+                if (DataAvailable > 0) {
+                    memmove(work, ptr, DataAvailable);
+                    work[DataAvailable] = '\0';
+                    ptr = &work[DataAvailable];
+                } else
+                    ptr = work;
+            }
+        } else {
+            // No more data. Connection lost?
+            //             printf("DEBUG: connection lost?\n");
+            break;
+        }
+    } while (!EndOfEntity);
+
+    // Receive data normally (plain).
+    if (DataAvailable > 0) // Move leftover data into the output buffer.
+    {
+        memcpy(buffer, ptr, DataAvailable);
+        buffer[DataAvailable] = '\0';
+        PayloadPtr = buffer + DataAvailable;
+        PayloadAmount = DataAvailable;
+    }
+
+    if (ContentLength < 0)
+        ContentLength = *length;
+
+    if (PayloadAmount < ContentLength) {
+        if (ContentLength > *length)
+            ContentLength = *length;
+        if ((result = GetData(socket, PayloadPtr, ContentLength - PayloadAmount)) > 0)
+            *length = PayloadAmount + result;
+        else
+            *length = PayloadAmount;
+    } else
+        *length = PayloadAmount;
+
+    if (StatusCode < 0 && PayloadAmount == 0 && DataAvailable == 0) {
+        LastStatusCode = -1;
+        LastContentLength = 0;
+        *length = 0;
+        *mode = ConnectionMode;
+        return HTTP_CLIENT_ERR_NO_RESPONSE;
+    }
+
+    result = StatusCode;
+    if (ContentLength > 0 && ContentLength > *length) {
+        result = -EPIPE; // Incomplete transfer.
+                         // printf("Pipe broken: %d/%d\n", *length, ContentLength);
+    }
+
+    LastStatusCode = StatusCode;
+    LastContentLength = ContentLength;
+    *mode = ConnectionMode;
+
+    return result;
+}
+
+static int ParseIPv4Address(char *hostname, struct in_addr *ip)
+{
+    const char *p = hostname;
+    char *end;
+    unsigned int octets[4];
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        octets[i] = strtoul(p, &end, 10);
+        if (end == p || octets[i] > 255)
+            return 0;
+        if (i < 3) {
+            if (*end != '.')
+                return 0;
+            p = end + 1;
+        } else if (*end != '\0') {
+            return 0;
+        }
+    }
+
+    ip->s_addr = htonl((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]);
+    return 1;
+}
+
+static int ResolveHostname(char *hostname, struct in_addr *ip)
+{
+    struct hostent *HostEntry;
+    struct in_addr **addr_list;
+
+    if (ParseIPv4Address(hostname, ip))
+        return 0;
+
+    if ((HostEntry = gethostbyname(hostname)) == NULL)
+        return 1;
+
+    for (addr_list = (struct in_addr **)HostEntry->h_addr_list; addr_list != NULL; addr_list++) {
+        ip->s_addr = (*addr_list)->s_addr;
+        return 0;
+    }
+
+    return 1;
+}
+
+int HttpEstabConnection(char *server, u16 port)
+{
+    struct in_addr ip;
+    int result;
+
+    if (ResolveHostname(server, &ip) == 0) {
+        result = EstablishConnection(&ip, port);
+    } else {
+        result = -ENXIO;
+    }
+
+    return result;
+}
+
+static const char *GetDayInWeek(const unsigned char *mtime)
+{
+    static const unsigned char daysInMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    static const char *dayLabels[7] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    unsigned short int DaysInYear;
+    unsigned char LeapDays, month;
+    unsigned int days;
+
+    LeapDays = mtime[0] / 4; // Number of leap days, in the years elasped.
+    for (month = 0, DaysInYear = 0; month < mtime[1]; DaysInYear += daysInMonth[month], month++)
+        ; // Number of days, within the months elasped within the past year.
+    if (mtime[0] % 4 == 0) {
+        if (mtime[1] > 1)
+            DaysInYear++; // Account for this year's leap day, if applicable.
+    } else
+        LeapDays++; // Account for the leap day, of the leap year that just passed.
+    days = mtime[0] * 365 + LeapDays + DaysInYear + mtime[2];
+
+    return dayLabels[(5 + days) % 7]; // 2000/1/1 was a Saturday (5).
+}
+
+int HttpSendGetRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const u8 *mtime, const char *uri, char *output, u16 *out_len)
+{
+    const char *months[] = {
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec"};
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
+                    "Accept: text/html, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    if (mtime != NULL)
+        sprintf(&buffer[strlen(buffer)], "If-Modified-Since: %s, %02u %s %04u %02u:%02u:%02u GMT\r\n", GetDayInWeek(mtime), mtime[2] + 1, months[mtime[1]], 2000 + mtime[0], mtime[3], mtime[4], mtime[5]);
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else {
+        result = -1;
+        *out_len = 0;
+    }
+
+    return result;
+}
+
+int HttpSendGetRequestRange(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, u32 rangeStart, u32 rangeEnd, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "GET %s HTTP/1.%d\r\n"
+                    "Accept: image/png, image/jpeg, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Range: bytes=%lu-%lu\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, rangeStart, rangeEnd);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else
+    {
+        result = -EPIPE;
+        *out_len = 0;
+    }
+
+    return result;
+}
+
+int HttpSendPostJsonRequest(s32 HttpSocket, const char *UserAgent, const char *host, s8 *mode, const char *uri, const char *body, u16 body_len, char *output, u16 *out_len)
+{
+    char buffer[512];
+    int result, length;
+
+    sprintf(buffer, "POST %s HTTP/1.%d\r\n"
+                    "Accept: application/json, */*\r\n"
+                    "Accept-Encoding: identity\r\n"
+                    "Content-Type: application/json\r\n"
+                    "User-Agent: %s\r\n"
+                    "Host: %s\r\n"
+                    "Content-Length: %u\r\n",
+            uri, *mode == HTTP_CMODE_CLOSED ? 0 : 1, UserAgent, host, body_len);
+
+    if (*mode == HTTP_CMODE_PERSISTENT)
+        strcat(buffer, "Proxy-Connection: Keep-Alive\r\n");
+    else
+        strcat(buffer, "Connection: close\r\n");
+    strcat(buffer, "\r\n");
+
+    length = strlen(buffer);
+
+    if (SendData(HttpSocket, buffer, length) == length && SendData(HttpSocket, (char *)body, body_len) == body_len) {
+        result = HttpGetResponse(HttpSocket, mode, output, out_len);
+    } else {
+        result = -1;
+        *out_len = 0;
+    }
+
+    return result;
+}
