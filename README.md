@@ -1,26 +1,39 @@
 # PS2 Launcher
 
 A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, and more console-like experience — built on the foundation of Open PS2 Loader.
+Designed for real PS2 hardware
 
-Designed for real PS2 hardware, PS2 Launcher introduces visual improvements, enhanced game browsing, modernized layouts, and display optimizations to make PS2 game management feel polished and user-friendly.
-
-<img width="1920" height="1080" alt="jbi8n5ynr89h1" src="https://github.com/user-attachments/assets/78abff31-5c85-4d77-83bc-8f2ca63183b0" />
+<img width="1920" height="1080" alt="4 0" src="https://github.com/user-attachments/assets/42deae63-18f8-4372-addf-3e29a01bfe59" />
 
 
-## Features
+## Major Features
 
-- Modern launcher-style interface
-- Lightweight and optimized for PS2 hardware
-- Display optimizations for improved image quality on modern displays
-- USB Games (FAT32 / exFAT)
-- HDD Games (FAT32 / exFAT)
-- MX4SIO support
-- Internal HDD — APA
-- Internal HDD — GPT / MBR
+- Virtual Multitap support for up to 4 players without a physical multitap
+- DualSense (PS5) controller support
+- DualShock 4 (PS4) controller support
+- DualShock 3 (PS3) controller support
+- Xbox controller support
+- Virtual Memory Card (VMC) support
+- PlayStation 1 game support (via Apps)
+- PS2RD `.cht` Cheat Engine support
+- Per-game language selection
+- Apps tab for launching ELF applications
+- Favourite Games
+- Recently Played Games
+
+## Other Updates
+
+- Launcher UI aspect ratio support: 4:3, 16:9 and 21:9
+- 1080i and 720p GSM squeeze issue fixed
+- 720p GSM shaky UI fixed
+- Improved In-Game Reset redirect back to PS2 Launcher
+- Hold SELECT for 7–10 seconds to return to the launcher
+- UI improvements and refinements
+
 
 ## Download
 
-- **Latest Release:** [PS2-Launcher-v3.1.0.ELF](https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v3.1.0/PS2-Launcher-v3.1.0.ELF)
+- **Latest Release:** [Download PS2-Launcher-4.0.0.ELF](https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v4.0.0/PS2-Launcher-4.0.0.ELF)
 - **All Releases:** [GitHub Releases](https://github.com/Irfanlesnar/PS2-Launcher/releases)
 
 ## Credits
@@ -36,11 +49,9 @@ Special thanks to the OPL developers and contributors whose work made this proje
 
 ### Acknowledgements
 
-- Open PS2 Loader Development Team
-- PS2DEV Community
-- Free McBoot Developers
-- PlayStation 2 Homebrew Community
 - Everyone who tested and provided feedback during development
+- Game icon images are from https://github.com/CosmicScale/psbbn-art-database
+- Game logos & background images done by [playnerd.k](https://www.instagram.com/playnerd.k/) & [irfanmatheena](https://www.instagram.com/irfanmatheena/)
 
 ## Disclaimer
 
