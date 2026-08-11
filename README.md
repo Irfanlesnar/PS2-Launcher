@@ -35,6 +35,7 @@ Designed for real PS2 hardware
 
 - **Latest Release:** [Download PS2-Launcher-4.0.0.ELF](https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v4.0.0/PS2-Launcher-4.0.0.ELF)
 - **All Releases:** [GitHub Releases](https://github.com/Irfanlesnar/PS2-Launcher/releases)
+- **For Art Download:** [PS2-Launcher-Manager](https://irfanlesnar.github.io/PS2-Launcher-Manager/) - You can download game covers here if you don't have internet on PS2
 
 ## Credits
 
