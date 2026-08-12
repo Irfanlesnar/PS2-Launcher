@@ -53,6 +53,7 @@ Special thanks to the OPL developers and contributors whose work made this proje
 - Everyone who tested and provided feedback during development
 - Game icon images are from https://github.com/CosmicScale/psbbn-art-database
 - Game logos & background images done by [playnerd.k](https://www.instagram.com/playnerd.k/) & [irfanmatheena](https://www.instagram.com/irfanmatheena/)
+- Check out everyone helped to make this project at [credits](https://github.com/Irfanlesnar/PS2-Launcher/blob/main/CREDITS.md)
 
 ## Disclaimer
 
