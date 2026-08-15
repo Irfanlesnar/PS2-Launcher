@@ -41,9 +41,23 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
     - Xbox one controller
  
   Controller behavior
-    - USB controller only → USB controller becomes Player 1 (used for single player games)
-    - PS2 controller + USB controller → PS2 controller is Player 1 and USB controller is Player 2
-    - 4-player setup → PS2 Ports 1 & 2 are Players 1 & 2, USB Ports 1 & 2 are Players 3 & 4
+    - PS2 port 1 connected with PS2 controller
+        - PS2 port 1 controller plays as player 1
+    - PS2 port 1 and PS2 port 2 connected with PS2 controller
+        -  PS2 port 1 controller plays as player 1
+        -  PS2 port 2 controller plays as player 2
+    - 2 PS2 controllers and 1 USB controller
+        - PS2 port 1 controller plays as player 1
+        - PS2 port 2 controller plays as player 2
+        - USB controller plays as player 3 (any port)
+    - 2 PS2 controllers and 2 USB controllers
+        - PS2 port 1 controller plays as player 1
+        - PS2 port 2 controller plays as player 2
+        - USB port 1 controller plays as player 3
+        - USB port 2 controller plays as player 4
+    - Important Note
+        - If you connected PS2 controller on PS2 port 1 and USB controller on USB port (any port) then try playing a single player game USB controller will not work because it will be assigned as player 2 but game expects player 1 to be played so here PS2 controller should be used
+        - If you want to play single player game with USB controller then disconnect PS2 controllers and have 1 USB controller connected (any port) then launch the game. So now USB controller will be player 1
  
 - **Game Options**
     - Resolutions [ Standard, 720p, 1080i ]
