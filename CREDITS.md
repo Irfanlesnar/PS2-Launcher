@@ -39,6 +39,7 @@ Special thanks to the users who tested PS2 Launcher on real PlayStation 2 hardwa
 - pkerga / `@pkerga`
 - MaranelN9 / `@MaranelN9`
 - CosmicScale / `@CosmicScale`
+- itz_gaboox / `@itz_gaboox` (Instagram)
 
 
 
