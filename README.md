@@ -2,7 +2,7 @@
 
 A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, and more console-like experience - Designed for real PS2 hardware
 
-<img width="1920" height="1080" alt="4 0" src="https://github.com/user-attachments/assets/42deae63-18f8-4372-addf-3e29a01bfe59" />
+<img width="1920" height="1080" alt="v5_release" src="https://github.com/user-attachments/assets/981a624e-ab9c-450c-96cb-65e3e7d5c254" />
 
 ### About
 - **PS2 Launcher**
@@ -21,9 +21,10 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
     - USB HDD FAT32
     - USB HDD exFAT
     - MX4SIO
-    - Internal HDD APA FAT32
+    - Internal HDD APA
     - Internal HDD exFAT GPT/MBR
     - SMB
+    - MMCE
 
 - **Virtual Multitap support for up to 4 players without a physical multitap**
     - Player 1 → PS2 Port 1
@@ -33,12 +34,17 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
   
   For best compatibility, connect all required controllers before launching the game.
 
-- **Advanced controller support (wired only)**
+- **Advanced controller support**
     - PS5 DualSense controller
     - PS4 DualShock 4 controller
     - PS3 DualShock 3 controller
     - Xbox series s controller
     - Xbox one controller
+    - Xbox 360 controller
+    - Steam controller 2026
+    - Shanwan PS3 Clone Controller
+    - ANT Esports GP300 Pro V2 Wireless Controller
+    - If you have any controller you want to connect to PS2, Message me on Instagram we can make them work on PS2
  
   Controller behavior
     - PS2 port 1 connected with PS2 controller
@@ -60,12 +66,42 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
         - If you want to play single player game with USB controller then disconnect PS2 controllers and have 1 USB controller connected (any port) then launch the game. So now USB controller will be player 1
  
 - **Game Options**
-    - Resolutions [ Standard, 720p, 1080i ]
+    - Resolutions
+        - Standard
+        - 720p
+        - 1080i
+        - NTSC
+        - NTSC Non-Interlaced
+        - PAL
+        - PAL Non-Interlaced
+        - PAL @ 60Hz
+        - PAL @ 60Hz Non-Interlaced
+        - PS1 NTSC – HDTV 480p @ 60Hz
+        - PS1 PAL – HDTV 576p @ 50Hz
+        - HDTV 480p @ 60Hz
+        - HDTV 576p @ 50Hz
+        - VGA 640×480p @ 60/72/75/85Hz
+        - VGA 640×960i @ 60Hz
+        - VGA 800×600p @ 56/60/72/75/85Hz
+        - VGA 1024×768p @ 60/70/75/85Hz
+        - VGA 1280×1024p @ 60/75Hz 
     - Virtual Memory Card (VMC) 
     - PS2RD `.cht` Cheat Engine 
     - Language option for games
+ 
+- **Files Tab**
+  - Access and manage connected storage devices directly from PS2 Launcher.
+  - Copy and paste files
+  - Delete files
+  - Launch games
+  - Launch ELF files
+  - Manage files across supported storage devices
+ 
+- **Connected Controller Count**
+  - The UI now shows the number of currently connected controllers.
 
-- **In Game Reset (IGR)**
+- **In Game Return (IGR)**
+    - Set IGR path on settings
     - Hold SELECT for 7–10 seconds while playing the game to return to the PS2 launcher
 
 - **PS2 Launcher Manager [Website]**
@@ -73,7 +109,7 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
 
 
 ### Download
-- **Latest Release:** [Download PS2-Launcher-4.0.0.ELF](https://github.com/Irfanlesnar/PS2-Launcher/releases/download/v4.0.0/PS2-Launcher-4.0.0.ELF)
+- **Latest Release:** [PS2 Launcher 5.0.0](https://github.com/Irfanlesnar/PS2-Launcher/releases/tag/v5.0.0)
 - **All Releases:** [GitHub Releases](https://github.com/Irfanlesnar/PS2-Launcher/releases)
 
 
@@ -94,6 +130,7 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
         - J013k / @J013k
         - pkerga / @pkerga
         - MaranelN9 / @MaranelN9
+        - itz_gaboox / Instagram
     - Check out everyone helped to make this project at [credits](https://github.com/Irfanlesnar/PS2-Launcher/blob/main/CREDITS.md)
 
 ### Disclaimer
