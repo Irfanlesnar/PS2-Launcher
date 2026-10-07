@@ -44,6 +44,7 @@ A modern PlayStation 2 game launcher focused on delivering a cleaner, faster, an
     - Steam controller 2026
     - Shanwan PS3 Clone Controller
     - ANT Esports GP300 Pro V2 Wireless Controller
+    - Flydigi Apex Wireless controller
     - If you have any controller you want to connect to PS2, Message me on Instagram we can make them work on PS2
  
   Controller behavior
