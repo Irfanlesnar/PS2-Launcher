@@ -26,6 +26,7 @@
 #include <math.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 #include <libvux.h>
 
 // Last Played Auto Start
@@ -1473,11 +1474,13 @@ void guiDrawSubMenuHints(void)
 
 static void guiRenderArabicDeveloperCredit(void)
 {
-    if (lngGetGuiValue() == 0)
+    if (strcmp(lngGetValue(), "Arabic") != 0)
         return;
 
-    const char *credit = _l(_STR_TRANSLATOR_CREDIT);
+    const char *credit = "تعريب المطور العراقي TEa.G3";
     int width = rmUnScaleX(fntCalcDimensions(gTheme->fonts[0], credit)) + 28;
+    if (width > screenWidth - 20)
+        width = screenWidth - 20;
     int x = (screenWidth - width) / 2;
     int y = gTheme->usedHeight - 54;
 
