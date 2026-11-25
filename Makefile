@@ -29,7 +29,7 @@ EXTRA_FEATURES ?= 0
 
 # Set RTL and IGS based on EXTRA_FEATURES, but allow user overrides
 #Enables/disables Right-To-Left (RTL) language support
-RTL ?= $(EXTRA_FEATURES)
+RTL ?= 1
 #Enables/disables In Game Screenshot (IGS). NB: It depends on GSM and IGR to work
 IGS ?= $(EXTRA_FEATURES)
 
@@ -102,7 +102,7 @@ AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connec
 
 MISC_OBJS =	icon_sys_A.o icon_sys_J.o icon_sys_C.o conf_theme_OPL.o
 
-TRANSLATIONS =
+TRANSLATIONS = Arabic
 
 EE_BIN = opl.elf
 EE_BIN_STRIPPED = opl_stripped.elf
@@ -224,7 +224,7 @@ EE_LDFLAGS += -fdata-sections -ffunction-sections -Wl,--gc-sections
 
 ifdef PS2SDK
 
-all:
+all: languages
 	echo "Building Open PS2 Loader $(OPL_VERSION)..."
 	echo "-Interface"
 ifneq ($(NOT_PACKED),1)
@@ -370,7 +370,7 @@ $(EE_BIN_STRIPPED): $(EE_BIN)
 	echo "Stripping..."
 	$(EE_STRIP) -o $@ $<
 
-$(EE_BIN_PACKED): $(EE_BIN_STRIPPED)
+$(EE_BIN_PACKED): $(EE_BIN_STRIPPED) languages
 	echo "Compressing..."
 	ps2-packer $< $@ > /dev/null
 
@@ -832,11 +832,13 @@ $(ENGLISH_TEMPLATE_YML): $(BASE_LANGUAGE) $(LANG_COMPILER)
 $(ENGLISH_LNG): $(ENGLISH_TEMPLATE_YML) $(BASE_LANGUAGE) $(LANG_COMPILER)
 	python3 $(LANG_COMPILER) --make_lng --base $(BASE_LANGUAGE) --translation $< $@
 
-$(INTERNAL_LANGUAGE_C):
-	@echo "Using static internal english translation source: $@"
+$(INTERNAL_LANGUAGE_C): $(BASE_LANGUAGE) $(LANG_COMPILER)
+	python3 $(LANG_COMPILER) --make_source --base $< $@
 
-$(INTERNAL_LANGUAGE_H):
-	@echo "Using static internal english translation header: $@"
+$(INTERNAL_LANGUAGE_H): $(BASE_LANGUAGE) $(LANG_COMPILER)
+	python3 $(LANG_COMPILER) --make_header --base $< $@
+
+$(EE_BIN): languages
 
 ifndef PS2SDK
 ps2sdk-not-setup:
