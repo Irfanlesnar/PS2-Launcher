@@ -40,6 +40,8 @@ string_array_name: internalEnglish
 string_count_label: LANG_STR_COUNT
 string_array_specifiers: ''
 gui_strings:
+- label: TRANSLATOR_CREDIT
+  string: Arabic translation by Iraqi developer TEa.G3
 - comment: Localized language name
   label: LOCALE
   string: English (internal)
