@@ -29,7 +29,7 @@ EXTRA_FEATURES ?= 0
 
 # Set RTL and IGS based on EXTRA_FEATURES, but allow user overrides
 #Enables/disables Right-To-Left (RTL) language support
-RTL ?= $(EXTRA_FEATURES)
+RTL ?= 1
 #Enables/disables In Game Screenshot (IGS). NB: It depends on GSM and IGR to work
 IGS ?= $(EXTRA_FEATURES)
 
