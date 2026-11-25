@@ -224,7 +224,7 @@ EE_LDFLAGS += -fdata-sections -ffunction-sections -Wl,--gc-sections
 
 ifdef PS2SDK
 
-all:
+all: languages
 	echo "Building Open PS2 Loader $(OPL_VERSION)..."
 	echo "-Interface"
 ifneq ($(NOT_PACKED),1)
@@ -370,7 +370,7 @@ $(EE_BIN_STRIPPED): $(EE_BIN)
 	echo "Stripping..."
 	$(EE_STRIP) -o $@ $<
 
-$(EE_BIN_PACKED): $(EE_BIN_STRIPPED)
+$(EE_BIN_PACKED): $(EE_BIN_STRIPPED) languages
 	echo "Compressing..."
 	ps2-packer $< $@ > /dev/null
 
@@ -832,11 +832,13 @@ $(ENGLISH_TEMPLATE_YML): $(BASE_LANGUAGE) $(LANG_COMPILER)
 $(ENGLISH_LNG): $(ENGLISH_TEMPLATE_YML) $(BASE_LANGUAGE) $(LANG_COMPILER)
 	python3 $(LANG_COMPILER) --make_lng --base $(BASE_LANGUAGE) --translation $< $@
 
-$(INTERNAL_LANGUAGE_C):
-	@echo "Using static internal english translation source: $@"
+$(INTERNAL_LANGUAGE_C): $(BASE_LANGUAGE) $(LANG_COMPILER)
+	python3 $(LANG_COMPILER) --make_source --base $< $@
 
-$(INTERNAL_LANGUAGE_H):
-	@echo "Using static internal english translation header: $@"
+$(INTERNAL_LANGUAGE_H): $(BASE_LANGUAGE) $(LANG_COMPILER)
+	python3 $(LANG_COMPILER) --make_header --base $< $@
+
+$(EE_BIN): languages
 
 ifndef PS2SDK
 ps2sdk-not-setup:
