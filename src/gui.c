@@ -1476,7 +1476,7 @@ static void guiRenderArabicDeveloperCredit(void)
     if (lngGetGuiValue() == 0)
         return;
 
-    const char *credit = "تعريب المطور العراقي TEa.G3";
+    const char *credit = _l(_STR_TRANSLATOR_CREDIT);
     int width = rmUnScaleX(fntCalcDimensions(gTheme->fonts[0], credit)) + 28;
     int x = (screenWidth - width) / 2;
     int y = gTheme->usedHeight - 54;
