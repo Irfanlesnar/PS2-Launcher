@@ -1471,6 +1471,20 @@ void guiDrawSubMenuHints(void)
     guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? subMenuIcons[1] : subMenuIcons[0], subMenuHints[1], gTheme->fonts[0], x, y, gTheme->textColor);
 }
 
+static void guiRenderArabicDeveloperCredit(void)
+{
+    if (lngGetGuiValue() == 0)
+        return;
+
+    const char *credit = "تعريب المطور العراقي TEa.G3";
+    int width = rmUnScaleX(fntCalcDimensions(gTheme->fonts[0], credit)) + 28;
+    int x = (screenWidth - width) / 2;
+    int y = gTheme->usedHeight - 54;
+
+    rmDrawRect(x, y, width, 34, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0xA0));
+    fntRenderString(gTheme->fonts[0], screenWidth / 2, y + 7, ALIGN_CENTER, width - 16, 26, credit, gTheme->textColor);
+}
+
 static int endIntro = 0; // Break intro loop and start 'Last Played Auto Start' countdown
 static void guiDrawOverlays()
 {
@@ -1543,6 +1557,8 @@ static void guiDrawOverlays()
             fntRenderString(gTheme->fonts[0], screenWidth / 2, screenHeight / 2, ALIGN_CENTER, 0, 0, strAutoStartInNSecs, GS_SETREG_RGBA(0x60, 0x60, 0x60, 0x80));
         }
     }
+
+    guiRenderArabicDeveloperCredit();
 
     // BLURT output
     // if (gEnableDebug)
