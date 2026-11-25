@@ -102,7 +102,7 @@ AUDIO_OBJS =	boot.o cancel.o confirm.o cursor.o message.o transition.o bd_connec
 
 MISC_OBJS =	icon_sys_A.o icon_sys_J.o icon_sys_C.o conf_theme_OPL.o
 
-TRANSLATIONS =
+TRANSLATIONS = Arabic
 
 EE_BIN = opl.elf
 EE_BIN_STRIPPED = opl_stripped.elf
