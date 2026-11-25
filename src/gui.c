@@ -1474,7 +1474,7 @@ void guiDrawSubMenuHints(void)
 
 static void guiRenderArabicDeveloperCredit(void)
 {
-    if (strcmp(lngGetValue(), "Arabic") != 0)
+    if (lngGetGuiValue() == 0 || strcmp(lngGetValue(), "Arabic") != 0)
         return;
 
     const char *credit = "تعريب المطور العراقي TEa.G3";
